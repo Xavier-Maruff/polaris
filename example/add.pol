@@ -1,0 +1,22 @@
+@module add;
+@import std::io;
+
+@test "Some test"
+func some_test(): result<void> {
+  assert(add(1, 2) == 3)?;
+
+  return ok(());
+}
+
+func add(a: int32, b: int32): int32 {
+    return a+b;
+}
+
+func main() {
+  let a: int32 = io::input("First number: ");
+  let b: int32 = io::input("Second number: ");
+
+  let result = add(a, b);
+
+  println!("Sum: {}", result);
+}
