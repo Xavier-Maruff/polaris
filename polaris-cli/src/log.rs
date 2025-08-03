@@ -4,37 +4,43 @@ use codespan_reporting::{
     term,
 };
 use crossbeam_channel::unbounded;
-use polaris_core::{log, log::Logger, parse};
+use polaris_core::{
+    log::{self, Logger},
+    parse::{self, diagnostic::is_error},
+};
 use std::{collections::HashMap, fs, io::Write, thread};
 use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
 
 pub struct CliLogger {
+    strict_warn: bool,
     files: SimpleFiles<String, String>,
     level: log::LogLevel,
     stream: StandardStream,
     cs_config: codespan_reporting::term::Config,
 }
 
-pub fn spawn_log_thread(verbosity: u8) -> anyhow::Result<(Logger, thread::JoinHandle<()>)> {
+pub fn spawn_log_thread(
+    verbosity: u8,
+    strict_warn: bool,
+) -> anyhow::Result<(Logger, thread::JoinHandle<()>)> {
     let (sender, receiver) = unbounded::<log::LogCommand>();
 
     let hdl = thread::Builder::new()
         .name("polaris_log".to_string())
         .spawn(move || {
-            let mut logger = CliLogger::new();
+            let mut logger = CliLogger::new(strict_warn);
             for command in receiver {
                 match command {
                     log::LogCommand::Diagnostic(err) => logger.diagnostic(&err),
                     log::LogCommand::Step { step, file } => logger.step(&step, &file),
                     log::LogCommand::Critical(msg) => logger.error(&msg),
                     log::LogCommand::Error(msg) => logger.error(&msg),
-                    log::LogCommand::Warning(msg) => logger.warning(&msg),
+                    log::LogCommand::Warning(msg) => logger.warn(&msg),
                     log::LogCommand::Info(msg) => logger.info(&msg),
                     log::LogCommand::Debug(msg) => logger.debug(&msg),
                     log::LogCommand::Trace(msg) => logger.trace(&msg),
                     log::LogCommand::SetLevel(level) => logger.set_level(level),
                     log::LogCommand::Quit => {
-                        logger.debug("Shutting down logger thread");
                         break;
                     }
                 }
@@ -55,7 +61,7 @@ pub fn spawn_log_thread(verbosity: u8) -> anyhow::Result<(Logger, thread::JoinHa
 }
 
 impl CliLogger {
-    pub fn new() -> Self {
+    pub fn new(strict_warn: bool) -> Self {
         let stream = StandardStream::stdout(termcolor::ColorChoice::Auto);
 
         CliLogger {
@@ -63,6 +69,7 @@ impl CliLogger {
             level: log::LogLevel::Info,
             files: SimpleFiles::new(),
             cs_config: codespan_reporting::term::Config::default(),
+            strict_warn,
         }
     }
 
@@ -88,7 +95,7 @@ impl CliLogger {
         writeln!(&mut buf, "{}", msg).unwrap();
     }
 
-    pub fn warning(&mut self, msg: &str) {
+    pub fn warn(&mut self, msg: &str) {
         let mut buf = self.stream.lock();
         buf.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)))
             .unwrap();
@@ -119,7 +126,7 @@ impl CliLogger {
         let mut buf = self.stream.lock();
         buf.set_color(ColorSpec::new().set_fg(Some(Color::Blue)))
             .unwrap();
-        write!(&mut buf, "debug:   ").unwrap();
+        write!(&mut buf, "  debug: ").unwrap();
         buf.reset().unwrap();
         writeln!(&mut buf, "{}", msg).unwrap();
     }
@@ -128,12 +135,12 @@ impl CliLogger {
         let mut buf = self.stream.lock();
         buf.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)))
             .unwrap();
-        write!(&mut buf, "trace:   ").unwrap();
+        write!(&mut buf, "  trace: ").unwrap();
         buf.reset().unwrap();
         writeln!(&mut buf, "{}", msg).unwrap();
     }
 
-    pub fn diagnostic(&mut self, err: &parse::error::DiagnosticErr) {
+    pub fn diagnostic(&mut self, err: &parse::diagnostic::Diagnostic) {
         let mut file_ids = HashMap::<String, usize>::new();
         let mut file_refs = Vec::with_capacity(err.notes.len() + 1);
 
@@ -163,9 +170,12 @@ impl CliLogger {
             );
         }
 
-        let mut diagnostic = Diagnostic::error()
-            .with_message(err.primary.message.clone())
-            .with_code(parse::error::code(&err.primary.err_type));
+        let mut diagnostic = match is_error(&err.primary.err_type, self.strict_warn) {
+            true => Diagnostic::error(),
+            false => Diagnostic::warning(),
+        }
+        .with_message(err.primary.message.clone())
+        .with_code(parse::diagnostic::code(&err.primary.err_type));
         if err.primary.span.start != 0 || err.primary.span.end != 0 {
             diagnostic = diagnostic.with_label(
                 Label::primary(

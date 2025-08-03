@@ -1,6 +1,6 @@
 use crossbeam_channel::Sender;
 
-use crate::parse::error::DiagnosticErr;
+use crate::parse::diagnostic::Diagnostic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum LogLevel {
@@ -15,7 +15,7 @@ pub enum LogLevel {
 pub enum LogCommand {
     SetLevel(LogLevel),
     Step { step: String, file: String },
-    Diagnostic(DiagnosticErr),
+    Diagnostic(Diagnostic),
     Critical(String),
     Error(String),
     Warning(String),
@@ -47,7 +47,7 @@ impl Logger {
             .expect("Failed to send log level change");
     }
 
-    pub fn diagnostic(&self, err: &DiagnosticErr) {
+    pub fn diagnostic(&self, err: &Diagnostic) {
         self.sender
             .send(LogCommand::Diagnostic(err.clone()))
             .expect("Failed to send diagnostic");
@@ -74,7 +74,7 @@ impl Logger {
             .expect("Failed to send error message");
     }
 
-    pub fn warning(&self, msg: &str) {
+    pub fn warn(&self, msg: &str) {
         self.sender
             .send(LogCommand::Warning(msg.to_string()))
             .expect("Failed to send warning message");
@@ -102,7 +102,7 @@ impl Logger {
         match level {
             LogLevel::Critical => self.critical(msg),
             LogLevel::Error => self.error(msg),
-            LogLevel::Warning => self.warning(msg),
+            LogLevel::Warning => self.warn(msg),
             LogLevel::Info => self.info(msg),
             LogLevel::Debug => self.debug(msg),
             LogLevel::Trace => self.trace(msg),

@@ -12,7 +12,7 @@ async fn main() {
     match cli.command {
         cli::Commands::Build(_args) => {}
         cli::Commands::Compile(args) => {
-            compile_cmd::command(args, cli.verbosity).await;
+            compile_cmd::command(args).await;
         }
         cli::Commands::Test(_args) => {
             //

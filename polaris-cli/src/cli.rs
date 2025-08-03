@@ -5,8 +5,6 @@ use clap::{Args, Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
-    #[arg(short, long, default_value_t = 1)]
-    pub verbosity: u8,
 }
 
 #[derive(Args)]
@@ -17,6 +15,8 @@ pub struct BuildArgs {
     pub target: Option<String>,
     #[arg(short, long)]
     pub opt: Option<i8>,
+    #[arg(short, long, default_value_t = 1)]
+    pub verbosity: u8,
 }
 
 #[derive(Args)]
@@ -28,12 +28,18 @@ pub struct CompileArgs {
     pub target: Option<String>,
     #[arg(short, long)]
     pub opt: Option<i8>,
+    #[arg(short, long, default_value_t = 1)]
+    pub verbosity: u8,
+    #[arg(short, long)]
+    pub werror: bool,
 }
 
 #[derive(Args)]
 pub struct TestArgs {
     #[arg(short, long)]
     pub tests: Option<Vec<String>>,
+    #[arg(short, long, default_value_t = 1)]
+    pub verbosity: u8,
 }
 
 #[derive(Args)]
@@ -44,6 +50,8 @@ pub struct NewArgs {
     pub bin: bool,
     #[arg(short, long)]
     pub lib: bool,
+    #[arg(short, long, default_value_t = 1)]
+    pub verbosity: u8,
 }
 
 #[derive(Subcommand)]

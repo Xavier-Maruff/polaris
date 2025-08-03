@@ -1,11 +1,26 @@
-@module add;
+@module;
 @import std::io;
 
-@test "Some test"
+@test name = "Some test";
 func some_test(): result<void> {
   assert(add(1, 2) == 3)?;
 
   return ok(());
+}
+
+struct Add {
+  a: int32,
+  b: int32,
+}
+
+interface AddInterface {
+  add(a: int32, b: int32): int32;
+}
+
+impl AddInterface for Add {
+  add(a: int32, b: int32): int32 {
+    return a + b;
+  }
 }
 
 func add(a: int32, b: int32): int32 {
@@ -19,4 +34,8 @@ func main() {
   let result = add(a, b);
 
   println!("Sum: {}", result);
+
+  (a, b) => {
+    println!("The sum of {} and {} is {}", a, b, result);
+  }
 }

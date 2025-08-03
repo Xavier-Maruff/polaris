@@ -1,22 +1,42 @@
 use crate::{
     log,
     parse::{
-        error::DiagnosticErr,
+        diagnostic::Diagnostic,
         parse::{AstNode, ParseContext},
     },
 };
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-pub struct CompileContext<'a> {
-    pub logger: &'a log::Logger,
+pub struct CompileContext {
+    pub logger: log::Logger,
+    pub translation_units: Arc<Mutex<Vec<AstNode>>>,
 }
 
-impl<'a> CompileContext<'a> {
-    pub fn new(logger: &'a log::Logger) -> Self {
-        Self { logger }
+impl CompileContext {
+    pub fn new(logger: log::Logger) -> Self {
+        Self {
+            logger,
+            translation_units: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
-    pub fn parse(&self, file: String, source: String) -> Result<AstNode, Vec<DiagnosticErr>> {
-        let parser = ParseContext::new(file, source, self.logger);
-        parser.parse()
+    pub async fn add_translation_unit(&mut self, unit: AstNode) {
+        let mut units = self.translation_units.lock().await;
+        units.push(unit);
+    }
+
+    pub async fn get_diagnostics(&mut self) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
+        let mut warnings = Vec::new();
+        let mut errors = Vec::new();
+        let units = self.translation_units.lock().await;
+
+        //todo: parallel impl
+        for unit in units.iter() {
+            warnings.extend(unit.warnings());
+            errors.extend(unit.errors());
+        }
+
+        (warnings, errors)
     }
 }
