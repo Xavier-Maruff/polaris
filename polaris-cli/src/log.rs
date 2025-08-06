@@ -75,7 +75,7 @@ impl CliLogger {
 
     pub fn step(&self, step: &str, msg: &str) {
         let mut buf = StandardStream::stdout(termcolor::ColorChoice::Auto);
-        buf.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)))
+        buf.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)))
             .unwrap();
         write!(&mut buf, "{:>10}", step).unwrap();
         buf.reset().unwrap();

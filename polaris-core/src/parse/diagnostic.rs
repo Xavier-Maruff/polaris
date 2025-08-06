@@ -27,6 +27,8 @@ pub enum DiagnosticMsgType {
     IllegalName,
     UnterminatedString,
     UnexpectedEOF,
+    InvalidAstOperation,
+    UnsupportedFeature,
     //todo
 }
 
@@ -42,6 +44,8 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         DiagnosticMsgType::IllegalName => "E0008",
         DiagnosticMsgType::UnterminatedString => "E0009",
         DiagnosticMsgType::UnexpectedEOF => "E0010",
+        DiagnosticMsgType::InvalidAstOperation => "E0011",
+        DiagnosticMsgType::UnsupportedFeature => "E0012",
         // todo
     }
 }

@@ -1,16 +1,13 @@
 use crate::{
     log,
-    parse::{
-        diagnostic::Diagnostic,
-        parse::{AstNode, ParseContext},
-    },
+    parse::{ast::Node, diagnostic::Diagnostic, parse::ParseContext},
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub struct CompileContext {
     pub logger: log::Logger,
-    pub translation_units: Arc<Mutex<Vec<AstNode>>>,
+    pub translation_units: Arc<Mutex<Vec<Node>>>,
 }
 
 impl CompileContext {
@@ -21,7 +18,7 @@ impl CompileContext {
         }
     }
 
-    pub async fn add_translation_unit(&mut self, unit: AstNode) {
+    pub async fn add_translation_unit(&mut self, unit: Node) {
         let mut units = self.translation_units.lock().await;
         units.push(unit);
     }

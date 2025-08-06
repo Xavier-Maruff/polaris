@@ -35,7 +35,12 @@ pub async fn command(args: CompileArgs) {
                     });
                 }
             };
-            Ok(ParseContext::new(&logger_clone).parse(file.clone(), source))
+            let ast = ParseContext::new(&logger_clone).parse(file.clone(), source);
+
+            println!("{}", ast);
+            //println!("{:#?}", ast);
+            logger_clone.step("Parsed", &file);
+            Ok(ast)
         }));
     }
 
@@ -69,7 +74,9 @@ pub async fn command(args: CompileArgs) {
     if comp_failed {
         logger.error("Compilation failed due to errors.");
     } else if comp_warned {
-        logger.warn("Compilation completed with warnings.");
+        logger.step("Finished", "Compiled with warnings");
+    } else {
+        logger.step("Finished", "Compiled successfully");
     }
 
     logger.quit();

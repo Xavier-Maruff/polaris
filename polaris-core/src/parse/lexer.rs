@@ -57,8 +57,25 @@ impl Lexer {
                 '\'' => return self.consume_char(),
                 '@' => return Ok(self.consume_directive()),
 
-                '+' | '-' | '*' | '%' | '^' | '~' | '&' | '|' | '=' | '!' | '<' | '>' => {
+                '+' | '-' | '*' | '%' | '^' | '~' | '&' | '|' | '!' | '<' | '>' => {
                     return Ok(self.consume_operator());
+                }
+                '=' => {
+                    if let Some(next_char) = self.peek() {
+                        if next_char == '>' {
+                            self.advance();
+                            self.advance();
+                            return Ok(Token {
+                                variant: TokenVariant::Arrow,
+                                span: CodeSpan {
+                                    start: self.position - 2,
+                                    end: self.position,
+                                },
+                            });
+                        }
+
+                        return Ok(self.consume_operator());
+                    }
                 }
                 '/' => {
                     if let Some(next_char) = self.peek() {
@@ -258,24 +275,13 @@ impl Lexer {
             }
         }
 
-        if self.current_char == Some('!') {
-            self.advance();
-            return Token {
-                variant: TokenVariant::MacroIdent(
-                    self.source[start..self.position - 1].to_string(),
-                ),
-                span: CodeSpan {
-                    start,
-                    end: self.position - 1,
-                },
-            };
-        }
 
         let ident_str = self.source[start..self.position - 1].to_string();
         Token {
             variant: match ident_str.as_str() {
                 "func" => TokenVariant::Func,
                 "let" => TokenVariant::Let,
+                "mod" => TokenVariant::Mod,
                 "return" => TokenVariant::Return,
                 "if" => TokenVariant::If,
                 "else" => TokenVariant::Else,
@@ -285,6 +291,15 @@ impl Lexer {
                 "impl" => TokenVariant::Impl,
                 "enum" => TokenVariant::Enum,
                 "priv" => TokenVariant::Priv,
+                "type" => TokenVariant::Type,
+                "in" => TokenVariant::In,
+                "ref" => TokenVariant::Ref,
+                "weak" => TokenVariant::Weak,
+                "match" => TokenVariant::Match,
+                "yield" => TokenVariant::Yield,
+                "break" => TokenVariant::Break,
+                "continue" => TokenVariant::Continue,
+                "assert" => TokenVariant::Assert,
                 _ => TokenVariant::Ident(ident_str),
             },
             span: CodeSpan {
@@ -511,7 +526,7 @@ impl Lexer {
     pub fn consume_comment(&mut self) -> Token {
         self.advance(); // skip /
         self.advance(); // skip /
-        let start = self.position;
+        let start = self.position-1;
 
         while let Some(c) = self.current_char {
             if c == '\n' {

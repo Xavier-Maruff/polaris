@@ -1,24 +1,104 @@
-@module;
-@import std::io;
 
-@test name = "Some test";
-func some_test(): result<void> {
-  assert(add(1, 2) == 3)?;
+func test_closure(val: int32): int32 {
+    let a: int32 = 12;
+    let test_func = func[ref a](val: int32): int32 {
+        return a + val;
+    };
 
-  return ok(());
+    let my_list = [-1, 2, 3, 4, 5];
+    //let val = my_list[2];
+    my_list.push(6)[8][expr] = test.val;
+
+    //return test_func(val);
 }
 
-struct Add {
-  a: int32,
+/*
+
+func ref_semantics(i: ref int32, j: weak int32) {
+    //arc ref
+    i = 12;
+    let b = ref i;
+
+    //must unwrap weak ref
+    let inner = match j {
+        Some(ref inner) => inner,
+        None => {
+            return;
+        },
+    };
+
+    let enum_val = MyEnum::Variant1(inner);
+    let enum_val2 = MyEnum::Variant2(struct {
+    a: 12,
+    b: 14,
+    });
+    let enum_val3 = MyEnum::Variant3;
+    let enum_val4 = MyEnum::Variant4(12, 14);
+}
+
+
+func test() {
+  let a: int32 = 12;
+  a = 12;
+  return (12+test(b))/c;
+}
+
+enum Result::<T, E> {
+  Ok(T),
+  Err(E),
+}
+
+@module polaris;
+@import std::io;
+
+struct Add::<T> {
+  a: int32::<T>,
   b: int32,
 }
 
 interface AddInterface {
-  add(a: int32, b: int32): int32;
+  func add(a: int32, b: int32): int32;
+  func subtract(a: int32, b: int32): int32 {
+    //return a - b;
+    test::val::<int32>;
+  }
 }
 
+impl AddInterface for Add::<T> {
+  func add(a: int32, b: int32): int32 {
+    return a;
+    for let mod a in b {
+       b;
+    }
+
+    return struct {
+       test: "val",
+    };
+
+    return struct::Add {
+      a: 12 + b,
+      b: 14,
+    };
+  }
+
+  func subtract(a: int32, b: int32): int32 {
+    if a {
+        return b;
+    } else if b {
+        return a;
+    } else {
+        return 0;
+    }
+  }
+}
+
+
+
+type SomeType = Result::<int32, string>;
+
+
 impl AddInterface for Add {
-  add(a: int32, b: int32): int32 {
+  func add(a: int32, b: int32): int32 {
     return a + b;
   }
 }
@@ -30,12 +110,6 @@ func add(a: int32, b: int32): int32 {
 func main() {
   let a: int32 = io::input("First number: ");
   let b: int32 = io::input("Second number: ");
-
-  let result = add(a, b);
-
-  println!("Sum: {}", result);
-
-  (a, b) => {
-    println!("The sum of {} and {} is {}", a, b, result);
-  }
 }
+
+*/

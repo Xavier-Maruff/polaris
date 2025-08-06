@@ -51,15 +51,25 @@ pub enum TokenVariant {
     //keywords
     Func,
     Let,
+    Mod,
     Return,
     If,
     Else,
     For,
+    In,
     Struct,
     Interface,
     Impl,
     Enum,
     Priv,
+    Type,
+    Ref,
+    Weak,
+    Match,
+    Yield,
+    Break,
+    Continue,
+    Assert,
 
     //comment (token, multiline)
     Comment((String, bool)),
@@ -76,18 +86,62 @@ pub struct Token {
 }
 
 impl TokenVariant {
-    pub fn precedence(&self) -> Option<u8> {
+    pub fn precedence(&self) -> u8 {
         match self {
-            TokenVariant::Plus | TokenVariant::Minus => Some(1),
-            TokenVariant::Star | TokenVariant::Slash | TokenVariant::Percent => Some(2),
-            TokenVariant::BitAnd | TokenVariant::BitOr | TokenVariant::BitXor => Some(3),
+            TokenVariant::Assign => 1,
+            TokenVariant::Or => 2,
+            TokenVariant::And => 3,
+            TokenVariant::BitOr => 4,
+            TokenVariant::BitXor => 5,
+            TokenVariant::BitAnd => 6,
+            TokenVariant::Equiv | TokenVariant::NotEquiv => 7,
             TokenVariant::LessThan
             | TokenVariant::LessThanEquiv
             | TokenVariant::GreaterThan
-            | TokenVariant::GreaterThanEquiv => Some(4),
-            TokenVariant::Equiv | TokenVariant::NotEquiv => Some(5),
-            _ => None,
+            | TokenVariant::GreaterThanEquiv => 8,
+            TokenVariant::Plus | TokenVariant::Minus => 9,
+            TokenVariant::Star | TokenVariant::Slash | TokenVariant::Percent => 10,
+            TokenVariant::Not | TokenVariant::BitNot => 11,
+            TokenVariant::LParen
+            | TokenVariant::RParen
+            | TokenVariant::LBracket
+            | TokenVariant::RBracket
+            | TokenVariant::LBrace
+            | TokenVariant::RBrace
+            | TokenVariant::Dot
+            | TokenVariant::Comma
+            | TokenVariant::Semicolon
+            | TokenVariant::Colon
+            | TokenVariant::Arrow
+            | TokenVariant::DoubleColon
+            | TokenVariant::QuestionMark
+            | TokenVariant::Ellipsis => 12,
+            _ => 0,
         }
+    }
+
+    pub fn is_operator(&self) -> bool {
+        matches!(
+            self,
+            TokenVariant::Plus
+                | TokenVariant::Minus
+                | TokenVariant::Star
+                | TokenVariant::Slash
+                | TokenVariant::Percent
+                | TokenVariant::Equiv
+                | TokenVariant::NotEquiv
+                | TokenVariant::LessThan
+                | TokenVariant::LessThanEquiv
+                | TokenVariant::GreaterThan
+                | TokenVariant::GreaterThanEquiv
+                | TokenVariant::BitAnd
+                | TokenVariant::BitOr
+                | TokenVariant::BitXor
+                | TokenVariant::BitNot
+                | TokenVariant::And
+                | TokenVariant::Or
+                | TokenVariant::Not
+        )
     }
 }
 
@@ -136,15 +190,25 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::Ellipsis => write!(f, "..."),
             TokenVariant::Func => write!(f, "func"),
             TokenVariant::Let => write!(f, "let"),
+            TokenVariant::Type => write!(f, "type"),
+            TokenVariant::Mod => write!(f, "mod"),
             TokenVariant::Return => write!(f, "return"),
             TokenVariant::If => write!(f, "if"),
             TokenVariant::Else => write!(f, "else"),
             TokenVariant::For => write!(f, "for"),
+            TokenVariant::In => write!(f, "in"),
             TokenVariant::Struct => write!(f, "struct"),
             TokenVariant::Interface => write!(f, "interface"),
             TokenVariant::Impl => write!(f, "impl"),
             TokenVariant::Enum => write!(f, "enum"),
             TokenVariant::Priv => write!(f, "priv"),
+            TokenVariant::Ref => write!(f, "ref"),
+            TokenVariant::Weak => write!(f, "weak"),
+            TokenVariant::Match => write!(f, "match"),
+            TokenVariant::Yield => write!(f, "yield"),
+            TokenVariant::Break => write!(f, "break"),
+            TokenVariant::Continue => write!(f, "continue"),
+            TokenVariant::Assert => write!(f, "assert"),
             TokenVariant::Comment(s) => match s {
                 (text, true) => write!(f, "/*{}*/", text),
                 (text, false) => write!(f, "//{}", text),
