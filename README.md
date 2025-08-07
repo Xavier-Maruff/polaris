@@ -171,14 +171,14 @@ for item in my_vec {
 }
 
 //iterating until a condition evaluates to false
-let mut i = 0;
+let mod i = 0;
 for i < 5 {
 	@println(i);
 	i += 1;
 }
 
 //iterating infinitely
-let mut j = 0;
+let mod j = 0;
 for {
 	@println(j);
 	j += 1;
@@ -361,7 +361,7 @@ The Polaris compiler tries to automatically parallelise where it makes performan
 func sum_vecs(vec1: vector::<int32>, vec2: vector::<int32>) {
 	assert(vec1.len() == vec2.len(), "Vectors must be of the same length");
 
-	let mut result = vector::<int32>::new(arr1.len());
+	let mod result = vector::<int32>::new(arr1.len());
 	for i in range(0, vec1.len()) {
 		result[i] = vec1[i] + vec2[i];
 	}
