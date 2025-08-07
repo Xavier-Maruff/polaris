@@ -10,6 +10,12 @@ pub struct CodeSpan {
     pub end: usize,
 }
 
+impl CodeSpan {
+    pub fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
 pub struct ParseContext<'a> {
     logger: &'a log::Logger,
     curr_tok: Token,
@@ -143,6 +149,7 @@ impl<'a> ParseContext<'a> {
     }
 
     fn parse_return_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Return));
 
         let mut value = None;
@@ -150,12 +157,14 @@ impl<'a> ParseContext<'a> {
             value = Some(Box::new(self.parse_expr(ast, lexer, false)?));
         }
 
+        span.end = lexer.current_position();
         wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
 
-        Ok(Node::new(Variant::Return { value }))
+        Ok(Node::new_with_span(Variant::Return { value }, span))
     }
 
     fn parse_if_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::If));
 
         //not allowing if let yet until pattern matching working properly
@@ -212,14 +221,20 @@ impl<'a> ParseContext<'a> {
             None
         };
 
-        Ok(Node::new(Variant::If {
-            condition,
-            then_branch: Box::new(Node::new(Variant::Block { children: body })),
-            else_branch: else_body,
-        }))
+        span.end = lexer.current_position();
+
+        Ok(Node::new_with_span(
+            Variant::If {
+                condition,
+                then_branch: Box::new(Node::new(Variant::Block { children: body })),
+                else_branch: else_body,
+            },
+            span,
+        ))
     }
 
     fn parse_for_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::For));
 
         let mut variant = ForVariant::ForInfinite;
@@ -287,23 +302,37 @@ impl<'a> ParseContext<'a> {
         }
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
-        Ok(Node::new(Variant::For {
-            variant,
-            body: Box::new(Node::new(Variant::Block { children: body })),
-        }))
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::For {
+                variant,
+                body: Box::new(Node::new(Variant::Block { children: body })),
+            },
+            span,
+        ))
     }
 
     fn parse_type_decl(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
+
         wrap_err!(ast, self.expect(lexer, TokenVariant::Type));
+
         let ident = Box::new(self.parse_ident(ast, lexer)?);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Assign));
+
         let alias_of = Box::new(self.parse_ident(ast, lexer)?);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
 
-        Ok(Node::new(Variant::TypeDecl { ident, alias_of }))
+        span.end = lexer.current_position();
+
+        Ok(Node::new_with_span(
+            Variant::TypeDecl { ident, alias_of },
+            span,
+        ))
     }
 
     fn parse_yield_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Yield));
 
         let value = if self.curr_tok.variant != TokenVariant::Semicolon {
@@ -313,11 +342,13 @@ impl<'a> ParseContext<'a> {
         };
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
+        span.end = lexer.current_position();
 
-        Ok(Node::new(Variant::Yield { value }))
+        Ok(Node::new_with_span(Variant::Yield { value }, span))
     }
 
     fn parse_assert_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Assert));
         wrap_err!(ast, self.expect(lexer, TokenVariant::LParen));
 
@@ -331,10 +362,15 @@ impl<'a> ParseContext<'a> {
         wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
         wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
 
-        Ok(Node::new(Variant::Assert {
-            condition,
-            messages,
-        }))
+        span.end = lexer.current_position();
+
+        Ok(Node::new_with_span(
+            Variant::Assert {
+                condition,
+                messages,
+            },
+            span,
+        ))
     }
 
     fn parse_statement(
@@ -357,14 +393,18 @@ impl<'a> ParseContext<'a> {
             TokenVariant::Impl => self.parse_impl_decl(ast, lexer),
             TokenVariant::Type => self.parse_type_decl(ast, lexer),
             TokenVariant::Break => {
+                let mut span = CodeSpan::new(lexer.current_position(), 0);
                 wrap_err!(ast, self.expect(lexer, TokenVariant::Break));
                 wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
-                Ok(Node::new(Variant::Break))
+                span.end = lexer.current_position();
+                Ok(Node::new_with_span(Variant::Break, span))
             }
             TokenVariant::Continue => {
+                let mut span = CodeSpan::new(lexer.current_position(), 0);
                 wrap_err!(ast, self.expect(lexer, TokenVariant::Continue));
                 wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
-                Ok(Node::new(Variant::Continue))
+                span.end = lexer.current_position();
+                Ok(Node::new_with_span(Variant::Continue, span))
             }
             TokenVariant::Assert => self.parse_assert_stmt(ast, lexer),
 
@@ -382,6 +422,7 @@ impl<'a> ParseContext<'a> {
         lexer: &mut Lexer,
         body_required: bool,
     ) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Func));
 
         let mut ident = None;
@@ -466,16 +507,22 @@ impl<'a> ParseContext<'a> {
             return Err(());
         }
 
-        Ok(Node::new(Variant::FuncDecl {
-            ident,
-            params,
-            return_type,
-            body,
-            capture_list,
-        }))
+        span.end = lexer.current_position();
+
+        Ok(Node::new_with_span(
+            Variant::FuncDecl {
+                ident,
+                params,
+                return_type,
+                body,
+                capture_list,
+            },
+            span,
+        ))
     }
 
     fn parse_directive(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         let mut args = Vec::new();
         let name = match &self.curr_tok.variant {
             TokenVariant::DirectiveIdent(name) => name.clone(),
@@ -509,7 +556,8 @@ impl<'a> ParseContext<'a> {
             wrap_err!(ast, self.advance(lexer));
         }
 
-        let node = Node::new(Variant::Directive { name, args });
+        span.end = lexer.current_position();
+        let node = Node::new_with_span(Variant::Directive { name, args }, span);
 
         Ok(node)
     }
@@ -530,6 +578,7 @@ impl<'a> ParseContext<'a> {
     }
 
     fn parse_var_decl(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Let));
 
         let mut modifiable = false;
@@ -556,12 +605,16 @@ impl<'a> ParseContext<'a> {
 
             wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
 
-            Ok(Node::new(Variant::VarDecl {
-                name,
-                var_type,
-                modifiable,
-                initialiser,
-            }))
+            span.end = lexer.current_position();
+            Ok(Node::new_with_span(
+                Variant::VarDecl {
+                    name,
+                    var_type,
+                    modifiable,
+                    initialiser,
+                },
+                span,
+            ))
         } else {
             ast.add_error(Diagnostic {
                 primary: diagnostic::DiagnosticMsg {
@@ -627,6 +680,7 @@ impl<'a> ParseContext<'a> {
     }
 
     fn parse_struct_decl(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Struct));
 
         let ident = self.parse_ident(ast, lexer)?;
@@ -635,14 +689,20 @@ impl<'a> ParseContext<'a> {
         let fields = self.parse_stuct_decl_fields(ast, lexer)?;
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
-        Ok(Node::new(Variant::StructDecl {
-            ident: Box::new(ident),
-            fields,
-        }))
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::StructDecl {
+                ident: Box::new(ident),
+                fields,
+            },
+            span,
+        ))
     }
 
     fn parse_func_param(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         let mut modifiable = false;
+
         if matches!(self.curr_tok.variant, TokenVariant::Mod) {
             modifiable = true;
             wrap_err!(ast, self.advance(lexer));
@@ -673,15 +733,20 @@ impl<'a> ParseContext<'a> {
 
         let field_type = self.parse_ident(ast, lexer)?;
 
-        Ok(Node::new(Variant::VarDecl {
-            name,
-            var_type: Some(Box::new(field_type)),
-            initialiser: None,
-            modifiable,
-        }))
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::VarDecl {
+                name,
+                var_type: Some(Box::new(field_type)),
+                initialiser: None,
+                modifiable,
+            },
+            span,
+        ))
     }
 
     fn parse_interface_decl(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Interface));
 
         let name = match &self.curr_tok.variant {
@@ -719,10 +784,14 @@ impl<'a> ParseContext<'a> {
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
-        Ok(Node::new(Variant::InterfaceDecl {
-            name,
-            interface: functions,
-        }))
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::InterfaceDecl {
+                name,
+                interface: functions,
+            },
+            span,
+        ))
     }
 
     fn parse_ident_expr(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
@@ -730,6 +799,7 @@ impl<'a> ParseContext<'a> {
     }
 
     fn parse_struct_literal(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Struct));
 
         let mut struct_ident = None;
@@ -743,10 +813,14 @@ impl<'a> ParseContext<'a> {
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
-        Ok(Node::new(Variant::Expr(ExprNode::StructLit {
-            struct_ident,
-            fields,
-        })))
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::Expr(ExprNode::StructLit {
+                struct_ident,
+                fields,
+            }),
+            span,
+        ))
     }
 
     fn parse_struct_literal_fields(
@@ -783,6 +857,8 @@ impl<'a> ParseContext<'a> {
     }
 
     fn parse_impl_decl(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
+
         wrap_err!(ast, self.expect(lexer, TokenVariant::Impl));
         let interface_name = self.parse_ident(ast, lexer)?;
 
@@ -815,14 +891,19 @@ impl<'a> ParseContext<'a> {
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
-        Ok(Node::new(Variant::ImplDecl {
-            interface: Box::new(interface_name),
-            target: Box::new(target_struct),
-            methods,
-        }))
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::ImplDecl {
+                interface: Box::new(interface_name),
+                target: Box::new(target_struct),
+                methods,
+            },
+            span,
+        ))
     }
 
     fn parse_match_expr(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Match));
 
         let subject = Box::new(self.parse_expr(ast, lexer, false)?);
@@ -852,10 +933,16 @@ impl<'a> ParseContext<'a> {
         }
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
-        Ok(Node::new(Variant::Expr(ExprNode::Match { subject, cases })))
+
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::Expr(ExprNode::Match { subject, cases }),
+            span,
+        ))
     }
 
     fn parse_enum_decl(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Enum));
 
         let ident = self.parse_ident(ast, lexer)?;
@@ -893,10 +980,14 @@ impl<'a> ParseContext<'a> {
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
-        Ok(Node::new(Variant::EnumDecl {
-            ident: Box::new(ident),
-            variants,
-        }))
+        span.end = lexer.current_position();
+        Ok(Node::new_with_span(
+            Variant::EnumDecl {
+                ident: Box::new(ident),
+                variants,
+            },
+            span,
+        ))
     }
 
     fn parse_expr(
@@ -914,10 +1005,12 @@ impl<'a> ParseContext<'a> {
         lexer: &mut Lexer,
     ) -> Result<Option<UnaryOp>, ()> {
         match self.curr_tok.variant {
-            TokenVariant::BitNot | TokenVariant::Minus | TokenVariant::Not => {
+            TokenVariant::BitNot | TokenVariant::Minus | TokenVariant::Not | TokenVariant::Star => {
                 let op = match self.curr_tok.variant {
                     TokenVariant::Minus => UnaryOp::Minus,
                     TokenVariant::Not => UnaryOp::Not,
+                    TokenVariant::BitNot => UnaryOp::BitNot,
+                    TokenVariant::Star => UnaryOp::Deref,
                     _ => unreachable!(),
                 };
                 wrap_err!(ast, self.advance(lexer));
@@ -934,16 +1027,22 @@ impl<'a> ParseContext<'a> {
         min_prec: u8,
         disallow_angles: bool,
     ) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
+
         let prefix = self.parse_expr_prefix(ast, lexer)?;
         let mut lhs = self.parse_primary_expr(ast, lexer)?;
 
         lhs = self.parse_expr_postfix(ast, lexer, lhs)?;
 
         if let Some(prefix) = prefix {
-            lhs = Node::new(Variant::Expr(ExprNode::UnaryOp {
-                op: prefix,
-                operand: Box::new(lhs),
-            }));
+            span.end = lexer.current_position();
+            lhs = Node::new_with_span(
+                Variant::Expr(ExprNode::UnaryOp {
+                    op: prefix,
+                    operand: Box::new(lhs),
+                }),
+                span.clone(),
+            );
         }
 
         while let Some(op) = self.get_binary_op(&self.curr_tok.variant) {
@@ -961,11 +1060,16 @@ impl<'a> ParseContext<'a> {
             wrap_err!(ast, self.advance(lexer));
 
             let rhs = self.parse_prec(ast, lexer, prec + 1, disallow_angles)?;
-            lhs = Node::new(Variant::Expr(ExprNode::BinaryOp {
-                lhs: Box::new(lhs),
-                op,
-                rhs: Box::new(rhs),
-            }));
+
+            span.end = lexer.current_position();
+            lhs = Node::new_with_span(
+                Variant::Expr(ExprNode::BinaryOp {
+                    lhs: Box::new(lhs),
+                    op,
+                    rhs: Box::new(rhs),
+                }),
+                span.clone(),
+            );
         }
 
         while matches!(self.curr_tok.variant, TokenVariant::LBracket) {
@@ -973,10 +1077,14 @@ impl<'a> ParseContext<'a> {
             let index = Box::new(self.parse_expr(ast, lexer, false)?);
             wrap_err!(ast, self.expect(lexer, TokenVariant::RBracket));
 
-            lhs = Node::new(Variant::Expr(ExprNode::Index {
-                base: Box::new(lhs),
-                index,
-            }));
+            span.end = lexer.current_position();
+            lhs = Node::new_with_span(
+                Variant::Expr(ExprNode::Index {
+                    base: Box::new(lhs),
+                    index,
+                }),
+                span.clone(),
+            );
         }
 
         //lhs = self.parse_expr_postfix(ast, lexer, lhs)?;
@@ -990,6 +1098,7 @@ impl<'a> ParseContext<'a> {
         lexer: &mut Lexer,
         parent: Node,
     ) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         let mut parent = parent;
         loop {
             match self.curr_tok.variant {
@@ -997,10 +1106,15 @@ impl<'a> ParseContext<'a> {
                     wrap_err!(ast, self.advance(lexer));
                     let index = Box::new(self.parse_prec(ast, lexer, 0, false)?);
                     wrap_err!(ast, self.expect(lexer, TokenVariant::RBracket));
-                    parent = Node::new(Variant::Expr(ExprNode::Index {
-                        base: Box::new(parent),
-                        index,
-                    }));
+
+                    span.end = lexer.current_position();
+                    parent = Node::new_with_span(
+                        Variant::Expr(ExprNode::Index {
+                            base: Box::new(parent),
+                            index,
+                        }),
+                        span,
+                    );
                 }
                 TokenVariant::LParen => {
                     wrap_err!(ast, self.advance(lexer));
@@ -1010,18 +1124,27 @@ impl<'a> ParseContext<'a> {
                     }
                     wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
 
-                    parent = Node::new(Variant::Expr(ExprNode::Call {
-                        callee: Box::new(parent),
-                        args,
-                    }));
+                    span.end = lexer.current_position();
+                    parent = Node::new_with_span(
+                        Variant::Expr(ExprNode::Call {
+                            callee: Box::new(parent),
+                            args,
+                        }),
+                        span,
+                    );
                 }
                 TokenVariant::Dot => {
                     wrap_err!(ast, self.advance(lexer));
                     let field = self.parse_ident(ast, lexer)?;
-                    parent = Node::new(Variant::Expr(ExprNode::FieldAccess {
-                        base: Box::new(parent),
-                        field: Box::new(field),
-                    }));
+
+                    span.end = lexer.current_position();
+                    parent = Node::new_with_span(
+                        Variant::Expr(ExprNode::FieldAccess {
+                            base: Box::new(parent),
+                            field: Box::new(field),
+                        }),
+                        span,
+                    );
                 }
                 _ => {
                     break; // no more postfix operators
@@ -1059,6 +1182,7 @@ impl<'a> ParseContext<'a> {
     }
 
     fn parse_ident_unqualified(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
         let mut node = match &self.curr_tok.variant {
             TokenVariant::Ident(name) => Node::new(Variant::Expr(ExprNode::Ident {
                 qualifier: false,
@@ -1121,10 +1245,15 @@ impl<'a> ParseContext<'a> {
             }
         }
 
+        span.end = lexer.current_position();
+        node.span = Some(span);
+
         Ok(node)
     }
 
     fn parse_ident(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
+
         let memory_mode = match self.curr_tok.variant {
             TokenVariant::Ref => {
                 wrap_err!(ast, self.advance(lexer));
@@ -1175,6 +1304,7 @@ impl<'a> ParseContext<'a> {
 
         namespaces.reverse();
 
+        span.end = lexer.current_position();
         Ok(Node {
             variant: Variant::Expr(ExprNode::QualifiedIdent {
                 namespaces: namespaces,
@@ -1184,6 +1314,7 @@ impl<'a> ParseContext<'a> {
             }),
             warnings,
             errors,
+            span: Some(span),
         })
     }
 
@@ -1198,11 +1329,15 @@ impl<'a> ParseContext<'a> {
                 expr
             }
             TokenVariant::LBracket => {
+                let mut span = CodeSpan::new(lexer.current_position(), 0);
+
                 advance = false;
                 wrap_err!(ast, self.advance(lexer));
                 let elements = self.parse_list(ast, lexer, false)?;
                 wrap_err!(ast, self.expect(lexer, TokenVariant::RBracket));
-                Node::new(Variant::Expr(ExprNode::ListLit { elements }))
+
+                span.end = lexer.current_position();
+                Node::new_with_span(Variant::Expr(ExprNode::ListLit { elements }), span)
             }
             TokenVariant::Match => {
                 advance = false;
@@ -1220,14 +1355,22 @@ impl<'a> ParseContext<'a> {
                 advance = false;
                 self.parse_struct_literal(ast, lexer)?
             }
-            TokenVariant::StringLit(s) => Node::new(Variant::Expr(ExprNode::String(s.clone()))),
-            TokenVariant::IntLit(i) => {
-                Node::new(Variant::Expr(ExprNode::IntLit(i.parse::<i64>().unwrap())))
-            }
-            TokenVariant::FloatLit(f) => {
-                Node::new(Variant::Expr(ExprNode::FloatLit(f.parse::<f64>().unwrap())))
-            }
-            TokenVariant::CharLit(c) => Node::new(Variant::Expr(ExprNode::CharLit(c.clone()))),
+            TokenVariant::StringLit(s) => Node::new_with_span(
+                Variant::Expr(ExprNode::String(s.clone())),
+                self.curr_tok.span,
+            ),
+            TokenVariant::IntLit(i) => Node::new_with_span(
+                Variant::Expr(ExprNode::IntLit(i.parse::<i64>().unwrap())),
+                self.curr_tok.span,
+            ),
+            TokenVariant::FloatLit(f) => Node::new_with_span(
+                Variant::Expr(ExprNode::FloatLit(f.parse::<f64>().unwrap())),
+                self.curr_tok.span,
+            ),
+            TokenVariant::CharLit(c) => Node::new_with_span(
+                Variant::Expr(ExprNode::CharLit(c.clone())),
+                self.curr_tok.span,
+            ),
             _ => {
                 ast.add_error(Diagnostic {
                     primary: diagnostic::DiagnosticMsg {
@@ -1235,10 +1378,7 @@ impl<'a> ParseContext<'a> {
                             "Unexpected token in expression: {:?}",
                             self.curr_tok.variant
                         ),
-                        span: CodeSpan {
-                            start: self.curr_tok.span.start,
-                            end: self.curr_tok.span.end,
-                        },
+                        span: self.curr_tok.span,
                         file: lexer.file.clone(),
                         err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
                     },
@@ -1252,16 +1392,6 @@ impl<'a> ParseContext<'a> {
         if advance {
             wrap_err!(ast, self.advance(lexer));
         }
-
-        /*while matches!(self.curr_tok.variant, TokenVariant::LBracket) {
-            wrap_err!(ast, self.advance(lexer));
-            let index = self.parse_expr(ast, lexer, false)?;
-            wrap_err!(ast, self.expect(lexer, TokenVariant::RBracket));
-            node = Node::new(Variant::Expr(ExprNode::Index {
-                base: Box::new(node),
-                index: Box::new(index),
-            }));
-        }*/
 
         Ok(node)
     }

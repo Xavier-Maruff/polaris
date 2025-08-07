@@ -1,12 +1,13 @@
 use std::fmt;
 
-use crate::parse::diagnostic::Diagnostic;
+use crate::parse::{diagnostic::Diagnostic, parse::CodeSpan};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub variant: Variant,
     pub warnings: Option<Vec<Diagnostic>>,
     pub errors: Option<Vec<Diagnostic>>,
+    pub span: Option<CodeSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -324,6 +325,7 @@ pub enum UnaryOp {
     Minus,
     Not,
     BitNot,
+    Deref,
 }
 
 impl fmt::Display for UnaryOp {
@@ -332,6 +334,7 @@ impl fmt::Display for UnaryOp {
             UnaryOp::Minus => write!(f, "-"),
             UnaryOp::Not => write!(f, "!"),
             UnaryOp::BitNot => write!(f, "~"),
+            UnaryOp::Deref => write!(f, "*"),
         }
     }
 }
@@ -366,6 +369,16 @@ impl Node {
     pub fn new(variant: Variant) -> Self {
         Self {
             variant,
+            span: None,
+            warnings: None,
+            errors: None,
+        }
+    }
+
+    pub fn new_with_span(variant: Variant, span: CodeSpan) -> Self {
+        Self {
+            variant,
+            span: Some(span),
             warnings: None,
             errors: None,
         }

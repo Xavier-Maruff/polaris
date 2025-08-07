@@ -1,6 +1,6 @@
 
-func test_closure(val: int32): int32 {
-    let a: int32 = 12;
+func test_closure(val: ref int32): int32 {
+    let mod a: int32 = 12;
     let test_func = func[ref a](val: int32): int32 {
         return a + val;
     };
@@ -9,15 +9,21 @@ func test_closure(val: int32): int32 {
     //let val = my_list[2];
     my_list.push(6)[8][expr] = test.val;
 
+    let val = MyEnum::Variant2(struct {
+        a: 12,
+        b: 14,
+    });
+
     //return test_func(val);
 }
 
-/*
+
 
 func ref_semantics(i: ref int32, j: weak int32) {
-    //arc ref
     i = 12;
-    let b = ref i;
+    let b: ref int32 = ref i;
+
+    *b = -14;
 
     //must unwrap weak ref
     let inner = match j {
@@ -29,13 +35,14 @@ func ref_semantics(i: ref int32, j: weak int32) {
 
     let enum_val = MyEnum::Variant1(inner);
     let enum_val2 = MyEnum::Variant2(struct {
-    a: 12,
-    b: 14,
+        a: 12,
+        b: 14,
     });
     let enum_val3 = MyEnum::Variant3;
     let enum_val4 = MyEnum::Variant4(12, 14);
 }
 
+/*
 
 func test() {
   let a: int32 = 12;
