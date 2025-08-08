@@ -1,3 +1,58 @@
+ @module my_module;
+
+struct MyStruct::<T> {
+    field1: int32,
+    field2: string,
+}
+
+impl MyStruct::<T> {
+    func my_func(param: int32): String {
+        return "Hello, World!";
+    }
+}
+
+actor Actor {
+    x: int32,
+    async func actor_func() {
+        for let mod i in range(0, 10) {
+            self.x += 12;
+        }
+    }
+}
+
+enum MyEnum {
+    Variant1,
+    Variant2(i32),
+    Variant3{ field: string, },
+}
+
+func main() {
+    let mod x: MyStruct::<i32> = struct::MyStruct::<i32> {
+        field1: 42,
+        field2: "test",
+    };
+
+    let y = ref x;
+    x.my_func(x.field1);
+
+    let b = [12, 3, x.field1][0];
+
+    let my_actor = actor::Actor {
+        x: 10,
+    };
+
+    block my_actor.actor_func();
+
+    (func[ref x]() {
+        x.field1 += 1;
+    })();
+}
+
+
+
+@module polaris;
+@schemes SEAL, TFHE;
+
 struct Test {
     a: int32,
 }
@@ -16,6 +71,10 @@ async func test() {
     let a = block b.test();
     c = struct::Test { a: 12, };
     e = actor::Actor { b: 12, };
+
+    (func[ref x]() {
+                    x.field1 += 1;
+                })();
 }
 
 

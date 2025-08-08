@@ -82,3 +82,22 @@ pub async fn command(args: CompileArgs) {
     logger.quit();
     hdl.join().expect("Failed to join log thread");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::CompileArgs;
+
+    #[tokio::test]
+    async fn compile_command() {
+        let args = CompileArgs {
+            files: vec!["../example/sanity.pol".to_string()],
+            verbosity: 3,
+            werror: false,
+            release: false,
+            target: None,
+            opt: None,
+        };
+        command(args).await;
+    }
+}

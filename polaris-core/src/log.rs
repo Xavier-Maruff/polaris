@@ -35,6 +35,11 @@ impl Logger {
         Logger { sender }
     }
 
+    pub fn dummy() -> Self {
+        let (sender, _) = crossbeam_channel::unbounded();
+        Logger { sender }
+    }
+
     pub fn quit(&self) {
         self.sender
             .send(LogCommand::Quit)

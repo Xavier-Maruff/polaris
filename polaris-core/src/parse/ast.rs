@@ -47,7 +47,7 @@ pub enum Variant {
         interface: Vec<Node>,
     },
     ImplDecl {
-        interface: Box<Node>,
+        interface: Option<Box<Node>>,
         target: Box<Node>,
         methods: Vec<Node>,
     },
@@ -683,8 +683,11 @@ impl fmt::Display for Node {
                 target,
                 methods,
             } => {
-                write!(f, "impl {}", interface)?;
-                write!(f, " for {}", target)?;
+                write!(f, "impl")?;
+                if interface.is_some() {
+                    write!(f, " {}", interface.as_ref().unwrap())?;
+                }
+                write!(f, " {}", target)?;
                 write!(f, " {{\n ")?;
                 for (_i, method) in methods.iter().enumerate() {
                     writeln!(f, "{}", method)?;

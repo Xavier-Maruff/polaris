@@ -848,10 +848,15 @@ impl<'a> ParseContext<'a> {
         let mut span = CodeSpan::new(lexer.current_position(), 0);
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::Impl));
-        let interface_name = self.parse_ident(ast, lexer)?;
 
-        wrap_err!(ast, self.expect(lexer, TokenVariant::For));
-        let target_struct = self.parse_ident(ast, lexer)?;
+        let mut interface_ident = None;
+        let mut target_struct = Box::new(self.parse_ident(ast, lexer)?);
+
+        if matches!(self.curr_tok.variant, TokenVariant::For) {
+            wrap_err!(ast, self.advance(lexer));
+            interface_ident = Some(target_struct);
+            target_struct = Box::new(self.parse_ident(ast, lexer)?);
+        }
 
         let mut methods = Vec::new();
         wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
@@ -882,8 +887,8 @@ impl<'a> ParseContext<'a> {
         span.end = lexer.current_position();
         Ok(Node::new_with_span(
             Variant::ImplDecl {
-                interface: Box::new(interface_name),
-                target: Box::new(target_struct),
+                interface: interface_ident,
+                target: target_struct,
                 methods,
             },
             span,
@@ -1460,5 +1465,103 @@ impl<'a> ParseContext<'a> {
         }
 
         Ok(node)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::log::Logger;
+
+    #[allow(unused_macros)]
+    macro_rules! create_comp_ctx {
+        ($input:expr) => {{
+            (
+                Logger::dummy(),
+                Lexer::new("test_file".to_string(), $input.to_string()),
+                Node::new(Variant::Program { children: vec![] }),
+            )
+        }};
+    }
+
+    #[test]
+    fn parse_sanity() {
+        let source = "\
+            @module my_module;
+
+           struct MyStruct::<T> {
+               field1: int32,
+               field2: string,
+           }
+
+           impl MyStruct::<T> {
+               func my_func(param: int32): String {
+                   return \"Hello, World!\";
+               }
+           }
+
+           actor Actor {
+               x: int32,
+               async func actor_func() {
+                   for let mod i in range(0, 10) {
+                       self.x += 12;
+                   }
+               }
+           }
+
+           enum MyEnum {
+               Variant1,
+               Variant2(i32),
+               Variant3{ field: string, },
+           }
+
+           func main() {
+               let mod x: MyStruct::<i32> = struct::MyStruct::<i32> {
+                   field1: 42,
+                   field2: \"test\",
+               };
+
+               let y = ref x;
+               x.my_func(x.field1);
+
+               let b = [12, 3, x.field1][0];
+
+               let my_actor = actor::Actor {
+                   x: 10,
+               };
+
+               block my_actor.actor_func();
+
+               (func[ref x]() {
+                   x.field1 += 1;
+               })();
+           }
+
+        "
+        .to_string();
+
+        let mut logger = Logger::dummy();
+        let mut parser = ParseContext::new(&mut logger);
+        let ast = parser.parse("test_file".to_string(), source);
+
+        assert!(
+            ast.warnings().is_empty(),
+            "Warnings found during parsing: {}",
+            ast.warnings()
+                .into_iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        assert!(
+            ast.errors().is_empty(),
+            "Errors found during parsing: {}",
+            ast.errors()
+                .into_iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 }
