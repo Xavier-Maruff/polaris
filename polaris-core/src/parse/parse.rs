@@ -1049,6 +1049,7 @@ impl<'a> ParseContext<'a> {
             | TokenVariant::Minus
             | TokenVariant::Not
             | TokenVariant::Star
+            | TokenVariant::Assign
             | TokenVariant::Await
             | TokenVariant::Block => {
                 let op = match self.curr_tok.variant {
@@ -1058,6 +1059,7 @@ impl<'a> ParseContext<'a> {
                     TokenVariant::Star => UnaryOp::Deref,
                     TokenVariant::Await => UnaryOp::Await,
                     TokenVariant::Block => UnaryOp::Block,
+                    TokenVariant::Assign => UnaryOp::FusedAssign,
 
                     _ => unreachable!(),
                 };
@@ -1214,8 +1216,8 @@ impl<'a> ParseContext<'a> {
         Ok(parent)
     }
 
-    fn get_binary_op(&self, variant: &TokenVariant) -> Option<BinaryOp> {
-        Some(match variant {
+    fn get_binary_op(&self, tok: &TokenVariant) -> Option<BinaryOp> {
+        Some(match tok {
             TokenVariant::Plus => BinaryOp::Add,
             TokenVariant::Minus => BinaryOp::Subtract,
             TokenVariant::Star => BinaryOp::Multiply,

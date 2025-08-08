@@ -5,6 +5,7 @@ struct Test {
 actor Actor {
     b: int32,
     async func test(): int32 {
+        c += 2;
         return 12 + b;
     }
 }

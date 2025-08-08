@@ -357,6 +357,7 @@ pub enum UnaryOp {
     BindMonad,
     Await,
     Block,
+    FusedAssign,
 }
 
 impl fmt::Display for UnaryOp {
@@ -369,6 +370,7 @@ impl fmt::Display for UnaryOp {
             UnaryOp::BindMonad => write!(f, "?"),
             UnaryOp::Await => write!(f, "await "),
             UnaryOp::Block => write!(f, "block "),
+            UnaryOp::FusedAssign => write!(f, "="),
         }
     }
 }
