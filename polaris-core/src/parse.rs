@@ -1535,8 +1535,7 @@ mod tests {
         "
         .to_string();
 
-        let logger = Logger::dummy();
-        let mut ctx = PassContext::new(&logger, "test_file".to_string());
+        let mut ctx = PassContext::new(Logger::dummy(), "test_file".to_string());
 
         let ast = match parse(&mut source, &mut ctx)? {
             Some(ast) => ast,
