@@ -1,4 +1,4 @@
-use crate::parse::parse;
+use crate::parse::CodeSpan;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenVariant {
@@ -86,7 +86,7 @@ pub enum TokenVariant {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token {
     pub variant: TokenVariant,
-    pub span: parse::CodeSpan,
+    pub span: CodeSpan,
 }
 
 impl TokenVariant {

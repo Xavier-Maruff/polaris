@@ -1,7 +1,9 @@
 use std::{collections::HashSet, fs};
 
 use crate::{cli::CompileArgs, log};
-use polaris_core::{self as pl, compile::compile::CompileContext, parse::parse::ParseContext};
+use polaris_core::{
+    self as pl, compile::compile::CompileContext, desugar::desugar, parse::parse::ParseContext,
+};
 
 pub async fn command(args: CompileArgs) {
     let (logger, hdl) = match log::spawn_log_thread(args.verbosity, args.werror) {
@@ -23,19 +25,38 @@ pub async fn command(args: CompileArgs) {
             let source = match fs::read_to_string(&file) {
                 Ok(source) => source,
                 Err(e) => {
-                    return Err(pl::parse::diagnostic::Diagnostic {
-                        primary: pl::parse::diagnostic::DiagnosticMsg {
+                    return Err(pl::diagnostic::Diagnostic {
+                        primary: pl::diagnostic::DiagnosticMsg {
                             message: format!("Failed to read file '{}': {}", file, e),
                             file: file.clone(),
-                            span: pl::parse::parse::CodeSpan { start: 0, end: 0 },
-                            err_type: pl::parse::diagnostic::DiagnosticMsgType::IoError,
+                            span: pl::parse::CodeSpan { start: 0, end: 0 },
+                            err_type: pl::diagnostic::DiagnosticMsgType::IoError,
                         },
                         notes: vec![],
                         hints: vec!["Are you sure this file exists?".to_string()],
                     });
                 }
             };
-            let ast = ParseContext::new(&logger_clone).parse(file.clone(), source);
+            let mut ast = ParseContext::new(&logger_clone).parse(file.clone(), source);
+            let mut ctx = pl::ast::pass::PassContext {
+                logger: &logger_clone,
+                file: file.clone(),
+            };
+            match desugar(&mut ast, &mut ctx) {
+                Ok(_) => {}
+                Err(_) => {
+                    return Err(pl::diagnostic::Diagnostic {
+                        primary: pl::diagnostic::DiagnosticMsg {
+                            message: "Failed to desugar AST".to_string(),
+                            file: file.clone(),
+                            span: pl::parse::CodeSpan { start: 0, end: 0 },
+                            err_type: pl::diagnostic::DiagnosticMsgType::InvalidAstOperation,
+                        },
+                        notes: vec![],
+                        hints: vec!["Check the AST structure and desugar rules.".to_string()],
+                    });
+                }
+            }
 
             println!("{}", ast);
             // println!("{:#?}", ast);

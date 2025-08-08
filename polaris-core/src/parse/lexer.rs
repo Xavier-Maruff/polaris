@@ -3,9 +3,9 @@ use std::cmp;
 use anyhow::Result;
 
 use crate::{
+    diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     parse::{
-        diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
-        parse::CodeSpan,
+        CodeSpan,
         token::{Token, TokenVariant},
     },
 };
@@ -15,16 +15,15 @@ pub struct Lexer{
     pub file: String,
     pub position: usize,
     current_char: Option<char>,
-    //logger: &'a log::Logger,
 }
 
 impl Lexer {
-    pub fn new(source: String, file: String) -> Self {
+    pub fn new(file: String, source: String) -> Self {
         let mut lexer = Lexer {
             source,
+            file,
             position: 0,
             current_char: None,
-            file,
         };
         lexer.advance();
         lexer
@@ -234,7 +233,7 @@ impl Lexer {
                                 start: self.position - 1,
                                 end: self.position,
                             },
-                            file: self.file.to_string(),
+                            file: self.file.clone(),
                             err_type: DiagnosticMsgType::UnexpectedToken,
                         },
                         notes: vec![],
@@ -364,7 +363,7 @@ impl Lexer {
                         start,
                         end: start + cmp::min(self.source.len() - start, 5),
                     },
-                    file: self.file.to_string(),
+                    file: self.file.clone(),
                     err_type: DiagnosticMsgType::UnterminatedString,
                 },
                 notes: vec![],
@@ -403,7 +402,7 @@ impl Lexer {
                         start,
                         end: start + cmp::min(self.source.len() - start, 5),
                     },
-                    file: self.file.to_string(),
+                    file: self.file.clone(),
                     err_type: DiagnosticMsgType::UnterminatedString,
                 },
                 notes: vec![],

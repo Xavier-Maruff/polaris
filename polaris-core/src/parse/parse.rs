@@ -1,20 +1,9 @@
+use crate::ast::ast::*;
+use crate::diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType};
 use crate::log;
-use crate::parse::ast::*;
+use crate::parse::CodeSpan;
 use crate::parse::lexer::Lexer;
 use crate::parse::token::{Token, TokenVariant};
-use crate::parse::{diagnostic, diagnostic::Diagnostic};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CodeSpan {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl CodeSpan {
-    pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-}
 
 pub struct ParseContext<'a> {
     logger: &'a log::Logger,
@@ -84,7 +73,7 @@ impl<'a> ParseContext<'a> {
     }
 
     pub fn parse(&mut self, file: String, source: String) -> Node {
-        let mut lexer = Lexer::new(source, file);
+        let mut lexer = Lexer::new(file, source);
         self.parse_translation_unit(&mut lexer)
     }
 
@@ -99,14 +88,14 @@ impl<'a> ParseContext<'a> {
         }
 
         Err(Diagnostic {
-            primary: diagnostic::DiagnosticMsg {
+            primary: DiagnosticMsg {
                 message: format!("Expected '{}', found '{}'", kind, self.curr_tok),
                 span: CodeSpan {
                     start: self.curr_tok.span.start,
                     end: self.curr_tok.span.end,
                 },
                 file: lexer.file.clone(),
-                err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                err_type: DiagnosticMsgType::UnexpectedToken,
             },
             notes: vec![],
             hints: vec!["Check your syntax.".to_string()],
@@ -116,6 +105,7 @@ impl<'a> ParseContext<'a> {
     fn parse_translation_unit(&mut self, lexer: &mut Lexer) -> Node {
         let mut ast = Node::new(Variant::Program {
             children: Vec::new(),
+            file: lexer.file.clone().clone(),
         });
 
         for _ in 0..2 {
@@ -131,17 +121,12 @@ impl<'a> ParseContext<'a> {
         }
 
         while lexer.peek().is_some() {
-            match self.parse_statement(&mut ast, lexer, true) {
-                Ok(node) => match &mut ast.variant {
-                    Variant::Program { children } => {
-                        children.push(node);
-                    }
-                    _ => unreachable!(),
-                },
-                Err(_) => {
-                    //
-                    break;
+            let node = self.parse_statement(&mut ast, lexer, true);
+            match &mut ast.variant {
+                Variant::Program { children, .. } => {
+                    children.push(node);
                 }
+                _ => unreachable!(),
             }
         }
 
@@ -177,7 +162,7 @@ impl<'a> ParseContext<'a> {
 
         if matches!(self.curr_tok.variant, TokenVariant::Let) {
             ast.add_error(Diagnostic {
-                primary: diagnostic::DiagnosticMsg {
+                primary: DiagnosticMsg {
                     message: "Pattern matching in 'if' statements is not yet supported."
                         .to_string(),
                     span: CodeSpan {
@@ -185,7 +170,7 @@ impl<'a> ParseContext<'a> {
                         end: self.curr_tok.span.end,
                     },
                     file: lexer.file.clone(),
-                    err_type: diagnostic::DiagnosticMsgType::UnsupportedFeature,
+                    err_type: DiagnosticMsgType::UnsupportedFeature,
                 },
                 notes: vec![],
                 hints: vec!["Use a match expression instead if unwrapping an enum.".to_string()],
@@ -198,7 +183,7 @@ impl<'a> ParseContext<'a> {
 
         let mut body = Vec::new();
         while self.curr_tok.variant != TokenVariant::RBrace {
-            body.push(self.parse_statement(ast, lexer, false)?);
+            body.push(self.parse_statement(ast, lexer, false));
         }
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
@@ -210,7 +195,7 @@ impl<'a> ParseContext<'a> {
                 wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
                 let mut else_body = Vec::new();
                 while self.curr_tok.variant != TokenVariant::RBrace {
-                    else_body.push(self.parse_statement(ast, lexer, false)?);
+                    else_body.push(self.parse_statement(ast, lexer, false));
                 }
                 wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
                 Some(Box::new(Node::new(Variant::Block {
@@ -255,7 +240,7 @@ impl<'a> ParseContext<'a> {
                     }
                     _ => {
                         ast.add_error(Diagnostic {
-                            primary: diagnostic::DiagnosticMsg {
+                            primary: DiagnosticMsg{
                                  message: format!(
                                       "Expected variable identifier, found {:?}",
                                       self.curr_tok.variant
@@ -265,7 +250,7 @@ impl<'a> ParseContext<'a> {
                                       end: self.curr_tok.span.end,
                                  },
                                  file: lexer.file.clone(),
-                                 err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                                 err_type: DiagnosticMsgType::UnexpectedToken,
                             },
                             notes: vec![],
                             hints: vec!["The 'let' means Polaris will try to parse this as a range-based for loop. If you are meaning to use a condition-based for loop, remove the 'let'.".to_string()],
@@ -298,7 +283,7 @@ impl<'a> ParseContext<'a> {
         );
         let mut body = Vec::new();
         while self.curr_tok.variant != TokenVariant::RBrace {
-            body.push(self.parse_statement(ast, lexer, false)?);
+            body.push(self.parse_statement(ast, lexer, false));
         }
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
@@ -373,13 +358,34 @@ impl<'a> ParseContext<'a> {
         ))
     }
 
-    fn parse_statement(
-        &mut self,
-        ast: &mut Node,
-        lexer: &mut Lexer,
-        _top_level: bool,
-    ) -> Result<Node, ()> {
-        match self.curr_tok.variant {
+    fn parse_break_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
+        wrap_err!(ast, self.expect(lexer, TokenVariant::Break));
+        wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
+        span.end = lexer.current_position();
+
+        Ok(Node::new_with_span(Variant::Break, span))
+    }
+
+    fn parse_continue_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let mut span = CodeSpan::new(lexer.current_position(), 0);
+        wrap_err!(ast, self.expect(lexer, TokenVariant::Continue));
+        wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
+        span.end = lexer.current_position();
+
+        Ok(Node::new_with_span(Variant::Continue, span))
+    }
+
+    fn parse_expr_stmt(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        let expr = self.parse_expr(ast, lexer, false)?;
+        wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
+
+        Ok(expr)
+    }
+
+    fn parse_statement(&mut self, ast: &mut Node, lexer: &mut Lexer, _top_level: bool) -> Node {
+        let failed_start = lexer.current_position();
+        let node = match self.curr_tok.variant {
             TokenVariant::If => self.parse_if_stmt(ast, lexer),
             TokenVariant::For => self.parse_for_stmt(ast, lexer),
             TokenVariant::Func | TokenVariant::Async => self.parse_func_decl(ast, lexer, false),
@@ -393,27 +399,18 @@ impl<'a> ParseContext<'a> {
             TokenVariant::Enum => self.parse_enum_decl(ast, lexer),
             TokenVariant::Impl => self.parse_impl_decl(ast, lexer),
             TokenVariant::Type => self.parse_type_decl(ast, lexer),
-            TokenVariant::Break => {
-                let mut span = CodeSpan::new(lexer.current_position(), 0);
-                wrap_err!(ast, self.expect(lexer, TokenVariant::Break));
-                wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
-                span.end = lexer.current_position();
-                Ok(Node::new_with_span(Variant::Break, span))
-            }
-            TokenVariant::Continue => {
-                let mut span = CodeSpan::new(lexer.current_position(), 0);
-                wrap_err!(ast, self.expect(lexer, TokenVariant::Continue));
-                wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
-                span.end = lexer.current_position();
-                Ok(Node::new_with_span(Variant::Continue, span))
-            }
+            TokenVariant::Break => self.parse_break_stmt(ast, lexer),
+            TokenVariant::Continue => self.parse_continue_stmt(ast, lexer),
             TokenVariant::Assert => self.parse_assert_stmt(ast, lexer),
+            _ => self.parse_expr_stmt(ast, lexer),
+        };
 
-            _ => {
-                let node = self.parse_expr(ast, lexer, false);
-                wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
-                node
-            }
+        match node {
+            Err(_) => Node::new_with_span(
+                Variant::Failed,
+                CodeSpan::new(failed_start, self.curr_tok.span.end),
+            ),
+            Ok(node) => node,
         }
     }
 
@@ -461,14 +458,14 @@ impl<'a> ParseContext<'a> {
                 wrap_err!(ast, self.advance(lexer));
             } else if self.curr_tok.variant != TokenVariant::RParen {
                 ast.add_error(Diagnostic {
-                    primary: diagnostic::DiagnosticMsg {
+                    primary: DiagnosticMsg {
                         message: format!("Expected ',' or ')', found {:?}", self.curr_tok.variant),
                         span: CodeSpan {
                             start: self.curr_tok.span.start,
                             end: self.curr_tok.span.end,
                         },
                         file: lexer.file.clone(),
-                        err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                        err_type: DiagnosticMsgType::UnexpectedToken,
                     },
                     notes: vec![],
                     hints: vec!["Check your syntax.".to_string()],
@@ -490,7 +487,7 @@ impl<'a> ParseContext<'a> {
             wrap_err!(ast, self.advance(lexer));
             let mut body = Vec::new();
             while self.curr_tok.variant != TokenVariant::RBrace {
-                body.push(self.parse_statement(ast, lexer, false)?);
+                body.push(self.parse_statement(ast, lexer, false));
             }
             wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
             Some(Box::new(Node::new(Variant::Block { children: body })))
@@ -501,14 +498,14 @@ impl<'a> ParseContext<'a> {
 
         if body.is_none() && body_required {
             ast.add_error(Diagnostic {
-                primary: diagnostic::DiagnosticMsg {
+                primary: DiagnosticMsg {
                     message: "Function body is required".to_string(),
                     span: CodeSpan {
                         start: self.curr_tok.span.start,
                         end: self.curr_tok.span.end,
                     },
                     file: lexer.file.clone(),
-                    err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                    err_type: DiagnosticMsgType::UnexpectedToken,
                 },
                 notes: vec![],
                 hints: vec!["Check your syntax.".to_string()],
@@ -538,7 +535,7 @@ impl<'a> ParseContext<'a> {
             TokenVariant::DirectiveIdent(name) => name.clone(),
             _ => {
                 ast.add_error(Diagnostic {
-                    primary: diagnostic::DiagnosticMsg {
+                    primary: DiagnosticMsg {
                         message: format!(
                             "Expected directive identifier, found {:?}",
                             self.curr_tok.variant
@@ -548,7 +545,7 @@ impl<'a> ParseContext<'a> {
                             end: self.curr_tok.span.end,
                         },
                         file: lexer.file.clone(),
-                        err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                        err_type: DiagnosticMsgType::UnexpectedToken,
                     },
                     notes: vec![],
                     hints: vec!["Check your syntax.".to_string()],
@@ -627,7 +624,7 @@ impl<'a> ParseContext<'a> {
             ))
         } else {
             ast.add_error(Diagnostic {
-                primary: diagnostic::DiagnosticMsg {
+                primary: DiagnosticMsg {
                     message: format!(
                         "Expected variable identifier, found {:?}",
                         self.curr_tok.variant
@@ -637,7 +634,7 @@ impl<'a> ParseContext<'a> {
                         end: self.curr_tok.span.end,
                     },
                     file: lexer.file.clone(),
-                    err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                    err_type: DiagnosticMsgType::UnexpectedToken,
                 },
                 notes: vec![],
                 hints: vec!["Check your syntax.".to_string()],
@@ -658,14 +655,14 @@ impl<'a> ParseContext<'a> {
                 Ok(name)
             } else {
                 ast.add_error(Diagnostic {
-                    primary: diagnostic::DiagnosticMsg {
+                    primary: DiagnosticMsg {
                         message: format!("Expected identifier, found {:?}", c.variant),
                         span: CodeSpan {
                             start: c.span.start,
                             end: c.span.end,
                         },
                         file: lexer.file.clone(),
-                        err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                        err_type: DiagnosticMsgType::UnexpectedToken,
                     },
                     notes: vec![],
                     hints: vec!["Check your syntax.".to_string()],
@@ -722,14 +719,14 @@ impl<'a> ParseContext<'a> {
             TokenVariant::Ident(name) => name.clone(),
             _ => {
                 ast.add_error(Diagnostic {
-                    primary: diagnostic::DiagnosticMsg {
+                    primary: DiagnosticMsg {
                         message: format!("Expected identifier, found {:?}", self.curr_tok.variant),
                         span: CodeSpan {
                             start: self.curr_tok.span.start,
                             end: self.curr_tok.span.end,
                         },
                         file: lexer.file.clone(),
-                        err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                        err_type: DiagnosticMsgType::UnexpectedToken,
                     },
                     notes: vec![],
                     hints: vec!["Check your syntax.".to_string()],
@@ -863,14 +860,14 @@ impl<'a> ParseContext<'a> {
 
         if !matches!(self.curr_tok.variant, TokenVariant::Func) {
             ast.add_error(Diagnostic {
-                primary: diagnostic::DiagnosticMsg {
+                primary: DiagnosticMsg {
                     message: "Expected function declarations in implementation block".to_string(),
                     span: CodeSpan {
                         start: self.curr_tok.span.start,
                         end: self.curr_tok.span.end,
                     },
                     file: lexer.file.clone(),
-                    err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                    err_type: DiagnosticMsgType::UnexpectedToken,
                 },
                 notes: vec![],
                 hints: vec!["You might be missing a 'func' keyword.".to_string()],
@@ -913,7 +910,7 @@ impl<'a> ParseContext<'a> {
                 let mut body = Vec::new();
 
                 while self.curr_tok.variant != TokenVariant::RBrace {
-                    body.push(self.parse_statement(ast, lexer, false)?);
+                    body.push(self.parse_statement(ast, lexer, false));
                 }
 
                 wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
@@ -1258,14 +1255,14 @@ impl<'a> ParseContext<'a> {
             })),
             _ => {
                 ast.add_error(Diagnostic {
-                    primary: diagnostic::DiagnosticMsg {
+                    primary: DiagnosticMsg {
                         message: format!("Expected identifier, found {:?}", self.curr_tok.variant),
                         span: CodeSpan {
                             start: self.curr_tok.span.start,
                             end: self.curr_tok.span.end,
                         },
                         file: lexer.file.clone(),
-                        err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                        err_type: DiagnosticMsgType::UnexpectedToken,
                     },
                     notes: vec![],
                     hints: vec!["Check your syntax.".to_string()],
@@ -1313,8 +1310,7 @@ impl<'a> ParseContext<'a> {
         }
 
         span.end = lexer.current_position();
-        node.span = Some(span);
-
+        node.span = span;
         Ok(node)
     }
 
@@ -1381,7 +1377,7 @@ impl<'a> ParseContext<'a> {
             }),
             warnings,
             errors,
-            span: Some(span),
+            span,
         })
     }
 
@@ -1444,14 +1440,14 @@ impl<'a> ParseContext<'a> {
             ),
             _ => {
                 ast.add_error(Diagnostic {
-                    primary: diagnostic::DiagnosticMsg {
+                    primary: DiagnosticMsg {
                         message: format!(
                             "Unexpected token in expression: {:?}",
                             self.curr_tok.variant
                         ),
                         span: self.curr_tok.span,
                         file: lexer.file.clone(),
-                        err_type: diagnostic::DiagnosticMsgType::UnexpectedToken,
+                        err_type: DiagnosticMsgType::UnexpectedToken,
                     },
                     notes: vec![],
                     hints: vec!["Check your syntax.".to_string()],

@@ -1,6 +1,6 @@
 use crossbeam_channel::Sender;
 
-use crate::parse::diagnostic::Diagnostic;
+use crate::diagnostic::Diagnostic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum LogLevel {

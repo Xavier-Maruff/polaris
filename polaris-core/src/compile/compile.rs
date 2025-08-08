@@ -1,7 +1,4 @@
-use crate::{
-    log,
-    parse::{ast::Node, diagnostic::Diagnostic},
-};
+use crate::{ast::ast::Node, diagnostic::Diagnostic, log};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

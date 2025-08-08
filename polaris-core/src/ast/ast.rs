@@ -1,18 +1,21 @@
 use std::fmt;
 
-use crate::parse::{diagnostic::Diagnostic, parse::CodeSpan};
+use crate::diagnostic::Diagnostic;
+use crate::parse::CodeSpan;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub variant: Variant,
     pub warnings: Option<Vec<Diagnostic>>,
     pub errors: Option<Vec<Diagnostic>>,
-    pub span: Option<CodeSpan>,
+    pub span: CodeSpan,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Variant {
+    Failed,
     Program {
+        file: String,
         children: Vec<Node>,
     },
     Directive {
@@ -342,6 +345,7 @@ pub enum BinaryOp {
     BitOr,
     BitXor,
     BitNot,
+    //TODO: bit shift operators
     And,
     Or,
     Not,
@@ -405,7 +409,7 @@ impl Node {
     pub fn new(variant: Variant) -> Self {
         Self {
             variant,
-            span: None,
+            span: CodeSpan::new(0, 0),
             warnings: None,
             errors: None,
         }
@@ -414,7 +418,7 @@ impl Node {
     pub fn new_with_span(variant: Variant, span: CodeSpan) -> Self {
         Self {
             variant,
-            span: Some(span),
+            span: span,
             warnings: None,
             errors: None,
         }
@@ -483,7 +487,8 @@ impl Node {
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.variant {
-            Variant::Program { children } => {
+            Variant::Failed => write!(f, "/* <failed> */\n"),
+            Variant::Program { children, .. } => {
                 for child in children {
                     write!(f, "{}", child)?;
                 }
