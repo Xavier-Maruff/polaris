@@ -1,36 +1,56 @@
-use crate::{ast::ast::Node, diagnostic::Diagnostic, log};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use crate::{
+    ast::{ast::Node, pass::PassContext},
+    desugar::desugar,
+    diagnostic::Diagnostic,
+    log,
+    parse::parse,
+};
 
+#[derive(Debug, Clone)]
 pub struct CompileContext {
     pub logger: log::Logger,
-    pub translation_units: Arc<Mutex<Vec<Node>>>,
+    pub stage_one_asts: Vec<Node>,
+    pub errors: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 impl CompileContext {
     pub fn new(logger: log::Logger) -> Self {
         Self {
             logger,
-            translation_units: Arc::new(Mutex::new(Vec::new())),
+            stage_one_asts: Vec::new(),
+            errors: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
-    pub async fn add_translation_unit(&mut self, unit: Node) {
-        let mut units = self.translation_units.lock().await;
-        units.push(unit);
+    pub fn merge(&mut self, other: CompileContext) {
+        self.stage_one_asts.extend(other.stage_one_asts);
+        self.errors.extend(other.errors);
+        self.warnings.extend(other.warnings);
     }
 
-    pub async fn get_diagnostics(&mut self) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
-        let mut warnings = Vec::new();
-        let mut errors = Vec::new();
-        let units = self.translation_units.lock().await;
+    //parallelisable initial lowering
+    pub fn ingest_source(
+        &mut self,
+        file: String,
+        mut source: String,
+    ) -> Result<PassContext<Node>, ()> {
+        let mut ctx = PassContext::new(self.logger.clone(), file.clone());
+        let mut ast = parse(&mut source, &mut ctx)?.unwrap();
 
-        //todo: parallel impl
-        for unit in units.iter() {
-            warnings.extend(unit.warnings());
-            errors.extend(unit.errors());
+        desugar(&mut ast, &mut ctx)?;
+
+        if !ctx.errors.is_empty() {
+            self.errors.extend(ctx.errors.clone());
+            self.warnings.extend(ctx.warnings.clone());
+            return Err(());
         }
 
-        (warnings, errors)
+        Ok(ctx)
+    }
+
+    pub fn get_diagnostics(&self) -> (&Vec<Diagnostic>, &Vec<Diagnostic>) {
+        (&self.errors, &self.warnings)
     }
 }

@@ -91,8 +91,13 @@ pub enum Variant {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForVariant {
-    ForWhile { condition: Box<Node> },
-    ForIter { ident: String, iterable: Box<Node> },
+    ForWhile {
+        condition: Box<Node>,
+    },
+    ForIter {
+        ident: Box<Node>,
+        iterable: Box<Node>,
+    },
     ForInfinite,
 }
 

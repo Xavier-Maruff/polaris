@@ -1,9 +1,7 @@
 use std::{collections::HashSet, fs};
 
 use crate::{cli::CompileArgs, log};
-use polaris_core::{
-    self as pl, compile::compile::CompileContext, desugar::desugar, parse::parse::ParseContext,
-};
+use polaris_core::compile::compile::CompileContext;
 
 pub async fn command(args: CompileArgs) {
     let (logger, hdl) = match log::spawn_log_thread(args.verbosity, args.werror) {
@@ -18,70 +16,41 @@ pub async fn command(args: CompileArgs) {
     let mut tasks: Vec<_> = Vec::new();
     let mut compile_ctx = CompileContext::new(logger.clone());
 
-    //async parse files in parallel
     for file in files {
-        let logger_clone = logger.clone();
+        let mut ctx_clone = compile_ctx.clone();
         tasks.push(tokio::spawn(async move {
             let source = match fs::read_to_string(&file) {
                 Ok(source) => source,
                 Err(e) => {
-                    return Err(pl::diagnostic::Diagnostic {
-                        primary: pl::diagnostic::DiagnosticMsg {
-                            message: format!("Failed to read file '{}': {}", file, e),
-                            file: file.clone(),
-                            span: pl::parse::CodeSpan { start: 0, end: 0 },
-                            err_type: pl::diagnostic::DiagnosticMsgType::IoError,
-                        },
-                        notes: vec![],
-                        hints: vec!["Are you sure this file exists?".to_string()],
-                    });
+                    ctx_clone
+                        .logger
+                        .critical(&format!("Failed to read file {}: {}", file, e));
+                    unreachable!()
                 }
             };
-            let mut ast = ParseContext::new(&logger_clone).parse(file.clone(), source);
-            let mut ctx = pl::ast::pass::PassContext {
-                logger: &logger_clone,
-                file: file.clone(),
-            };
-            match desugar(&mut ast, &mut ctx) {
-                Ok(_) => {}
+
+            match ctx_clone.ingest_source(file.clone(), source) {
+                Ok(_) => ctx_clone,
                 Err(_) => {
-                    return Err(pl::diagnostic::Diagnostic {
-                        primary: pl::diagnostic::DiagnosticMsg {
-                            message: "Failed to desugar AST".to_string(),
-                            file: file.clone(),
-                            span: pl::parse::CodeSpan { start: 0, end: 0 },
-                            err_type: pl::diagnostic::DiagnosticMsgType::InvalidAstOperation,
-                        },
-                        notes: vec![],
-                        hints: vec!["Check the AST structure and desugar rules.".to_string()],
-                    });
+                    ctx_clone
+                        .logger
+                        .error(&format!("Failed to compile file: {}", file));
+                    return ctx_clone;
                 }
             }
-
-            println!("{}", ast);
-            // println!("{:#?}", ast);
-            logger_clone.step("Parsed", &file);
-            Ok(ast)
         }));
     }
 
     for task in tasks {
         match task.await {
-            Ok(result) => match result {
-                Ok(ast) => {
-                    compile_ctx.add_translation_unit(ast).await;
-                }
-                Err(err) => {
-                    logger.diagnostic(&err);
-                }
-            },
             Err(e) => {
                 logger.error(&format!("Task failed: {}", e));
             }
+            Ok(ctx) => compile_ctx.merge(ctx),
         }
     }
 
-    let (warnings, errors) = compile_ctx.get_diagnostics().await;
+    let (warnings, errors) = compile_ctx.get_diagnostics();
     let comp_failed = !errors.is_empty() || (args.werror && !warnings.is_empty());
     let comp_warned = !warnings.is_empty() && !args.werror;
 

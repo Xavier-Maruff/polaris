@@ -1,10 +1,33 @@
-use crate::{ast::ast::Node, log::Logger};
+use crate::{diagnostic::Diagnostic, log::Logger};
 
-pub type Pass = fn(&mut Node, &mut PassContext) -> Result<(), ()>;
+pub type Pass<I, O> = fn(&mut I, &mut PassContext<I>) -> Result<Option<O>, ()>;
 
-pub struct PassContext<'a> {
-    pub logger: &'a Logger,
+pub struct PassContext<N> {
+    pub logger: Logger,
     pub file: String,
+    pub errors: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
+    pub ast: Option<N>,
+}
+
+impl<N> PassContext<N> {
+    pub fn new(logger: Logger, file: String) -> Self {
+        Self {
+            logger,
+            file,
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            ast: None,
+        }
+    }
+
+    pub fn add_error(&mut self, err: Diagnostic) {
+        self.errors.push(err);
+    }
+
+    pub fn add_warning(&mut self, warning: Diagnostic) {
+        self.warnings.push(warning);
+    }
 }
 
 //implemented as a macro so that passes can override default arms
@@ -198,7 +221,8 @@ macro_rules! visit_ast_children {
                         $visit(condition, $ctx)?;
                     }
 
-                    ForVariant::ForIter { iterable, .. } => {
+                    ForVariant::ForIter { ident, iterable, .. } => {
+                        $visit(ident, $ctx)?;
                         $visit(iterable, $ctx)?;
                     }
                     _ => {}
