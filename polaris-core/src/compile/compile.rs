@@ -41,16 +41,15 @@ impl CompileContext {
 
         desugar(&mut ast, &mut ctx)?;
 
-        if !ctx.errors.is_empty() {
+        if !ctx.errors.is_empty() || !ctx.warnings.is_empty() {
             self.errors.extend(ctx.errors.clone());
             self.warnings.extend(ctx.warnings.clone());
-            return Err(());
         }
 
         Ok(ctx)
     }
 
     pub fn get_diagnostics(&self) -> (&Vec<Diagnostic>, &Vec<Diagnostic>) {
-        (&self.errors, &self.warnings)
+        (&self.warnings, &self.errors)
     }
 }

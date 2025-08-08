@@ -37,8 +37,8 @@ pub fn visit_expr(expr: &mut ExprNode, ctx: &mut PassContext<Node>) -> Result<()
                                 primary: DiagnosticMsg {
                                     message: format!("Unsupported fused assignment operator: {:?}", op),
                                     file: ctx.file.clone(),
-                                    span: rhs.span.clone(),
-                                    err_type: crate::diagnostic::DiagnosticMsgType::UnexpectedToken,
+                                    span: lhs.span,
+                                    err_type: crate::diagnostic::DiagnosticMsgType::InvalidOperator,
                                 },
                                 notes: vec![],
                                 hints: vec!["Only +=, -=, *=, /=, %=, |=, ^=, ~=, and &= are supported for fused assignment.".to_string()],

@@ -61,6 +61,7 @@ pub fn spawn_log_thread(
     Ok((logger, hdl))
 }
 
+#[allow(dead_code)]
 impl CliLogger {
     pub fn new(strict_warn: bool) -> Self {
         let stream = StandardStream::stdout(termcolor::ColorChoice::Auto);

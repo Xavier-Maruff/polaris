@@ -15,7 +15,7 @@ actor Actor {
     x: int32,
     async func actor_func() {
         for let mod i in range(0, 10) {
-            self.x += 12;
+            self.x &&= 12;
         }
     }
 }

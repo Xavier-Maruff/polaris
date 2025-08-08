@@ -53,6 +53,7 @@ pub enum DiagnosticMsgType {
     UnexpectedEOF,
     InvalidAstOperation,
     UnsupportedFeature,
+    InvalidOperator,
     //todo
 }
 
@@ -71,6 +72,7 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         DiagnosticMsgType::UnexpectedEOF => "ES0010",
         DiagnosticMsgType::InvalidAstOperation => "EC0011",
         DiagnosticMsgType::UnsupportedFeature => "EC0012",
+        DiagnosticMsgType::InvalidOperator => "ES0012",
         // todo
     }
 }
