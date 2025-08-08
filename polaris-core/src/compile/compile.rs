@@ -1,6 +1,6 @@
 use crate::{
     log,
-    parse::{ast::Node, diagnostic::Diagnostic, parse::ParseContext},
+    parse::{ast::Node, diagnostic::Diagnostic},
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;

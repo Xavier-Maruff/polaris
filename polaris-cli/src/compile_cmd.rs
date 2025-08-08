@@ -38,7 +38,7 @@ pub async fn command(args: CompileArgs) {
             let ast = ParseContext::new(&logger_clone).parse(file.clone(), source);
 
             println!("{}", ast);
-            //println!("{:#?}", ast);
+            // println!("{:#?}", ast);
             logger_clone.step("Parsed", &file);
             Ok(ast)
         }));

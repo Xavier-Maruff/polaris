@@ -300,6 +300,10 @@ impl Lexer {
                 "break" => TokenVariant::Break,
                 "continue" => TokenVariant::Continue,
                 "assert" => TokenVariant::Assert,
+                "async" => TokenVariant::Async,
+                "await" => TokenVariant::Await,
+                "block" => TokenVariant::Block,
+                "actor" => TokenVariant::Actor,
                 _ => TokenVariant::Ident(ident_str),
             },
             span: CodeSpan {

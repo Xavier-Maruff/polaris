@@ -30,6 +30,7 @@ pub enum Variant {
         params: Vec<Node>,
         return_type: Option<Box<Node>>,
         body: Option<Box<Node>>,
+        is_async: bool,
     },
     VarDecl {
         name: String,
@@ -42,7 +43,7 @@ pub enum Variant {
         variants: Vec<(String, Option<Node>)>,
     },
     InterfaceDecl {
-        name: String,
+        ident: Box<Node>,
         interface: Vec<Node>,
     },
     ImplDecl {
@@ -77,6 +78,11 @@ pub enum Variant {
     TypeDecl {
         ident: Box<Node>,
         alias_of: Box<Node>,
+    },
+    ActorDecl {
+        ident: Box<Node>,
+        methods: Vec<Node>,
+        fields: Vec<(String, Node)>,
     },
 }
 
@@ -138,6 +144,10 @@ pub enum ExprNode {
     },
     StructLit {
         struct_ident: Option<Box<Node>>,
+        fields: Vec<(String, Node)>,
+    },
+    ActorLit {
+        actor_ident: Box<Node>,
         fields: Vec<(String, Node)>,
     },
     Call {
@@ -223,6 +233,22 @@ impl fmt::Display for ExprNode {
             ExprNode::FieldAccess { base, field } => {
                 write!(f, "{}.{}", base, field)
             }
+            ExprNode::ActorLit {
+                actor_ident,
+                fields,
+            } => {
+                write!(f, "actor::{}", actor_ident)?;
+                if !fields.is_empty() {
+                    write!(f, " {{\n")?;
+                    for (name, field) in fields {
+                        write!(f, "  {}: {},\n", name, field)?;
+                    }
+                    write!(f, " }}")?;
+                } else {
+                    write!(f, ";")?;
+                }
+                Ok(())
+            }
             ExprNode::QualifiedIdent {
                 namespaces,
                 name,
@@ -230,7 +256,9 @@ impl fmt::Display for ExprNode {
                 memory_mode,
                 ..
             } => {
-                write!(f, "{} ", memory_mode)?;
+                if memory_mode != &MemoryMode::Auto {
+                    write!(f, "{} ", memory_mode)?;
+                }
                 for ns in namespaces {
                     write!(f, "{}::", ns)?;
                 }
@@ -261,7 +289,7 @@ impl fmt::Display for ExprNode {
                     write!(f, "::{}", ident)?;
                 }
                 write!(f, " {{\n")?;
-                for (i, (name, field)) in fields.iter().enumerate() {
+                for (name, field) in fields.iter() {
                     write!(f, "{}: {},\n", name, field)?;
                 }
                 write!(f, " }}")
@@ -326,6 +354,9 @@ pub enum UnaryOp {
     Not,
     BitNot,
     Deref,
+    BindMonad,
+    Await,
+    Block,
 }
 
 impl fmt::Display for UnaryOp {
@@ -335,6 +366,9 @@ impl fmt::Display for UnaryOp {
             UnaryOp::Not => write!(f, "!"),
             UnaryOp::BitNot => write!(f, "~"),
             UnaryOp::Deref => write!(f, "*"),
+            UnaryOp::BindMonad => write!(f, "?"),
+            UnaryOp::Await => write!(f, "await "),
+            UnaryOp::Block => write!(f, "block "),
         }
     }
 }
@@ -463,6 +497,28 @@ impl fmt::Display for Node {
             Variant::TypeDecl { ident, alias_of } => {
                 write!(f, "type {} = {};\n", ident, alias_of)
             }
+            Variant::ActorDecl {
+                ident,
+                methods,
+                fields,
+            } => {
+                write!(f, "actor {} {{\n", ident)?;
+                if !fields.is_empty() {
+                    for (name, field) in fields {
+                        write!(f, "  {}: {},\n", name, field)?;
+                    }
+                } else {
+                    write!(f, ";")?;
+                }
+                if !methods.is_empty() {
+                    write!(f, "\n")?;
+                    for method in methods {
+                        write!(f, "{}", method)?;
+                    }
+                }
+                write!(f, "}}\n")?;
+                Ok(())
+            }
             Variant::Break => write!(f, "break;\n"),
             Variant::Continue => write!(f, "continue;\n"),
             Variant::Assert {
@@ -546,10 +602,14 @@ impl fmt::Display for Node {
                 return_type,
                 body,
                 capture_list,
+                is_async,
             } => {
+                if *is_async {
+                    write!(f, "async ")?;
+                }
                 write!(f, "func")?;
                 match ident {
-                    Some(ident) => write!(f, "{}", ident)?,
+                    Some(ident) => write!(f, " {}", ident)?,
                     None => {}
                 }
 
@@ -606,10 +666,10 @@ impl fmt::Display for Node {
                 Ok(())
             }
             Variant::InterfaceDecl {
-                name,
+                ident,
                 interface: functions,
             } => {
-                write!(f, "interface {}", name)?;
+                write!(f, "interface {}", ident)?;
                 write!(f, " {{\n ")?;
                 for (_, func) in functions.iter().enumerate() {
                     write!(f, "{}", func)?;

@@ -70,6 +70,10 @@ pub enum TokenVariant {
     Break,
     Continue,
     Assert,
+    Async,
+    Await,
+    Block,
+    Actor,
 
     //comment (token, multiline)
     Comment((String, bool)),
@@ -209,6 +213,10 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::Break => write!(f, "break"),
             TokenVariant::Continue => write!(f, "continue"),
             TokenVariant::Assert => write!(f, "assert"),
+            TokenVariant::Async => write!(f, "async"),
+            TokenVariant::Await => write!(f, "await"),
+            TokenVariant::Block => write!(f, "block"),
+            TokenVariant::Actor => write!(f, "actor"),
             TokenVariant::Comment(s) => match s {
                 (text, true) => write!(f, "/*{}*/", text),
                 (text, false) => write!(f, "//{}", text),

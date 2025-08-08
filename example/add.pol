@@ -1,6 +1,26 @@
+struct Test {
+    a: int32,
+}
 
+actor Actor {
+    b: int32,
+    async func test(): int32 {
+        return 12 + b;
+    }
+}
+
+
+@gpu;
+async func test() {
+    let a = block b.test();
+    c = struct::Test { a: 12, };
+    e = actor::Actor { b: 12, };
+}
+
+
+/*
 func test_closure(val: ref int32): int32 {
-    let mod a: int32 = 12;
+    let mod a: int32 = 12?;
     let test_func = func[ref a](val: int32): int32 {
         return a + val;
     };
@@ -18,7 +38,7 @@ func test_closure(val: ref int32): int32 {
 }
 
 
-
+/*
 func ref_semantics(i: ref int32, j: weak int32) {
     i = 12;
     let b: ref int32 = ref i;
