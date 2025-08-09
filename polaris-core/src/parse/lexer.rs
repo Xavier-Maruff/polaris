@@ -303,6 +303,7 @@ impl Lexer {
                 "await" => TokenVariant::Await,
                 "block" => TokenVariant::Block,
                 "actor" => TokenVariant::Actor,
+                "export" => TokenVariant::Export,
                 _ => TokenVariant::Ident(ident_str),
             },
             span: CodeSpan {
@@ -431,18 +432,10 @@ impl Lexer {
     pub fn consume_directive(&mut self) -> Token {
         let start = self.position; // skip '@'
         self.advance();
-        while let Some(c) = self.current_char {
-            if c.is_alphanumeric() || c == '_' {
-                self.advance();
-            } else {
-                break;
-            }
-        }
+
 
         Token {
-            variant: TokenVariant::DirectiveIdent(
-                self.source[start..self.position - 1].to_string(),
-            ),
+            variant: TokenVariant::Directive,
             span: CodeSpan {
                 start: start - 1,
                 end: self.position - 1,

@@ -2,7 +2,7 @@ pub mod lexer;
 pub mod token;
 
 use crate::ast::ast::*;
-use crate::ast::pass::PassContext;
+use crate::compile::CompileContext;
 use crate::diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType};
 use crate::log;
 use crate::parse::lexer::Lexer;
@@ -21,11 +21,11 @@ impl CodeSpan {
 }
 
 //mutability of source is unnecessary, but means adheres to general Pass type
-pub fn parse(source: &mut String, ctx: &mut PassContext<Node>) -> Result<Option<Node>, ()> {
+pub fn parse(file: String, source: String, ctx: &mut CompileContext) -> Result<Option<Node>, ()> {
     let mut parse_ctx = ParseContext::new(&ctx.logger);
-    let mut lexer = Lexer::new(ctx.file.clone(), source.clone());
+    let mut lexer = Lexer::new(file, source);
 
-    let ast = parse_ctx.parse_translation_unit(&mut lexer);
+    let ast = parse_ctx.parse_module(&mut lexer);
 
     ctx.errors.extend(ast.errors());
     ctx.warnings.extend(ast.warnings());
@@ -36,7 +36,7 @@ pub fn parse(source: &mut String, ctx: &mut PassContext<Node>) -> Result<Option<
 //internal
 
 struct ParseContext<'a> {
-    logger: &'a log::Logger,
+    _logger: &'a log::Logger,
     curr_tok: Token,
     next_tok: Token,
 }
@@ -68,7 +68,7 @@ macro_rules! wrap_err {
 impl<'a> ParseContext<'a> {
     pub fn new(logger: &'a log::Logger) -> Self {
         Self {
-            logger,
+            _logger: logger,
             curr_tok: Token {
                 variant: TokenVariant::Empty,
                 span: CodeSpan { start: 0, end: 0 },
@@ -95,10 +95,7 @@ impl<'a> ParseContext<'a> {
                 }
                 Ok(())
             }
-            Err(err) => {
-                self.logger.diagnostic(&err);
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 
@@ -127,7 +124,7 @@ impl<'a> ParseContext<'a> {
         })
     }
 
-    fn parse_translation_unit(&mut self, lexer: &mut Lexer) -> Node {
+    fn parse_module(&mut self, lexer: &mut Lexer) -> Node {
         let mut ast = Node::new(Variant::Program {
             children: Vec::new(),
             file: lexer.file.clone().clone(),
@@ -146,7 +143,14 @@ impl<'a> ParseContext<'a> {
         }
 
         while lexer.peek().is_some() {
-            let node = self.parse_statement(&mut ast, lexer, true);
+            let start_pos = lexer.current_position();
+            let node = match self.parse_statement(&mut ast, lexer, true) {
+                Ok(node) => node,
+                Err(_) => Node::new_with_span(
+                    Variant::Failed,
+                    CodeSpan::new(start_pos, lexer.current_position()),
+                ),
+            };
             match &mut ast.variant {
                 Variant::Program { children, .. } => {
                     children.push(node);
@@ -208,7 +212,7 @@ impl<'a> ParseContext<'a> {
 
         let mut body = Vec::new();
         while self.curr_tok.variant != TokenVariant::RBrace {
-            body.push(self.parse_statement(ast, lexer, false));
+            body.push(self.parse_statement(ast, lexer, false)?);
         }
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
@@ -220,7 +224,7 @@ impl<'a> ParseContext<'a> {
                 wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
                 let mut else_body = Vec::new();
                 while self.curr_tok.variant != TokenVariant::RBrace {
-                    else_body.push(self.parse_statement(ast, lexer, false));
+                    else_body.push(self.parse_statement(ast, lexer, false)?);
                 }
                 wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
                 Some(Box::new(Node::new(Variant::Block {
@@ -281,7 +285,7 @@ impl<'a> ParseContext<'a> {
         );
         let mut body = Vec::new();
         while self.curr_tok.variant != TokenVariant::RBrace {
-            body.push(self.parse_statement(ast, lexer, false));
+            body.push(self.parse_statement(ast, lexer, false)?);
         }
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
@@ -381,15 +385,27 @@ impl<'a> ParseContext<'a> {
         Ok(expr)
     }
 
-    fn parse_statement(&mut self, ast: &mut Node, lexer: &mut Lexer, _top_level: bool) -> Node {
+    fn parse_statement(
+        &mut self,
+        ast: &mut Node,
+        lexer: &mut Lexer,
+        _top_level: bool,
+    ) -> Result<Node, ()> {
         let failed_start = lexer.current_position();
+
+        let export = if self.curr_tok.variant == TokenVariant::Export {
+            wrap_err!(ast, self.advance(lexer));
+            true
+        } else {
+            false
+        };
+
         let node = match self.curr_tok.variant {
             TokenVariant::If => self.parse_if_stmt(ast, lexer),
             TokenVariant::For => self.parse_for_stmt(ast, lexer),
             TokenVariant::Func | TokenVariant::Async => self.parse_func_decl(ast, lexer, false),
             TokenVariant::Return => self.parse_return_stmt(ast, lexer),
             TokenVariant::Yield => self.parse_yield_stmt(ast, lexer),
-            TokenVariant::DirectiveIdent(_) => self.parse_directive(ast, lexer),
             TokenVariant::Let => self.parse_var_decl(ast, lexer),
             TokenVariant::Struct => self.parse_struct_decl(ast, lexer),
             TokenVariant::Interface => self.parse_interface_decl(ast, lexer),
@@ -404,11 +420,14 @@ impl<'a> ParseContext<'a> {
         };
 
         match node {
-            Err(_) => Node::new_with_span(
+            Err(_) => Ok(Node::new_with_span(
                 Variant::Failed,
                 CodeSpan::new(failed_start, self.curr_tok.span.end),
-            ),
-            Ok(node) => node,
+            )),
+            Ok(mut node) => {
+                node.export = export;
+                Ok(node)
+            }
         }
     }
 
@@ -485,7 +504,7 @@ impl<'a> ParseContext<'a> {
             wrap_err!(ast, self.advance(lexer));
             let mut body = Vec::new();
             while self.curr_tok.variant != TokenVariant::RBrace {
-                body.push(self.parse_statement(ast, lexer, false));
+                body.push(self.parse_statement(ast, lexer, false)?);
             }
             wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
             Some(Box::new(Node::new(Variant::Block { children: body })))
@@ -528,41 +547,20 @@ impl<'a> ParseContext<'a> {
 
     fn parse_directive(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
         let mut span = CodeSpan::new(lexer.current_position(), 0);
+        wrap_err!(ast, self.expect(lexer, TokenVariant::Directive));
+
         let mut args = Vec::new();
-        let name = match &self.curr_tok.variant {
-            TokenVariant::DirectiveIdent(name) => name.clone(),
-            _ => {
-                ast.add_error(Diagnostic {
-                    primary: DiagnosticMsg {
-                        message: format!(
-                            "Expected directive identifier, found {:?}",
-                            self.curr_tok.variant
-                        ),
-                        span: CodeSpan {
-                            start: self.curr_tok.span.start,
-                            end: self.curr_tok.span.end,
-                        },
-                        file: lexer.file.clone(),
-                        err_type: DiagnosticMsgType::UnexpectedToken,
-                    },
-                    notes: vec![],
-                    hints: vec!["Check your syntax.".to_string()],
-                });
-                return Err(());
-            }
-        };
+        let ident = Box::new(self.parse_ident(ast, lexer)?);
 
-        wrap_err!(ast, self.advance(lexer));
-
-        if self.curr_tok.variant != TokenVariant::Semicolon {
-            args = self.parse_list(ast, lexer, false)?;
-            wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
-        } else {
+        if matches!(self.curr_tok.variant, TokenVariant::LParen) {
             wrap_err!(ast, self.advance(lexer));
+            args = self.parse_list(ast, lexer, false)?;
+            wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
         }
 
         span.end = lexer.current_position();
-        let node = Node::new_with_span(Variant::Directive { name, args }, span);
+
+        let node = Node::new_with_span(Variant::Expr(ExprNode::Directive { ident, args }), span);
 
         Ok(node)
     }
@@ -831,6 +829,7 @@ impl<'a> ParseContext<'a> {
                         name: field_name,
                         type_args: vec![],
                         memory_mode: MemoryMode::Auto,
+                        id: None,
                     })),
                 ));
             }
@@ -908,7 +907,7 @@ impl<'a> ParseContext<'a> {
                 let mut body = Vec::new();
 
                 while self.curr_tok.variant != TokenVariant::RBrace {
-                    body.push(self.parse_statement(ast, lexer, false));
+                    body.push(self.parse_statement(ast, lexer, false)?);
                 }
 
                 wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
@@ -1331,6 +1330,9 @@ impl<'a> ParseContext<'a> {
         let mut unqualifieds = Vec::new();
         while matches!(self.curr_tok.variant, TokenVariant::Ident(_)) {
             unqualifieds.push(self.parse_ident_unqualified(ast, lexer)?);
+            if self.curr_tok.variant != TokenVariant::DoubleColon {
+                break; // no more unqualified identifiers
+            }
         }
 
         //
@@ -1373,10 +1375,12 @@ impl<'a> ParseContext<'a> {
                 name,
                 type_args,
                 memory_mode,
+                id: None,
             }),
             warnings,
             errors,
             span,
+            export: false,
         })
     }
 
@@ -1400,6 +1404,10 @@ impl<'a> ParseContext<'a> {
 
                 span.end = lexer.current_position();
                 Node::new_with_span(Variant::Expr(ExprNode::ListLit { elements }), span)
+            }
+            TokenVariant::Directive => {
+                advance = false;
+                self.parse_directive(ast, lexer)?
             }
             TokenVariant::Match => {
                 advance = false;
@@ -1451,6 +1459,7 @@ impl<'a> ParseContext<'a> {
                     notes: vec![],
                     hints: vec!["Check your syntax.".to_string()],
                 });
+                wrap_err!(ast, self.advance(lexer));
                 return Err(());
             }
         };
@@ -1481,7 +1490,7 @@ mod tests {
 
     #[test]
     fn parse_sanity() -> Result<(), ()> {
-        let mut source = "\
+        let source = "\
             @module my_module;
 
            struct MyStruct::<T> {
@@ -1535,9 +1544,9 @@ mod tests {
         "
         .to_string();
 
-        let mut ctx = PassContext::new(Logger::dummy(), "test_file".to_string());
+        let mut ctx = CompileContext::new(Logger::dummy());
 
-        let ast = match parse(&mut source, &mut ctx)? {
+        let ast = match parse("test_file".to_string(), source, &mut ctx)? {
             Some(ast) => ast,
             None => {
                 panic!("Parsing failed with no AST produced");

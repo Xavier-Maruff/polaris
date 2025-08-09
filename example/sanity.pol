@@ -1,5 +1,5 @@
- @module my_module;
-
+ @module(my_module);
+/*
 struct MyStruct::<T> {
     field1: int32,
     field2: string,

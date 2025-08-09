@@ -1,41 +1,8 @@
-use crate::{diagnostic::Diagnostic, log::Logger};
-
-pub type Pass<I, O> = fn(&mut I, &mut PassContext<I>) -> Result<Option<O>, ()>;
-
-pub struct PassContext<N> {
-    pub logger: Logger,
-    pub file: String,
-    pub errors: Vec<Diagnostic>,
-    pub warnings: Vec<Diagnostic>,
-    pub ast: Option<N>,
-}
-
-impl<N> PassContext<N> {
-    pub fn new(logger: Logger, file: String) -> Self {
-        Self {
-            logger,
-            file,
-            errors: Vec::new(),
-            warnings: Vec::new(),
-            ast: None,
-        }
-    }
-
-    pub fn add_error(&mut self, err: Diagnostic) {
-        self.errors.push(err);
-    }
-
-    pub fn add_warning(&mut self, warning: Diagnostic) {
-        self.warnings.push(warning);
-    }
-}
-
 //implemented as a macro so that passes can override default arms
 //that otherwise just visit all children recursively
 #[macro_export]
 macro_rules! visit_ast_children {
-    ($node:expr, $ctx:expr, $visit:expr, { $($pat:pat => $body:expr),* $(,)? }) => {
-
+    ($node:expr, $obj:expr, $visit:ident, { $($pat:pat => $body:expr),* $(,)? }) => {
         #[allow(unreachable_patterns)]
         match $node {
             $($pat => $body)*
@@ -44,78 +11,85 @@ macro_rules! visit_ast_children {
                 ref mut children, ..
             } => {
                 for child in children.iter_mut() {
-                    $visit(child, $ctx)?;
+                   $obj.$visit(child)?;
                 }
             }
 
-            Variant::Directive { ref mut args, .. } => {
+            /*Variant::Directive { ref mut args, .. } => {
                 for arg in args.iter_mut() {
-                    $visit(arg, $ctx)?;
+                    $obj.$visit(arg)?;
                 }
-            }
+            }*/
 
             Variant::Expr(ref mut expr) => {
                 match expr {
                     ExprNode::Ident { type_args, .. } => {
                         for type_arg in type_args.iter_mut() {
-                            $visit(type_arg, $ctx)?;
+                            $obj.$visit(type_arg)?;
                         }
                     }
                     ExprNode::QualifiedIdent { namespaces, type_args, .. } => {
                         for namespace in namespaces.iter_mut() {
-                            $visit(namespace, $ctx)?;
+                            $obj.$visit(namespace)?;
                         }
                         for type_arg in type_args.iter_mut() {
-                            $visit(type_arg, $ctx)?;
+                            $obj.$visit(type_arg)?;
                         }
                     }
                     ExprNode::BinaryOp { lhs, rhs, .. } => {
-                        $visit(lhs, $ctx)?;
-                        $visit(rhs, $ctx)?;
+                        $obj.$visit(lhs)?;
+                        $obj.$visit(rhs)?;
                     }
                     ExprNode::StructLit {struct_ident, fields, ..} => {
                         if let Some(ident) = struct_ident {
-                            $visit(ident, $ctx)?;
+                            $obj.$visit(ident)?;
                         }
                         for (_, field) in fields.iter_mut() {
-                            $visit(field, $ctx)?;
+                            $obj.$visit(field)?;
                         }
                     }
                     ExprNode::ActorLit { actor_ident, fields, .. } => {
-                        $visit(actor_ident, $ctx)?;
+                        $obj.$visit(actor_ident)?;
                         for (_, field) in fields.iter_mut() {
-                            $visit(field, $ctx)?;
+                            $obj.$visit(field)?;
                         }
                     }
                     ExprNode::Call {callee, args, ..} => {
-                        $visit(callee, $ctx)?;
+                        $obj.$visit(callee)?;
                         for arg in args.iter_mut() {
-                            $visit(arg, $ctx)?;
+                            $obj.$visit(arg)?;
                         }
                     }
                     ExprNode::ListLit { elements, .. } => {
                         for element in elements.iter_mut() {
-                            $visit(element, $ctx)?;
+                            $obj.$visit(element)?;
                         }
                     }
 
                     ExprNode::Match { subject, cases, .. } => {
-                        $visit(subject, $ctx)?;
+                        $obj.$visit(subject)?;
                         for (cond, arm) in cases.iter_mut() {
-                            $visit(cond, $ctx)?;
-                            $visit(arm, $ctx)?;
+                            $obj.$visit(cond)?;
+                            $obj.$visit(arm)?;
                         }
                     }
                     ExprNode::FieldAccess { base, field, .. } => {
-                        $visit(base, $ctx)?;
-                        $visit(field, $ctx)?;
+                        $obj.$visit(base)?;
+                        $obj.$visit(field)?;
                     }
                     ExprNode::Index{base, index, ..} => {
-                        $visit(base, $ctx)?;
-                        $visit(index, $ctx)?;
+                        $obj.$visit(base)?;
+                        $obj.$visit(index)?;
                     }
                     ExprNode::UnaryOp { operand, .. } => {
-                        $visit(operand, $ctx)?;
+                        $obj.$visit(operand)?;
+                    }
+
+                    ExprNode::Directive { ident, args, .. } => {
+                        $obj.$visit(ident)?;
+                        for arg in args.iter_mut() {
+                            $obj.$visit(arg)?;
+                        }
                     }
 
                     _ => {}
@@ -124,123 +98,123 @@ macro_rules! visit_ast_children {
 
             Variant::StructDecl { ref mut fields, .. } => {
                 for (_, field) in fields.iter_mut() {
-                    $visit(field, $ctx)?;
+                    $obj.$visit(field)?;
                 }
             }
 
             Variant::FuncDecl { ref mut ident, ref mut capture_list, ref mut params, ref mut return_type, ref mut body, .. } => {
                 if let Some(ident) = ident {
-                    $visit(ident, $ctx)?;
+                    $obj.$visit(ident)?;
                 }
                 if let Some(capture_list) = capture_list {
                     for param in capture_list.iter_mut() {
-                        $visit(param, $ctx)?;
+                        $obj.$visit(param)?;
                     }
                 }
                 for param in params.iter_mut() {
-                    $visit(param, $ctx)?;
+                    $obj.$visit(param)?;
                 }
                 if let Some(return_type) = return_type {
-                    $visit(return_type, $ctx)?;
+                    $obj.$visit(return_type)?;
                 }
                 if let Some(body) = body {
-                    $visit(body, $ctx)?;
+                    $obj.$visit(body)?;
                 }
             }
 
             Variant::VarDecl { ref mut var_type, ref mut initialiser, .. } => {
                 if let Some(var_type) = var_type {
-                    $visit(var_type, $ctx)?;
+                    $obj.$visit(var_type)?;
                 }
                 if let Some(initialiser) = initialiser {
-                    $visit(initialiser, $ctx)?;
+                    $obj.$visit(initialiser)?;
                 }
             }
 
             Variant::EnumDecl {ref mut ident, ref mut variants, ..} => {
-                $visit(ident, $ctx)?;
+                $obj.$visit(ident)?;
                 for (_, variant) in variants.iter_mut() {
                    if let Some(inner) = variant {
-                        $visit(inner, $ctx)?;
+                        $obj.$visit(inner)?;
                     }
                 }
             }
 
             Variant::InterfaceDecl {ref mut ident, ref mut interface, ..} => {
-                $visit(ident, $ctx)?;
+                $obj.$visit(ident)?;
                 for method in interface.iter_mut() {
-                    $visit(method, $ctx)?;
+                    $obj.$visit(method)?;
                 }
             }
             Variant::ImplDecl {ref mut interface, ref mut target, ref mut methods, ..} => {
                 if let Some(interface) = interface {
-                    $visit(interface, $ctx)?;
+                    $obj.$visit(interface)?;
                 }
-                $visit(target, $ctx)?;
+                $obj.$visit(target)?;
                 for method in methods.iter_mut() {
-                    $visit(method, $ctx)?;
+                    $obj.$visit(method)?;
                 }
             }
             Variant::Block { ref mut children, .. } => {
                 for child in children.iter_mut() {
-                    $visit(child, $ctx)?;
+                    $obj.$visit(child)?;
                 }
             }
 
             Variant::Return { ref mut value, .. } => {
                 if let Some(value) = value {
-                    $visit(value, $ctx)?;
+                    $obj.$visit(value)?;
                 }
             }
 
             Variant::Yield { ref mut value, .. } => {
                 if let Some(value) = value {
-                    $visit(value, $ctx)?;
+                    $obj.$visit(value)?;
                 }
             }
 
             Variant::Assert { ref mut condition, ref mut messages, .. } => {
-                $visit(condition, $ctx)?;
+                $obj.$visit(condition)?;
                 for message in messages.iter_mut() {
-                    $visit(message, $ctx)?;
+                    $obj.$visit(message)?;
                 }
             }
 
             Variant::If { ref mut condition, ref mut then_branch, ref mut else_branch, .. } => {
-                $visit(condition, $ctx)?;
-                $visit(then_branch, $ctx)?;
+                $obj.$visit(condition)?;
+                $obj.$visit(then_branch)?;
                 if let Some(else_branch) = else_branch {
-                    $visit(else_branch, $ctx)?;
+                    $obj.$visit(else_branch)?;
                 }
             }
 
             Variant::For { ref mut body, ref mut variant, ..} => {
-                $visit(body, $ctx)?;
+                $obj.$visit(body)?;
                 match variant {
                     ForVariant::ForWhile { condition } => {
-                        $visit(condition, $ctx)?;
+                        $obj.$visit(condition)?;
                     }
 
                     ForVariant::ForIter { ident, iterable, .. } => {
-                        $visit(ident, $ctx)?;
-                        $visit(iterable, $ctx)?;
+                        $obj.$visit(ident)?;
+                        $obj.$visit(iterable)?;
                     }
                     _ => {}
                 }
             }
 
             Variant::TypeDecl { ref mut ident, ref mut alias_of, .. } => {
-                $visit(ident, $ctx)?;
-                $visit(alias_of, $ctx)?;
+                $obj.$visit(ident)?;
+                $obj.$visit(alias_of)?;
             }
 
             Variant::ActorDecl { ref mut ident, ref mut methods, ref mut fields, .. } => {
-                $visit(ident, $ctx)?;
+                $obj.$visit(ident)?;
                 for method in methods.iter_mut() {
-                    $visit(method, $ctx)?;
+                    $obj.$visit(method)?;
                 }
                 for (_, field) in fields.iter_mut() {
-                    $visit(field, $ctx)?;
+                    $obj.$visit(field)?;
                 }
             }
 

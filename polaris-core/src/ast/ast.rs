@@ -1,7 +1,9 @@
 use std::fmt;
 
+use crate::collect_diagnostics;
 use crate::diagnostic::Diagnostic;
 use crate::parse::CodeSpan;
+use crate::symbol::SymbolId;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
@@ -9,6 +11,7 @@ pub struct Node {
     pub warnings: Option<Vec<Diagnostic>>,
     pub errors: Option<Vec<Diagnostic>>,
     pub span: CodeSpan,
+    pub export: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,10 +21,7 @@ pub enum Variant {
         file: String,
         children: Vec<Node>,
     },
-    Directive {
-        name: String,
-        args: Vec<Node>,
-    },
+
     Expr(ExprNode),
     StructDecl {
         ident: Box<Node>,
@@ -141,6 +141,11 @@ pub enum ExprNode {
         name: String,
         type_args: Vec<Node>,
         memory_mode: MemoryMode,
+        id: Option<SymbolId>,
+    },
+    Directive {
+        ident: Box<Node>,
+        args: Vec<Node>,
     },
     IntLit(i64),
     FloatLit(f64),
@@ -223,112 +228,6 @@ impl ExprNode {
                 errors
             }
             _ => Vec::new(),
-        }
-    }
-}
-
-impl fmt::Display for ExprNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ExprNode::String(s) => write!(f, "\"{}\"", s),
-            ExprNode::Ident { name, .. } => write!(f, "{}", name),
-            ExprNode::Index { base, index } => {
-                write!(f, "{}[{}]", base, index)
-            }
-            ExprNode::UnaryOp { op, operand } => {
-                write!(f, "{}{}", op, operand)
-            }
-            ExprNode::FieldAccess { base, field } => {
-                write!(f, "{}.{}", base, field)
-            }
-            ExprNode::ActorLit {
-                actor_ident,
-                fields,
-            } => {
-                write!(f, "actor::{}", actor_ident)?;
-                if !fields.is_empty() {
-                    write!(f, " {{\n")?;
-                    for (name, field) in fields {
-                        write!(f, "  {}: {},\n", name, field)?;
-                    }
-                    write!(f, " }}")?;
-                } else {
-                    write!(f, ";")?;
-                }
-                Ok(())
-            }
-            ExprNode::QualifiedIdent {
-                namespaces,
-                name,
-                type_args,
-                memory_mode,
-                ..
-            } => {
-                if memory_mode != &MemoryMode::Auto {
-                    write!(f, "{} ", memory_mode)?;
-                }
-                for ns in namespaces {
-                    write!(f, "{}::", ns)?;
-                }
-                write!(f, "{}", name)?;
-                if !type_args.is_empty() {
-                    let type_arg_str = type_args
-                        .iter()
-                        .map(|t| t.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    write!(f, "::<{}>", type_arg_str)?;
-                }
-                Ok(())
-            }
-            ExprNode::Match { subject, cases } => {
-                write!(f, "match {} {{\n", subject)?;
-                for (pattern, body) in cases {
-                    write!(f, "  {} => {},\n", pattern, body)?;
-                }
-                write!(f, "}}\n")
-            }
-            ExprNode::StructLit {
-                struct_ident,
-                fields,
-            } => {
-                write!(f, "struct")?;
-                if let Some(ident) = struct_ident {
-                    write!(f, "::{}", ident)?;
-                }
-                write!(f, " {{\n")?;
-                for (name, field) in fields.iter() {
-                    write!(f, "{}: {},\n", name, field)?;
-                }
-                write!(f, " }}")
-            }
-            ExprNode::IntLit(i) => write!(f, "{}", i),
-            ExprNode::FloatLit(v) => write!(f, "{}", v),
-            ExprNode::CharLit(c) => write!(f, "'{}'", c),
-            ExprNode::BinaryOp { op, lhs, rhs } => {
-                write!(f, "({} {} {})", lhs, op, rhs)
-            }
-            ExprNode::Call { callee, args } => {
-                write!(f, "{}(", callee)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", arg)?;
-                }
-                write!(f, ")")
-            }
-            ExprNode::ListLit { elements } => {
-                write!(
-                    f,
-                    "[{}]",
-                    elements
-                        .iter()
-                        .map(|e| e.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
         }
     }
 }
@@ -417,6 +316,7 @@ impl Node {
             span: CodeSpan::new(0, 0),
             warnings: None,
             errors: None,
+            export: false,
         }
     }
 
@@ -426,6 +326,7 @@ impl Node {
             span: span,
             warnings: None,
             errors: None,
+            export: false,
         }
     }
 
@@ -448,20 +349,7 @@ impl Node {
             Some(w) => w.clone(),
             None => Vec::new(),
         };
-        match &self.variant {
-            Variant::Expr(expr) => warnings.extend(expr.warnings()),
-            Variant::Directive { args, .. } => {
-                for arg in args {
-                    warnings.extend(arg.warnings());
-                }
-            }
-            Variant::StructDecl { fields, .. } => {
-                for (_, field) in fields {
-                    warnings.extend(field.warnings());
-                }
-            }
-            _ => {}
-        }
+        collect_diagnostics!(self, warnings, warnings);
         warnings
     }
 
@@ -471,20 +359,7 @@ impl Node {
             None => Vec::new(),
         };
 
-        match &self.variant {
-            Variant::Expr(expr) => errors.extend(expr.errors()),
-            Variant::Directive { args, .. } => {
-                for arg in args {
-                    errors.extend(arg.errors());
-                }
-            }
-            Variant::StructDecl { fields, .. } => {
-                for (_, field) in fields {
-                    errors.extend(field.errors());
-                }
-            }
-            _ => {}
-        }
+        collect_diagnostics!(self, errors, errors);
         errors
     }
 }
@@ -585,20 +460,7 @@ impl fmt::Display for Node {
                 write!(f, "{}", body)?;
                 Ok(())
             }
-            Variant::Directive { name, args } => {
-                write!(f, "@{}", name)?;
-                if !args.is_empty() {
-                    write!(
-                        f,
-                        "({})",
-                        args.iter()
-                            .map(|a| a.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )?;
-                }
-                write!(f, ";\n")
-            }
+
             Variant::Expr(expr) => write!(f, "{}", expr),
             Variant::StructDecl { ident, fields } => {
                 write!(f, "struct {} {{\n ", ident)?;
@@ -703,6 +565,126 @@ impl fmt::Display for Node {
                     writeln!(f, "{}", method)?;
                 }
                 write!(f, " }}\n")
+            }
+        }
+    }
+}
+
+impl fmt::Display for ExprNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExprNode::String(s) => write!(f, "\"{}\"", s),
+            ExprNode::Ident { name, .. } => write!(f, "{}", name),
+            ExprNode::Index { base, index } => {
+                write!(f, "{}[{}]", base, index)
+            }
+            ExprNode::UnaryOp { op, operand } => {
+                write!(f, "{}{}", op, operand)
+            }
+            ExprNode::FieldAccess { base, field } => {
+                write!(f, "{}.{}", base, field)
+            }
+            ExprNode::ActorLit {
+                actor_ident,
+                fields,
+            } => {
+                write!(f, "actor::{}", actor_ident)?;
+                if !fields.is_empty() {
+                    write!(f, " {{\n")?;
+                    for (name, field) in fields {
+                        write!(f, "  {}: {},\n", name, field)?;
+                    }
+                    write!(f, " }}")?;
+                } else {
+                    write!(f, ";")?;
+                }
+                Ok(())
+            }
+            ExprNode::Directive { ident, args } => {
+                write!(f, "@{}", ident)?;
+                if !args.is_empty() {
+                    write!(
+                        f,
+                        "({})",
+                        args.iter()
+                            .map(|a| a.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )?;
+                }
+                Ok(())
+            }
+            ExprNode::QualifiedIdent {
+                namespaces,
+                name,
+                type_args,
+                memory_mode,
+                ..
+            } => {
+                if memory_mode != &MemoryMode::Auto {
+                    write!(f, "{} ", memory_mode)?;
+                }
+                for ns in namespaces {
+                    write!(f, "{}::", ns)?;
+                }
+                write!(f, "{}", name)?;
+                if !type_args.is_empty() {
+                    let type_arg_str = type_args
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    write!(f, "::<{}>", type_arg_str)?;
+                }
+                Ok(())
+            }
+            ExprNode::Match { subject, cases } => {
+                write!(f, "match {} {{\n", subject)?;
+                for (pattern, body) in cases {
+                    write!(f, "  {} => {},\n", pattern, body)?;
+                }
+                write!(f, "}}\n")
+            }
+            ExprNode::StructLit {
+                struct_ident,
+                fields,
+            } => {
+                write!(f, "struct")?;
+                if let Some(ident) = struct_ident {
+                    write!(f, "::{}", ident)?;
+                }
+                write!(f, " {{\n")?;
+                for (name, field) in fields.iter() {
+                    write!(f, "{}: {},\n", name, field)?;
+                }
+                write!(f, " }}")
+            }
+            ExprNode::IntLit(i) => write!(f, "{}", i),
+            ExprNode::FloatLit(v) => write!(f, "{}", v),
+            ExprNode::CharLit(c) => write!(f, "'{}'", c),
+            ExprNode::BinaryOp { op, lhs, rhs } => {
+                write!(f, "({} {} {})", lhs, op, rhs)
+            }
+            ExprNode::Call { callee, args } => {
+                write!(f, "{}(", callee)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
+            }
+            ExprNode::ListLit { elements } => {
+                write!(
+                    f,
+                    "[{}]",
+                    elements
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
         }
     }

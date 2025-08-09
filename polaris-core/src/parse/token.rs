@@ -2,6 +2,8 @@ use crate::parse::CodeSpan;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenVariant {
+    Directive,
+
     //literals
     Ident(String),
     IntLit(String),
@@ -9,7 +11,6 @@ pub enum TokenVariant {
     StringLit(String),
     CharLit(String),
     MacroIdent(String),
-    DirectiveIdent(String),
 
     //operators
     Plus,
@@ -74,6 +75,7 @@ pub enum TokenVariant {
     Await,
     Block,
     Actor,
+    Export,
 
     //comment (token, multiline)
     Comment((String, bool)),
@@ -158,7 +160,7 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::StringLit(s) => write!(f, "\"{}\"", s),
             TokenVariant::CharLit(s) => write!(f, "'{}'", s),
             TokenVariant::MacroIdent(s) => write!(f, "{}!", s),
-            TokenVariant::DirectiveIdent(s) => write!(f, "@{}", s),
+            TokenVariant::Directive => write!(f, "@"),
             TokenVariant::Plus => write!(f, "+"),
             TokenVariant::Minus => write!(f, "-"),
             TokenVariant::Star => write!(f, "*"),
@@ -217,6 +219,7 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::Await => write!(f, "await"),
             TokenVariant::Block => write!(f, "block"),
             TokenVariant::Actor => write!(f, "actor"),
+            TokenVariant::Export => write!(f, "export"),
             TokenVariant::Comment(s) => match s {
                 (text, true) => write!(f, "/*{}*/", text),
                 (text, false) => write!(f, "//{}", text),

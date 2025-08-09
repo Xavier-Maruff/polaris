@@ -1,2 +1,3 @@
 pub mod ast;
-pub mod pass;
+pub mod diagnostic;
+pub mod visit;

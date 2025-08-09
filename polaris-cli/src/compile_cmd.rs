@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fs};
 
 use crate::{cli::CompileArgs, log};
-use polaris_core::compile::compile::CompileContext;
+use polaris_core::compile::CompileContext;
 
 pub async fn command(args: CompileArgs) {
     let (logger, hdl) = match log::spawn_log_thread(args.verbosity, args.werror) {
@@ -49,6 +49,8 @@ pub async fn command(args: CompileArgs) {
             Ok(ctx) => compile_ctx.merge(ctx),
         }
     }
+
+    //println!("{:#?}", compile_ctx.stage_one_asts[0]);
 
     let (warnings, errors) = compile_ctx.get_diagnostics();
     let comp_failed = !errors.is_empty() || (args.werror && !warnings.is_empty());
