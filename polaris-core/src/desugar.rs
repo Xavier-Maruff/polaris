@@ -5,7 +5,7 @@ use crate::{
     visit_ast_children,
 };
 
-pub fn desugar(ast: &mut Node, ctx: &mut CompileContext, file: &String) -> Result<(), ()> {
+pub fn desugar_pass(ast: &mut Node, ctx: &mut CompileContext, file: &String) -> Result<(), ()> {
     let mut desugar_ctx = DesugarContext {
         file: file,
         ctx: ctx,

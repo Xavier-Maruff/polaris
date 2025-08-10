@@ -24,29 +24,52 @@ pub async fn command(args: CompileArgs) {
                 Err(e) => {
                     ctx_clone
                         .logger
-                        .critical(&format!("Failed to read file {}: {}", file, e));
-                    unreachable!()
+                        .error(&format!("Failed to read file {}: {}", file, e));
+                    return Err(());
                 }
             };
 
             match ctx_clone.ingest_source(file.clone(), source) {
-                Ok(_) => ctx_clone,
+                Ok(_) => Ok(ctx_clone),
                 Err(_) => {
                     ctx_clone
                         .logger
                         .error(&format!("Failed to compile file: {}", file));
-                    return ctx_clone;
+                    return Ok(ctx_clone);
                 }
             }
         }));
     }
 
+    let mut failed = false;
     for task in tasks {
         match task.await {
-            Err(e) => {
-                logger.error(&format!("Task failed: {}", e));
+            Err(_) => {
+                failed = true
+                //logger.error(&format!("Task failed: {}", e));
             }
-            Ok(ctx) => compile_ctx.merge(ctx),
+            Ok(ctx) => match ctx {
+                Ok(ctx) => {
+                    compile_ctx.merge(ctx);
+                }
+                Err(_) => {
+                    failed = true;
+                }
+            },
+        }
+    }
+
+    if failed {
+        logger.error("Compilation failed due to unexpected critical errors.");
+        logger.quit();
+        hdl.join().expect("Failed to join log thread");
+        return;
+    }
+
+    match compile_ctx.run_passes(None) {
+        Ok(_) => logger.step("Passes", "All passes completed successfully"),
+        Err(_) => {
+            logger.error("Failed to run passes");
         }
     }
 
@@ -83,7 +106,7 @@ mod tests {
     #[tokio::test]
     async fn compile_command() {
         let args = CompileArgs {
-            files: vec!["../example/sanity.pol".to_string()],
+            files: vec!["../test/sanity.pol".to_string()],
             verbosity: 3,
             werror: false,
             release: false,

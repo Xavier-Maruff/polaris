@@ -80,7 +80,7 @@ impl CliLogger {
         let mut buf = StandardStream::stdout(termcolor::ColorChoice::Auto);
         buf.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)))
             .unwrap();
-        write!(&mut buf, "{:>10}", step).unwrap();
+        write!(&mut buf, "{:>14}", step).unwrap();
         buf.reset().unwrap();
         writeln!(&mut buf, " {}", msg).unwrap();
     }

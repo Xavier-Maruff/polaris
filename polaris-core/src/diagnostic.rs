@@ -54,7 +54,10 @@ pub enum DiagnosticMsgType {
     InvalidAstOperation,
     UnsupportedFeature,
     InvalidOperator,
-    //todo
+    InvalidModuleName,
+    DuplicateModuleDeclaration,
+    ModuleNotFound,
+    MultipleDeclarations,
 }
 
 pub fn code(c: &DiagnosticMsgType) -> &'static str {
@@ -73,6 +76,10 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         DiagnosticMsgType::InvalidAstOperation => "EC0011",
         DiagnosticMsgType::UnsupportedFeature => "EC0012",
         DiagnosticMsgType::InvalidOperator => "ES0012",
+        DiagnosticMsgType::InvalidModuleName => "EN0013",
+        DiagnosticMsgType::DuplicateModuleDeclaration => "EN0014",
+        DiagnosticMsgType::ModuleNotFound => "EN0015",
+        DiagnosticMsgType::MultipleDeclarations => "EN0016",
         // todo
     }
 }

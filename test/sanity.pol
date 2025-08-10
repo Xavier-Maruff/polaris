@@ -1,4 +1,23 @@
- @module(my_module);
+@module(my_module);
+
+export let core = 2;
+ struct MyStruct {
+    field1: int32,
+    field2: string,
+}
+
+
+
+func my_func() {
+    let y = a::b::c;
+    let x = struct::MyStruct {
+        field1: 42,
+        field2: "Hello, World!",
+    };
+}
+
+
+
 /*
 struct MyStruct::<T> {
     field1: int32,

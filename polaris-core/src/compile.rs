@@ -1,12 +1,21 @@
+use std::collections::HashMap;
+
 use crate::{
-    ast::ast::Node, desugar::desugar, diagnostic::Diagnostic, log, module::ModuleTable,
+    ast::ast::Node,
+    desugar::desugar_pass,
+    diagnostic::Diagnostic,
+    log,
+    module::{ModuleTable, module_pass},
     parse::parse,
+    symbol::resolve_names_pass,
 };
+
+pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
 
 #[derive(Debug, Clone)]
 pub struct CompileContext {
     pub logger: log::Logger,
-    pub stage_one_asts: Vec<Node>,
+    pub asts: HashMap<String, Node>,
     pub modules: ModuleTable,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
@@ -16,7 +25,7 @@ impl CompileContext {
     pub fn new(logger: log::Logger) -> Self {
         Self {
             logger,
-            stage_one_asts: Vec::new(),
+            asts: HashMap::new(),
             modules: ModuleTable::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -32,7 +41,7 @@ impl CompileContext {
     }
 
     pub fn merge(&mut self, other: CompileContext) {
-        self.stage_one_asts.extend(other.stage_one_asts);
+        self.asts.extend(other.asts);
         self.errors.extend(other.errors);
         self.warnings.extend(other.warnings);
     }
@@ -41,13 +50,72 @@ impl CompileContext {
     pub fn ingest_source(&mut self, file: String, source: String) -> Result<(), ()> {
         let mut ast = parse(file.clone(), source, self)?.unwrap();
 
-        desugar(&mut ast, self, &file)?;
+        desugar_pass(&mut ast, self, &file)?;
 
-        self.stage_one_asts.push(ast);
+        self.asts.insert(file.clone(), ast);
         Ok(())
+    }
+
+    pub fn run_passes(&mut self, passes: Option<Vec<Pass>>) -> Result<(), ()> {
+        for (name, pass) in match passes {
+            Some(p) => p,
+            None => CompileContext::get_default_passes(),
+        } {
+            self.logger.step("Pass", name);
+            match pass(self) {
+                Ok(_) => {}
+                Err(_) => {
+                    self.logger.error(&format!("{} failed", name));
+                    return Err(());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn get_default_passes() -> Vec<Pass> {
+        vec![
+            ("Module Resolution", module_pass),
+            ("Name Resolution", resolve_names_pass),
+        ]
     }
 
     pub fn get_diagnostics(&self) -> (&Vec<Diagnostic>, &Vec<Diagnostic>) {
         (&self.warnings, &self.errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::log::DefaultLogger;
+
+    #[test]
+    fn module_resolution() {
+        let (logger, hdl) = DefaultLogger::start_thread(log::LogLevel::Debug);
+        let mut ctx = CompileContext::new(logger.clone());
+
+        let test_paths = vec![
+            "../test/modules/mod1.pol",
+            "../test/modules/mod2.pol",
+            "../test/modules/mod3.pol",
+        ];
+
+        for path in test_paths {
+            let source = std::fs::read_to_string(path).expect("Failed to read test file");
+            ctx.ingest_source(path.to_string(), source).unwrap();
+            logger.info(&format!("Ingested source from {}", path));
+        }
+
+        ctx.run_passes(None).unwrap();
+
+        assert!(
+            ctx.errors.is_empty(),
+            "Errors should be empty after module resolution"
+        );
+
+        logger.quit();
+        hdl.join().expect("Failed to join logger thread");
     }
 }

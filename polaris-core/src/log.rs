@@ -114,3 +114,48 @@ impl Logger {
         }
     }
 }
+
+pub struct DefaultLogger {
+    queue: crossbeam_channel::Receiver<LogCommand>,
+    level: LogLevel,
+}
+
+impl DefaultLogger {
+    pub fn new(level: LogLevel) -> (Self, Logger) {
+        let (sender, queue) = crossbeam_channel::unbounded::<LogCommand>();
+        let logger = Logger::new(sender);
+        (DefaultLogger { queue, level }, logger)
+    }
+
+    pub fn start_thread(level: LogLevel) -> (Logger, std::thread::JoinHandle<()>) {
+        let (mut writer, logger) = Self::new(level);
+        let handle = std::thread::Builder::new()
+            .name("default_logger".to_string())
+            .spawn(move || {
+                writer.run();
+            })
+            .expect("Failed to spawn logger thread");
+        (logger, handle)
+    }
+
+    pub fn run(&mut self) {
+        while let Ok(command) = self.queue.recv() {
+            match command {
+                LogCommand::SetLevel(level) => self.level = level,
+                LogCommand::Step { step, file } => {
+                    println!("{}: {}", step, file);
+                }
+                LogCommand::Diagnostic(diagnostic) => {
+                    println!("Diagnostic: {}", diagnostic);
+                }
+                LogCommand::Critical(msg) => eprintln!("Critical: {}", msg),
+                LogCommand::Error(msg) => eprintln!("Error: {}", msg),
+                LogCommand::Warning(msg) => eprintln!("Warning: {}", msg),
+                LogCommand::Info(msg) => println!("Info: {}", msg),
+                LogCommand::Debug(msg) => println!("Debug: {}", msg),
+                LogCommand::Trace(msg) => println!("Trace: {}", msg),
+                LogCommand::Quit => break,
+            }
+        }
+    }
+}

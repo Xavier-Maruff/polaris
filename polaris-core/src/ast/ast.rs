@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::collect_diagnostics;
 use crate::diagnostic::Diagnostic;
+use crate::module::ModuleId;
 use crate::parse::CodeSpan;
 use crate::symbol::SymbolId;
 
@@ -19,6 +20,7 @@ pub enum Variant {
     Failed,
     Program {
         file: String,
+        module_id: Option<ModuleId>,
         children: Vec<Node>,
     },
 
@@ -87,6 +89,9 @@ pub enum Variant {
         methods: Vec<Node>,
         fields: Vec<(String, Node)>,
     },
+    Import {
+        module_id: ModuleId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -137,7 +142,7 @@ pub enum ExprNode {
         type_args: Vec<Node>,
     },
     QualifiedIdent {
-        namespaces: Vec<Node>,
+        namespaces: Vec<String>,
         name: String,
         type_args: Vec<Node>,
         memory_mode: MemoryMode,
@@ -189,23 +194,34 @@ pub enum ExprNode {
 }
 
 impl ExprNode {
+    pub fn get_qualified_ident_str(&self) -> Option<String> {
+        match self {
+            ExprNode::Ident { name, .. } => Some(name.clone()),
+            ExprNode::QualifiedIdent {
+                name, namespaces, ..
+            } => {
+                let mut idents = vec![];
+                for ns in namespaces {
+                    idents.push(ns.clone());
+                }
+                idents.push(name.clone());
+                Some(idents.join("::"))
+            }
+            ExprNode::Directive { ident, .. } => ident.get_qualified_ident_str(),
+            _ => None,
+        }
+    }
+
+    //todo: finish off this as a macro
     pub fn warnings(&self) -> Vec<Diagnostic> {
         match self {
             ExprNode::Ident { type_args, .. } => {
                 type_args.iter().flat_map(|n| n.warnings()).collect()
             }
-            ExprNode::QualifiedIdent {
-                namespaces,
-                type_args,
-                ..
-            } => {
-                let mut warnings = namespaces
-                    .iter()
-                    .flat_map(|n| n.warnings())
-                    .collect::<Vec<_>>();
-                warnings.extend(type_args.iter().flat_map(|n| n.warnings()));
-                warnings
+            ExprNode::QualifiedIdent { type_args, .. } => {
+                type_args.iter().flat_map(|n| n.warnings()).collect()
             }
+            //todo: rest as macro
             _ => Vec::new(),
         }
     }
@@ -215,17 +231,8 @@ impl ExprNode {
             ExprNode::Ident { type_args, .. } => {
                 type_args.iter().flat_map(|n| n.errors()).collect()
             }
-            ExprNode::QualifiedIdent {
-                namespaces,
-                type_args,
-                ..
-            } => {
-                let mut errors = namespaces
-                    .iter()
-                    .flat_map(|n| n.errors())
-                    .collect::<Vec<_>>();
-                errors.extend(type_args.iter().flat_map(|n| n.errors()));
-                errors
+            ExprNode::QualifiedIdent { type_args, .. } => {
+                type_args.iter().flat_map(|n| n.errors()).collect()
             }
             _ => Vec::new(),
         }
@@ -362,6 +369,62 @@ impl Node {
         collect_diagnostics!(self, errors, errors);
         errors
     }
+
+    pub fn get_qualified_ident_str(&self) -> Option<String> {
+        match &self.variant {
+            Variant::FuncDecl {
+                ident: Some(ident), ..
+            } => {
+                if let Variant::Expr(node) = &ident.variant {
+                    node.get_qualified_ident_str()
+                } else {
+                    None
+                }
+            }
+            Variant::ActorDecl { ident, .. } => {
+                if let Variant::Expr(node) = &ident.variant {
+                    node.get_qualified_ident_str()
+                } else {
+                    None
+                }
+            }
+            Variant::StructDecl { ident, .. } => {
+                if let Variant::Expr(node) = &ident.variant {
+                    node.get_qualified_ident_str()
+                } else {
+                    None
+                }
+            }
+            Variant::TypeDecl { ident, .. } => {
+                if let Variant::Expr(node) = &ident.variant {
+                    node.get_qualified_ident_str()
+                } else {
+                    None
+                }
+            }
+            Variant::EnumDecl { ident, .. } => {
+                if let Variant::Expr(node) = &ident.variant {
+                    node.get_qualified_ident_str()
+                } else {
+                    None
+                }
+            }
+            Variant::InterfaceDecl { ident, .. } => {
+                if let Variant::Expr(node) = &ident.variant {
+                    node.get_qualified_ident_str()
+                } else {
+                    None
+                }
+            }
+            Variant::VarDecl { name, .. } => Some(name.clone()),
+            Variant::Expr(node) => node.get_qualified_ident_str(),
+            _ => None,
+        }
+    }
+
+    pub fn is_expr(&self) -> bool {
+        matches!(self.variant, Variant::Expr(_))
+    }
 }
 
 impl fmt::Display for Node {
@@ -383,6 +446,9 @@ impl fmt::Display for Node {
             }
             Variant::TypeDecl { ident, alias_of } => {
                 write!(f, "type {} = {};\n", ident, alias_of)
+            }
+            Variant::Import { module_id } => {
+                write!(f, "@import(Module[{}])", module_id)
             }
             Variant::ActorDecl {
                 ident,

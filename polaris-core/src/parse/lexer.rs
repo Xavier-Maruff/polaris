@@ -91,8 +91,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::QuestionMark,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -104,8 +104,8 @@ impl Lexer {
                             return Ok(Token {
                                 variant: TokenVariant::DoubleColon,
                                 span: CodeSpan {
-                                    start: self.position - 2,
-                                    end: self.position,
+                                    start: self.position - 3,
+                                    end: self.position - 1,
                                 },
                             });
                         }
@@ -113,8 +113,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::Colon,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -123,8 +123,9 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::Semicolon,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position-1,
+
                         },
                     });
                 }
@@ -133,8 +134,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::Comma,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position- 1,
                         },
                     });
                 }
@@ -160,8 +161,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::Dot,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -170,8 +171,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::LParen,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -180,8 +181,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::RParen,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -190,8 +191,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::LBrace,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position -1 ,
                         },
                     });
                 }
@@ -200,8 +201,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::RBrace,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -210,8 +211,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::LBracket,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -220,8 +221,8 @@ impl Lexer {
                     return Ok(Token {
                         variant: TokenVariant::RBracket,
                         span: CodeSpan {
-                            start: self.position - 1,
-                            end: self.position,
+                            start: self.position - 2,
+                            end: self.position - 1,
                         },
                     });
                 }
