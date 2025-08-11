@@ -467,7 +467,7 @@ impl Lexer {
                 '<' => {
                     self.advance();
                     if let Some(next_char) = self.current_char {
-                        if next_char == '=' || next_char == '<' {
+                        if next_char == '=' {
                             self.advance();
                         }
                     }
@@ -475,7 +475,7 @@ impl Lexer {
                 '>' => {
                     self.advance();
                     if let Some(next_char) = self.current_char {
-                        if next_char == '=' || next_char == '>' {
+                        if next_char == '=' {
                             self.advance();
                         }
                     }

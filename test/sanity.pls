@@ -1,9 +1,16 @@
 @module("my_module");
 
-struct MyStruct::<T> {
+struct Inner::<X> {
     field1: int32,
-    field2: string,
+    field2: X,
 }
+
+struct MyStruct::<T, X> {
+    field1: X,
+    field2: T,
+}
+
+type string_mystruct = MyStruct::<Inner::<string>, int32>;
 
 export let core: int32 = 2;
 let test = core.check;
@@ -17,10 +24,6 @@ export func add::<X, T(Addable)>(a: T, b: int32): int32 {
     return a + b;
 }
 
-struct MyStruct::<T> {
-    field1: int32,
-    field2: string,
-}
 
 /*
 impl MyStruct::<T> {

@@ -238,7 +238,7 @@ impl ModuleContext {
             | Variant::InterfaceDecl { .. }
             | Variant::TypeDecl { .. }
             | Variant::VarDecl { .. }
-            | Variant::Expr(ExprNode::QualifiedIdent { .. }) => true,
+            | Variant::Expr(ExprNode::Ident { .. }) => true,
             _ => false,
         };
 

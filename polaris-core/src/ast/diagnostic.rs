@@ -161,7 +161,7 @@ pub enum ExprNode {
         qualifier: bool,
         type_args: Vec<Node>,
     },
-    QualifiedIdent {
+    Ident {
         namespaces: Vec<String>,
         name: String,
         type_args: Vec<Node>,
@@ -219,12 +219,6 @@ macro_rules! collect_expr_diagnostics {
     ($self:expr, $diagnostics:ident, $method:ident) => {
         match &$self {
             ExprNode::Ident { type_args, .. } => {
-                for type_arg in type_args.iter() {
-                    $diagnostics.extend(type_arg.$method());
-                }
-            }
-
-            ExprNode::QualifiedIdent { type_args, .. } => {
                 for type_arg in type_args.iter() {
                     $diagnostics.extend(type_arg.$method());
                 }

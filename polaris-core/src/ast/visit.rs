@@ -28,11 +28,6 @@ macro_rules! visit_ast_children {
                             $obj.$visit(type_arg)?;
                         }
                     }
-                    ExprNode::QualifiedIdent { type_args, .. } => {
-                        for type_arg in type_args.iter_mut() {
-                            $obj.$visit(type_arg)?;
-                        }
-                    }
                     ExprNode::BinaryOp { lhs, rhs, .. } => {
                         $obj.$visit(lhs)?;
                         $obj.$visit(rhs)?;

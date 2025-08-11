@@ -448,7 +448,7 @@ impl NameResolverContext {
     fn name_resolution_visitor(&mut self, ast: &mut Node) -> Result<(), ()> {
         if !self.is_top_level {
             match ast.variant {
-                Variant::Expr(ExprNode::QualifiedIdent {
+                Variant::Expr(ExprNode::Ident {
                     ref mut namespaces,
                     ref mut name,
                     ref mut is_type,
@@ -494,10 +494,17 @@ impl NameResolverContext {
                 ref mut ident,
                 ref mut interface
             } => {
+                let type_context_override = self.type_context_override;
+                self.type_context_override = true;
+
                 self.declare_type_args(ident)?;
+                self.name_resolution_visitor(ident)?;
+
                 for method in interface.iter_mut() {
                     self.name_resolution_visitor(method)?;
                 }
+
+                self.type_context_override = type_context_override;
             },
 
             Variant::StructDecl {
@@ -505,10 +512,35 @@ impl NameResolverContext {
                 ref mut fields,
                 ..
             } => {
+                let type_context_override = self.type_context_override;
+                self.type_context_override = true;
+
                 self.declare_type_args(ident)?;
+                self.name_resolution_visitor(ident)?;
+
                 for (_, field) in fields.iter_mut() {
                     self.name_resolution_visitor(field)?;
                 }
+
+                self.type_context_override = type_context_override;
+            },
+
+
+            Variant::TypeDecl {
+                ref mut ident,
+                ref mut alias_of
+            } => {
+                let type_context_override = self.type_context_override;
+                self.type_context_override = true;
+
+                self.declare_type_args(ident)?;
+                self.name_resolution_visitor(ident)?;
+
+                self.name_resolution_visitor(ident)?;
+                self.name_resolution_visitor(alias_of)?;
+
+                self.type_context_override = type_context_override;
+
             },
 
 
@@ -517,12 +549,19 @@ impl NameResolverContext {
                 ref mut variants,
                 ..
             } => {
+                let type_context_override = self.type_context_override;
+                self.type_context_override = true;
+
                 self.declare_type_args(ident)?;
+                self.name_resolution_visitor(ident)?;
+
                 for (_, variant) in variants.iter_mut() {
                     if let Some(inner) = variant {
                         self.name_resolution_visitor(inner)?;
                     }
                 }
+
+                self.type_context_override = type_context_override;
             }
         });
 
@@ -605,7 +644,7 @@ impl NameResolverContext {
             let ctx_override = self.type_context_override;
             self.type_context_override = true;
 
-            if let Variant::Expr(ExprNode::QualifiedIdent { type_args, .. }) = &mut ident.variant {
+            if let Variant::Expr(ExprNode::Ident { type_args, .. }) = &mut ident.variant {
                 for arg in type_args.iter_mut() {
                     self.name_resolution_visitor(arg)?;
                 }
@@ -639,12 +678,13 @@ impl NameResolverContext {
 
     fn variant_pushes_scope(ast: &Node) -> bool {
         match &ast.variant {
-            //todo: double check this is all, just kind of guessed
             Variant::ActorDecl { .. }
             | Variant::InterfaceDecl { .. }
             | Variant::EnumDecl { .. }
             | Variant::StructDecl { .. }
             | Variant::FuncDecl { .. }
+            | Variant::ImplDecl { .. }
+            | Variant::TypeDecl { .. }
             | Variant::Block { .. }
             | Variant::If { .. }
             | Variant::For { .. } => true,
@@ -655,17 +695,29 @@ impl NameResolverContext {
     fn register_decl(&mut self, ast: &mut Node) {
         let mut mutable = false;
         let mut is_type = true;
+        let mut id = None;
 
-        let name = match &ast.variant {
+        let (ident, name) = match &mut ast.variant {
             Variant::ActorDecl { ident, .. }
             | Variant::InterfaceDecl { ident, .. }
             | Variant::EnumDecl { ident, .. }
-            | Variant::StructDecl { ident, .. } => ident.get_qualified_ident_str(),
+            | Variant::StructDecl { ident, .. } => {
+                let name = ident.get_qualified_ident_str();
+                (Some(ident), name)
+            }
+            Variant::TypeDecl { ident, .. } => {
+                is_type = true;
+                let name = ident.get_qualified_ident_str();
+                (Some(ident), name)
+            }
             Variant::FuncDecl { ident, .. } => {
                 is_type = false;
                 match ident {
-                    Some(ident) => ident.get_qualified_ident_str(),
-                    None => None,
+                    Some(ident) => {
+                        let name = ident.get_qualified_ident_str();
+                        (Some(ident), name)
+                    }
+                    None => (None, None),
                 }
             }
             Variant::VarDecl {
@@ -673,9 +725,9 @@ impl NameResolverContext {
             } => {
                 is_type = false;
                 mutable = *modifiable;
-                Some(name.to_string())
+                (None, Some(name.to_string()))
             }
-            _ => None,
+            _ => (None, None),
         };
 
         if let Some(name) = &name {
@@ -735,14 +787,23 @@ impl NameResolverContext {
                 });
             } else {
                 if is_type {
-                    self.declare_type(
+                    id = Some(self.declare_type(
                         Some(name.clone()),
                         Vec::new(),                                 //todo: generics
                         TypeVariant::Primitive(PrimitiveType::Any), //todo: default type variant
                         Some(ast.span.clone()),
-                    );
+                    ));
                 } else {
-                    self.declare(name.clone(), Some(ast.span), None, mutable);
+                    id = self.declare(name.clone(), Some(ast.span), None, mutable);
+                }
+            }
+        }
+        if let Some(ident) = ident {
+            if let Variant::Expr(ExprNode::Ident { id: expr_id, .. }) = &mut ident.variant {
+                if let Some(symbol_id) = id {
+                    *expr_id = Some(symbol_id);
+                } else {
+                    *expr_id = None;
                 }
             }
         }

@@ -138,11 +138,6 @@ impl fmt::Display for MemoryMode {
 pub enum ExprNode {
     String(String),
     Ident {
-        name: String,
-        qualifier: bool,
-        type_args: Vec<Node>,
-    },
-    QualifiedIdent {
         namespaces: Vec<String>,
         name: String,
         type_args: Vec<Node>,
@@ -276,15 +271,13 @@ impl ExprNode {
     pub fn get_type_args(&self) -> Option<&Vec<Node>> {
         match self {
             ExprNode::Ident { type_args, .. } => Some(type_args),
-            ExprNode::QualifiedIdent { type_args, .. } => Some(type_args),
             ExprNode::Directive { args, .. } => Some(args),
             _ => None,
         }
     }
     pub fn get_qualified_ident_str(&self) -> Option<String> {
         match self {
-            ExprNode::Ident { name, .. } => Some(name.clone()),
-            ExprNode::QualifiedIdent { name, .. } => Some(name.to_string()),
+            ExprNode::Ident { name, .. } => Some(name.to_string()),
             ExprNode::Call { callee, .. } => callee.get_qualified_ident_str(),
             ExprNode::Directive { ident, .. } => ident.get_qualified_ident_str(),
             _ => None,
@@ -637,7 +630,6 @@ impl fmt::Display for ExprNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ExprNode::String(s) => write!(f, "\"{}\"", s),
-            ExprNode::Ident { name, .. } => write!(f, "{}", name),
             ExprNode::Index { base, index } => {
                 write!(f, "{}[{}]", base, index)
             }
@@ -677,13 +669,23 @@ impl fmt::Display for ExprNode {
                 }
                 Ok(())
             }
-            ExprNode::QualifiedIdent {
+            ExprNode::Ident {
                 namespaces,
                 name,
                 type_args,
                 memory_mode,
+                id,
+                is_type,
                 ..
             } => {
+                write!(f, "[")?;
+                if *is_type {
+                    write!(f, "type, ")?;
+                }
+                if let Some(id) = id {
+                    write!(f, "id: {}, ", id)?;
+                }
+                write!(f, "] ")?;
                 if memory_mode != &MemoryMode::Auto {
                     write!(f, "{} ", memory_mode)?;
                 }
