@@ -578,25 +578,25 @@ impl<'a> ParseContext<'a> {
         ))
     }
 
-    fn parse_directive(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
-        let mut span = self.curr_tok.span.clone();
-        wrap_err!(ast, self.expect(lexer, TokenVariant::Directive));
+    // fn parse_directive(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+    //     let mut span = self.curr_tok.span.clone();
+    //     wrap_err!(ast, self.expect(lexer, TokenVariant::Directive));
 
-        let mut args = Vec::new();
-        let ident = Box::new(self.parse_ident(ast, lexer, false)?);
+    //     let mut args = Vec::new();
+    //     let ident = Box::new(self.parse_ident(ast, lexer, false)?);
 
-        if matches!(self.curr_tok.variant, TokenVariant::LParen) {
-            wrap_err!(ast, self.advance(lexer));
-            args = self.parse_list(ast, lexer, false)?;
-            wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
-        }
+    //     if matches!(self.curr_tok.variant, TokenVariant::LParen) {
+    //         wrap_err!(ast, self.advance(lexer));
+    //         args = self.parse_list(ast, lexer, false)?;
+    //         wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
+    //     }
 
-        span.end = self.prev_tok.span.end;
+    //     span.end = self.prev_tok.span.end;
 
-        let node = Node::new_with_span(Variant::Expr(ExprNode::Directive { ident, args }), span);
+    //     let node = Node::new_with_span(Variant::Expr(ExprNode::Directive { ident, args }), span);
 
-        Ok(node)
-    }
+    //     Ok(node)
+    // }
 
     fn parse_list(
         &mut self,
@@ -868,6 +868,7 @@ impl<'a> ParseContext<'a> {
                         memory_mode: MemoryMode::Auto,
                         id: None,
                         is_type: false,
+                        is_directive: false,
                     })),
                 ));
             }
@@ -1393,16 +1394,18 @@ impl<'a> ParseContext<'a> {
             .take(idents.len() - 1)
             .map(|n| n.to_string())
             .collect::<Vec<String>>();
+        let name = idents.last().unwrap().clone();
 
         span.end = self.prev_tok.span.end;
         Ok(Node {
             variant: Variant::Expr(ExprNode::Ident {
                 namespaces,
-                name: idents[idents.len() - 1].clone(),
+                name: name.clone(),
                 type_args,
                 memory_mode,
                 id: None,
                 is_type,
+                is_directive: name.chars().next() == Some('@'),
             }),
             warnings: None,
             errors: None,
@@ -1432,10 +1435,6 @@ impl<'a> ParseContext<'a> {
 
                 span.end = self.prev_tok.span.end;
                 Node::new_with_span(Variant::Expr(ExprNode::ListLit { elements }), span)
-            }
-            TokenVariant::Directive => {
-                advance = false;
-                self.parse_directive(ast, lexer)?
             }
             TokenVariant::Match => {
                 advance = false;

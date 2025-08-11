@@ -54,9 +54,23 @@ pub fn declare_intrinsic_primitives(nr: &mut NameResolverContext) {
 pub fn declare_intrinsic_directives(nr: &mut NameResolverContext) {
     declare!(
         nr,
-        "module",
+        "@module",
         TypeVariant::Directive {
             args: vec![TypeVariant::Primitive(PrimitiveType::String)]
         }
     );
+
+    declare!(
+        nr,
+        "@import",
+        TypeVariant::Directive {
+            args: vec![TypeVariant::Primitive(PrimitiveType::String)]
+        }
+    );
+
+    declare!(nr, "@host", TypeVariant::Directive { args: vec![] });
+    declare!(nr, "@blocking", TypeVariant::Directive { args: vec![] });
+    declare!(nr, "@nonblocking", TypeVariant::Directive { args: vec![] });
+    declare!(nr, "@gpu", TypeVariant::Directive { args: vec![] });
+    declare!(nr, "@cpu", TypeVariant::Directive { args: vec![] });
 }

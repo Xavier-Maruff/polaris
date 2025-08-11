@@ -181,13 +181,14 @@ impl ModuleContext {
 
     fn register_module_visitor(&mut self, ast: &mut Node) -> Result<(), ()> {
         visit_ast_children!(ast.variant, self, register_module_visitor, {
-            Variant::Expr(ExprNode::Directive { ref mut ident, ref mut args, .. }) => {
-                let directive = self.validate_directive(ast.span, ident)?;
-                match directive.as_str() {
-                    "module" => {
-                        self.process_module_directive(ast.span, args)?;
+            Variant::Expr(ExprNode::Call{ ref mut callee, ref mut args, .. }) => {
+                if let Some(directive) = callee.get_directive() {
+                    match directive.as_str() {
+                        "@module" => {
+                            self.process_module_directive(ast.span, args)?;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         });
@@ -214,13 +215,14 @@ impl ModuleContext {
         }
 
         visit_ast_children!(ast.variant, self, extract_module_meta_visitor, {
-            Variant::Expr(ExprNode::Directive { ref mut ident, ref mut args, .. }) => {
-                let directive = self.validate_directive(ast.span, ident)?;
+            Variant::Expr(ExprNode::Call { ref mut callee, ref mut args, .. }) => {
+                if let Some(directive) = callee.get_directive() {
                 match directive.as_str() {
-                    "import" => {
+                    "@import" => {
                         self.add_module_dep(ast.span, args)?;
                     }
                     _ => {}
+                }
                 }
             }
         });

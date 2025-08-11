@@ -2,15 +2,12 @@ use crate::parse::CodeSpan;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenVariant {
-    Directive,
-
     //literals
     Ident(String),
     IntLit(String),
     FloatLit(String),
     StringLit(String),
     CharLit(String),
-    MacroIdent(String),
 
     //operators
     Plus,
@@ -159,8 +156,6 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::FloatLit(s) => write!(f, "{}", s),
             TokenVariant::StringLit(s) => write!(f, "\"{}\"", s),
             TokenVariant::CharLit(s) => write!(f, "'{}'", s),
-            TokenVariant::MacroIdent(s) => write!(f, "{}!", s),
-            TokenVariant::Directive => write!(f, "@"),
             TokenVariant::Plus => write!(f, "+"),
             TokenVariant::Minus => write!(f, "-"),
             TokenVariant::Star => write!(f, "*"),

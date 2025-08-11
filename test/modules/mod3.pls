@@ -1,4 +1,4 @@
-@module(mod3);
+@module("mod3");
 
-let mod1 = @import(mod1);
-export let mod2 = @import(mod2);
+let mod1 = @import("mod1");
+export let mod2 = @import("mod2");

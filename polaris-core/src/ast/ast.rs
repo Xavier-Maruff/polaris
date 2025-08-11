@@ -143,11 +143,8 @@ pub enum ExprNode {
         type_args: Vec<Node>,
         memory_mode: MemoryMode,
         id: Option<SymbolId>,
+        is_directive: bool,
         is_type: bool,
-    },
-    Directive {
-        ident: Box<Node>,
-        args: Vec<Node>,
     },
     IntLit(i64),
     FloatLit(f64),
@@ -271,7 +268,6 @@ impl ExprNode {
     pub fn get_type_args(&self) -> Option<&Vec<Node>> {
         match self {
             ExprNode::Ident { type_args, .. } => Some(type_args),
-            ExprNode::Directive { args, .. } => Some(args),
             _ => None,
         }
     }
@@ -279,7 +275,6 @@ impl ExprNode {
         match self {
             ExprNode::Ident { name, .. } => Some(name.to_string()),
             ExprNode::Call { callee, .. } => callee.get_qualified_ident_str(),
-            ExprNode::Directive { ident, .. } => ident.get_qualified_ident_str(),
             _ => None,
         }
     }
@@ -294,6 +289,22 @@ impl ExprNode {
         let mut errors = Vec::new();
         collect_expr_diagnostics!(self, errors, errors);
         errors
+    }
+
+    pub fn get_directive(&self) -> Option<String> {
+        match self {
+            ExprNode::Ident {
+                is_directive, name, ..
+            } => {
+                if *is_directive {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }
+            ExprNode::Call { callee, .. } => callee.get_directive(),
+            _ => None,
+        }
     }
 }
 
@@ -356,6 +367,13 @@ impl Node {
     pub fn get_type_args(&self) -> Option<&Vec<Node>> {
         match &self.variant {
             Variant::Expr(node) => node.get_type_args(),
+            _ => None,
+        }
+    }
+
+    pub fn get_directive(&self) -> Option<String> {
+        match &self.variant {
+            Variant::Expr(node) => node.get_directive(),
             _ => None,
         }
     }
@@ -655,20 +673,7 @@ impl fmt::Display for ExprNode {
                 }
                 Ok(())
             }
-            ExprNode::Directive { ident, args } => {
-                write!(f, "@{}", ident)?;
-                if !args.is_empty() {
-                    write!(
-                        f,
-                        "({})",
-                        args.iter()
-                            .map(|a| a.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )?;
-                }
-                Ok(())
-            }
+
             ExprNode::Ident {
                 namespaces,
                 name,
@@ -676,6 +681,7 @@ impl fmt::Display for ExprNode {
                 memory_mode,
                 id,
                 is_type,
+                is_directive,
                 ..
             } => {
                 write!(f, "[")?;
@@ -684,6 +690,9 @@ impl fmt::Display for ExprNode {
                 }
                 if let Some(id) = id {
                     write!(f, "id: {}, ", id)?;
+                }
+                if *is_directive {
+                    write!(f, "directive")?;
                 }
                 write!(f, "] ")?;
                 if memory_mode != &MemoryMode::Auto {

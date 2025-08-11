@@ -50,11 +50,11 @@ impl Lexer {
         self.consume_whitespace();
         if let Some(c) = self.current_char {
             match c {
-                'a'..='z' | 'A'..='Z' | '_' => return Ok(self.consume_identifier()),
+                'a'..='z' | 'A'..='Z' | '_' | '@' => return Ok(self.consume_identifier()),
                 '0'..='9' => return Ok(self.consume_number()),
                 '"' => return self.consume_string(),
                 '\'' => return self.consume_char(),
-                '@' => return Ok(self.consume_directive()),
+                //'@' => return Ok(self.consume_directive()),
 
                 '+' | '-' | '*' | '%' | '^' | '~' | '&' | '|' | '!' | '<' | '>' => {
                     return Ok(self.consume_operator());
@@ -267,6 +267,12 @@ impl Lexer {
 
     pub fn consume_identifier(&mut self) -> Token {
         let start = self.position - 1;
+        if let Some(c) = self.current_char {
+            if c == '@' {
+                self.advance(); // skip '@'
+            }
+        }
+
         while let Some(c) = self.current_char {
             if c.is_alphanumeric() || c == '_' {
                 self.advance();
@@ -430,19 +436,6 @@ impl Lexer {
         })
     }
 
-    pub fn consume_directive(&mut self) -> Token {
-        let start = self.position; // skip '@'
-        self.advance();
-
-
-        Token {
-            variant: TokenVariant::Directive,
-            span: CodeSpan {
-                start: start - 1,
-                end: self.position - 1,
-            },
-        }
-    }
 
     pub fn consume_operator(&mut self) -> Token {
         let start = self.position - 1;

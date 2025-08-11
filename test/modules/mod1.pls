@@ -1,6 +1,6 @@
-@module(mod1);
+@module("mod1");
 
-let mod2 = @import(mod2);
+let mod2 = @import("mod2");
 
 export struct Add {
   a: int32,

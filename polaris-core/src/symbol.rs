@@ -409,7 +409,7 @@ impl NameResolverContext {
                         });
                     }
                     Some(DiagnosticMsg {
-                        message: format!("Similar symbol '{}' declared here", symbol.name),
+                        message: format!("Similar symbol '{}' is also declared", symbol.name),
                         span: symbol.span.unwrap_or(CodeSpan::new(0, 0)),
                         //todo: this could throw, should handle better
                         file: self
@@ -455,6 +455,7 @@ impl NameResolverContext {
                     ref mut type_args,
                     ref mut memory_mode,
                     ref mut id,
+                    ref mut is_directive,
                 }) => {
                     if namespaces.is_empty() {
                         if let Ok(symbol_id) = self.check_reference(

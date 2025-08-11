@@ -76,12 +76,6 @@ macro_rules! visit_ast_children {
                         $obj.$visit(operand)?;
                     }
 
-                    ExprNode::Directive { ident, args, .. } => {
-                        $obj.$visit(ident)?;
-                        for arg in args.iter_mut() {
-                            $obj.$visit(arg)?;
-                        }
-                    }
 
                     _ => {}
                 }

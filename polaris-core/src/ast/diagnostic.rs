@@ -287,13 +287,6 @@ macro_rules! collect_expr_diagnostics {
                 $diagnostics.extend(operand.$method());
             }
 
-            ExprNode::Directive { ident, args, .. } => {
-                $diagnostics.extend(ident.$method());
-                for arg in args.iter() {
-                    $diagnostics.extend(arg.$method());
-                }
-            }
-
             _ => {}
         }
     };
