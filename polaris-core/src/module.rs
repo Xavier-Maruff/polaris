@@ -16,6 +16,7 @@ use crate::{
 };
 
 pub type ModuleId = usize;
+pub const INVALID_MODULE_ID: ModuleId = usize::MAX;
 
 #[derive(Debug, Clone)]
 pub struct ModuleTable {
@@ -27,9 +28,10 @@ pub struct ModuleTable {
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    name: String,
-    dependencies: Vec<ModuleId>,
-    exports: Vec<Symbol>,
+    pub name: String,
+    pub file: String,
+    pub dependencies: Vec<ModuleId>,
+    pub exports: Vec<Symbol>,
 }
 
 pub fn module_pass(ctx: &mut CompileContext) -> Result<(), ()> {
@@ -44,9 +46,10 @@ pub fn module_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 }
 
 impl Module {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, file: String) -> Self {
         Module {
             name,
+            file,
             dependencies: Vec::new(),
             exports: Vec::new(),
         }
@@ -63,10 +66,10 @@ impl ModuleTable {
         }
     }
 
-    pub fn add_module(&mut self, name: String) -> ModuleId {
+    pub fn add_module(&mut self, name: String, file: String) -> ModuleId {
         let id = self.modules.len();
         self.module_ids.insert(name.clone(), id);
-        self.modules.insert(id, Module::new(name));
+        self.modules.insert(id, Module::new(name, file));
         id
     }
 
@@ -111,7 +114,9 @@ impl ModuleContext {
 
             match self.register_module_visitor(ast) {
                 Ok(_) => {
-                    let id = self.table.add_module(self.current_module_name.clone());
+                    let id = self
+                        .table
+                        .add_module(self.current_module_name.clone(), self.current_file.clone());
                     self.table
                         .module_file_ids
                         .insert(self.current_file.clone(), id);
@@ -262,6 +267,10 @@ impl ModuleContext {
                     name: ident,
                     id: INVALID_SYMBOL_ID,
                     module_id: self.current_module_id,
+                    scope_id: INVALID_SYMBOL_ID,
+                    span: Some(ast.span),
+                    type_info: None,
+                    mutable: false,
                 })
         } else {
             self.errors.push(Diagnostic {

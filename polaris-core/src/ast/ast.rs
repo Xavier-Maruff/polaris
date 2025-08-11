@@ -1,14 +1,15 @@
 use std::fmt;
 
-use crate::collect_diagnostics;
 use crate::diagnostic::Diagnostic;
 use crate::module::ModuleId;
 use crate::parse::CodeSpan;
 use crate::symbol::SymbolId;
+use crate::{collect_expr_diagnostics, collect_node_diagnostics};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub variant: Variant,
+    pub scope_id: Option<SymbolId>,
     pub warnings: Option<Vec<Diagnostic>>,
     pub errors: Option<Vec<Diagnostic>>,
     pub span: CodeSpan,
@@ -193,52 +194,6 @@ pub enum ExprNode {
     },
 }
 
-impl ExprNode {
-    pub fn get_qualified_ident_str(&self) -> Option<String> {
-        match self {
-            ExprNode::Ident { name, .. } => Some(name.clone()),
-            ExprNode::QualifiedIdent {
-                name, namespaces, ..
-            } => {
-                let mut idents = vec![];
-                for ns in namespaces {
-                    idents.push(ns.clone());
-                }
-                idents.push(name.clone());
-                Some(idents.join("::"))
-            }
-            ExprNode::Directive { ident, .. } => ident.get_qualified_ident_str(),
-            _ => None,
-        }
-    }
-
-    //todo: finish off this as a macro
-    pub fn warnings(&self) -> Vec<Diagnostic> {
-        match self {
-            ExprNode::Ident { type_args, .. } => {
-                type_args.iter().flat_map(|n| n.warnings()).collect()
-            }
-            ExprNode::QualifiedIdent { type_args, .. } => {
-                type_args.iter().flat_map(|n| n.warnings()).collect()
-            }
-            //todo: rest as macro
-            _ => Vec::new(),
-        }
-    }
-
-    pub fn errors(&self) -> Vec<Diagnostic> {
-        match self {
-            ExprNode::Ident { type_args, .. } => {
-                type_args.iter().flat_map(|n| n.errors()).collect()
-            }
-            ExprNode::QualifiedIdent { type_args, .. } => {
-                type_args.iter().flat_map(|n| n.errors()).collect()
-            }
-            _ => Vec::new(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
@@ -316,6 +271,38 @@ impl fmt::Display for BinaryOp {
     }
 }
 
+impl ExprNode {
+    pub fn get_qualified_ident_str(&self) -> Option<String> {
+        match self {
+            ExprNode::Ident { name, .. } => Some(name.clone()),
+            ExprNode::QualifiedIdent {
+                name, namespaces, ..
+            } => {
+                let mut idents = vec![];
+                for ns in namespaces {
+                    idents.push(ns.clone());
+                }
+                idents.push(name.clone());
+                Some(idents.join("::"))
+            }
+            ExprNode::Directive { ident, .. } => ident.get_qualified_ident_str(),
+            _ => None,
+        }
+    }
+
+    pub fn warnings(&self) -> Vec<Diagnostic> {
+        let mut warnings = Vec::new();
+        collect_expr_diagnostics!(self, warnings, warnings);
+        warnings
+    }
+
+    pub fn errors(&self) -> Vec<Diagnostic> {
+        let mut errors = Vec::new();
+        collect_expr_diagnostics!(self, errors, errors);
+        errors
+    }
+}
+
 impl Node {
     pub fn new(variant: Variant) -> Self {
         Self {
@@ -324,6 +311,7 @@ impl Node {
             warnings: None,
             errors: None,
             export: false,
+            scope_id: None,
         }
     }
 
@@ -334,6 +322,7 @@ impl Node {
             warnings: None,
             errors: None,
             export: false,
+            scope_id: None,
         }
     }
 
@@ -356,7 +345,7 @@ impl Node {
             Some(w) => w.clone(),
             None => Vec::new(),
         };
-        collect_diagnostics!(self, warnings, warnings);
+        collect_node_diagnostics!(self, warnings, warnings);
         warnings
     }
 
@@ -366,7 +355,7 @@ impl Node {
             None => Vec::new(),
         };
 
-        collect_diagnostics!(self, errors, errors);
+        collect_node_diagnostics!(self, errors, errors);
         errors
     }
 

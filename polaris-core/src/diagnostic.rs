@@ -58,6 +58,7 @@ pub enum DiagnosticMsgType {
     DuplicateModuleDeclaration,
     ModuleNotFound,
     MultipleDeclarations,
+    UndeclaredSymbol,
 }
 
 pub fn code(c: &DiagnosticMsgType) -> &'static str {
@@ -80,6 +81,7 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         DiagnosticMsgType::DuplicateModuleDeclaration => "EN0014",
         DiagnosticMsgType::ModuleNotFound => "EN0015",
         DiagnosticMsgType::MultipleDeclarations => "EN0016",
+        DiagnosticMsgType::UndeclaredSymbol => "EN0017",
         // todo
     }
 }

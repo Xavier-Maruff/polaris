@@ -8,7 +8,7 @@ use crate::log;
 use crate::parse::lexer::Lexer;
 use crate::parse::token::{Token, TokenVariant};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CodeSpan {
     pub start: usize,
     pub end: usize,
@@ -1381,6 +1381,7 @@ impl<'a> ParseContext<'a> {
                 warnings: None,
                 errors: None,
                 span,
+                scope_id: None,
                 export: false,
             })
         } else {
