@@ -148,6 +148,7 @@ pub enum ExprNode {
         type_args: Vec<Node>,
         memory_mode: MemoryMode,
         id: Option<SymbolId>,
+        is_type: bool,
     },
     Directive {
         ident: Box<Node>,
@@ -182,7 +183,7 @@ pub enum ExprNode {
     },
     FieldAccess {
         base: Box<Node>,
-        field: Box<Node>,
+        field: String,
     },
     Index {
         base: Box<Node>,
@@ -272,19 +273,19 @@ impl fmt::Display for BinaryOp {
 }
 
 impl ExprNode {
+    pub fn get_type_args(&self) -> Option<&Vec<Node>> {
+        match self {
+            ExprNode::Ident { type_args, .. } => Some(type_args),
+            ExprNode::QualifiedIdent { type_args, .. } => Some(type_args),
+            ExprNode::Directive { args, .. } => Some(args),
+            _ => None,
+        }
+    }
     pub fn get_qualified_ident_str(&self) -> Option<String> {
         match self {
             ExprNode::Ident { name, .. } => Some(name.clone()),
-            ExprNode::QualifiedIdent {
-                name, namespaces, ..
-            } => {
-                let mut idents = vec![];
-                for ns in namespaces {
-                    idents.push(ns.clone());
-                }
-                idents.push(name.clone());
-                Some(idents.join("::"))
-            }
+            ExprNode::QualifiedIdent { name, .. } => Some(name.to_string()),
+            ExprNode::Call { callee, .. } => callee.get_qualified_ident_str(),
             ExprNode::Directive { ident, .. } => ident.get_qualified_ident_str(),
             _ => None,
         }
@@ -357,6 +358,13 @@ impl Node {
 
         collect_node_diagnostics!(self, errors, errors);
         errors
+    }
+
+    pub fn get_type_args(&self) -> Option<&Vec<Node>> {
+        match &self.variant {
+            Variant::Expr(node) => node.get_type_args(),
+            _ => None,
+        }
     }
 
     pub fn get_qualified_ident_str(&self) -> Option<String> {

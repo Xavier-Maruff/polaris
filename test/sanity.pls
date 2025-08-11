@@ -1,15 +1,28 @@
-@module(my_module);
+@module("my_module");
 
-export let core = 2;
-let test = cre;
-
-
-/*
 struct MyStruct::<T> {
     field1: int32,
     field2: string,
 }
 
+export let core: int32 = 2;
+let test = core.check;
+
+interface Addable::<T> {
+    func add(a: T, b: int32): int32;
+}
+
+export func add::<X, T(Addable)>(a: T, b: int32): int32 {
+    let check: T = test;
+    return a + b;
+}
+
+struct MyStruct::<T> {
+    field1: int32,
+    field2: string,
+}
+
+/*
 impl MyStruct::<T> {
     func my_func(param: int32): String {
         return "Hello, World!";

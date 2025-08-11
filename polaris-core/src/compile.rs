@@ -97,9 +97,9 @@ mod tests {
         let mut ctx = CompileContext::new(logger.clone());
 
         let test_paths = vec![
-            "../test/modules/mod1.pol",
-            "../test/modules/mod2.pol",
-            "../test/modules/mod3.pol",
+            "../test/modules/mod1.pls",
+            "../test/modules/mod2.pls",
+            "../test/modules/mod3.pls",
         ];
 
         for path in test_paths {

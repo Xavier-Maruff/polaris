@@ -70,9 +70,8 @@ macro_rules! visit_ast_children {
                             $obj.$visit(arm)?;
                         }
                     }
-                    ExprNode::FieldAccess { base, field, .. } => {
+                    ExprNode::FieldAccess { base, .. } => {
                         $obj.$visit(base)?;
-                        $obj.$visit(field)?;
                     }
                     ExprNode::Index{base, index, ..} => {
                         $obj.$visit(base)?;

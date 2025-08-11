@@ -280,9 +280,8 @@ macro_rules! collect_expr_diagnostics {
                 }
             }
 
-            ExprNode::FieldAccess { base, field, .. } => {
+            ExprNode::FieldAccess { base, .. } => {
                 $diagnostics.extend(base.$method());
-                $diagnostics.extend(field.$method());
             }
 
             ExprNode::Index { base, index, .. } => {

@@ -106,7 +106,7 @@ mod tests {
     #[tokio::test]
     async fn compile_command() {
         let args = CompileArgs {
-            files: vec!["../test/sanity.pol".to_string()],
+            files: vec!["../test/sanity.psl".to_string()],
             verbosity: 3,
             werror: false,
             release: false,

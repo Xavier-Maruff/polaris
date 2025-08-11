@@ -7,9 +7,12 @@ use crossbeam_channel::unbounded;
 use polaris_core::{
     diagnostic::{self as pl_diagnostic, is_error},
     log::{self, Logger},
+    parse::CodeSpan,
 };
-use std::{collections::HashMap, fs::read_to_string, io::Write, thread};
+use std::{cmp::min, collections::HashMap, fs::read_to_string, io::Write, thread};
 use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
+
+const MAX_DIAGNOSTIC_LENGTH: usize = 100;
 
 pub struct CliLogger {
     strict_warn: bool,
@@ -143,6 +146,17 @@ impl CliLogger {
         writeln!(&mut buf, "{}", msg).unwrap();
     }
 
+    fn get_truncated_range(span: CodeSpan) -> std::ops::Range<usize> {
+        if span.start == 0 && span.end == 0 {
+            0..0
+        } else {
+            span.start..match span.end - span.start {
+                len if len > MAX_DIAGNOSTIC_LENGTH => span.start + MAX_DIAGNOSTIC_LENGTH,
+                _ => span.end,
+            }
+        }
+    }
+
     pub fn diagnostic(&mut self, err: &pl_diagnostic::Diagnostic) {
         let mut diagnostic = match is_error(&err.primary.err_type, self.strict_warn) {
             true => Diagnostic::error(),
@@ -176,16 +190,17 @@ impl CliLogger {
                         return;
                     }
                 },
-                err.primary.span.start..err.primary.span.end,
+                Self::get_truncated_range(err.primary.span),
             ))
         }
         diagnostic = diagnostic.with_labels(
             err.notes
                 .iter()
+                .filter(|note| note.span.start != 0 || note.span.end != 0)
                 .map(|note| {
                     Ok(Label::secondary(
                         get_file_id(self, &note.file)?,
-                        note.span.start..note.span.end,
+                        Self::get_truncated_range(note.span),
                     )
                     .with_message(note.message.clone()))
                 })
@@ -193,6 +208,14 @@ impl CliLogger {
                 .map(|l: Result<Label<usize>, ()>| l.unwrap())
                 .collect::<Vec<_>>(),
         );
+
+        for note in err
+            .notes
+            .iter()
+            .filter(|n| n.span.start == 0 && n.span.end == 0)
+        {
+            diagnostic = diagnostic.with_note(note.message.clone());
+        }
 
         for hint in &err.hints {
             diagnostic = diagnostic.with_note("💡 Hint: ".to_string() + hint);

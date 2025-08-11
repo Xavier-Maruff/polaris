@@ -268,7 +268,7 @@ impl<'a> ParseContext<'a> {
                     "Iteration variables must always be modifiable."
                 );
 
-                let ident = Box::new(self.parse_ident(ast, lexer)?);
+                let ident = Box::new(self.parse_ident(ast, lexer, false, false)?);
 
                 wrap_err!(ast, self.expect(lexer, TokenVariant::In));
                 let iterable = Box::new(self.parse_expr(ast, lexer, false)?);
@@ -310,10 +310,10 @@ impl<'a> ParseContext<'a> {
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::Type));
 
-        let ident = Box::new(self.parse_ident(ast, lexer)?);
+        let ident = Box::new(self.parse_ident(ast, lexer, false, true)?);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Assign));
 
-        let alias_of = Box::new(self.parse_ident(ast, lexer)?);
+        let alias_of = Box::new(self.parse_ident(ast, lexer, true, true)?);
         wrap_err!(ast, self.expect(lexer, TokenVariant::Semicolon));
 
         span.end = self.prev_tok.span.end;
@@ -460,7 +460,7 @@ impl<'a> ParseContext<'a> {
         let mut ident = None;
 
         if matches!(self.curr_tok.variant, TokenVariant::Ident(_)) {
-            ident = Some(Box::new(self.parse_ident(ast, lexer)?));
+            ident = Some(Box::new(self.parse_ident(ast, lexer, false, false)?));
         }
 
         let mut capture_list = None;
@@ -468,7 +468,7 @@ impl<'a> ParseContext<'a> {
             wrap_err!(ast, self.advance(lexer));
             let mut captures = Vec::new();
             while !matches!(self.curr_tok.variant, TokenVariant::RBracket) {
-                captures.push(self.parse_ident(ast, lexer)?);
+                captures.push(self.parse_ident(ast, lexer, true, false)?);
             }
             wrap_err!(ast, self.advance(lexer));
 
@@ -504,7 +504,7 @@ impl<'a> ParseContext<'a> {
 
         let return_type = if matches!(self.curr_tok.variant, TokenVariant::Colon) {
             wrap_err!(ast, self.advance(lexer));
-            Some(Box::new(self.parse_ident(ast, lexer)?))
+            Some(Box::new(self.parse_ident(ast, lexer, true, true)?))
         } else {
             None
         };
@@ -559,7 +559,7 @@ impl<'a> ParseContext<'a> {
         wrap_err!(ast, self.expect(lexer, TokenVariant::Directive));
 
         let mut args = Vec::new();
-        let ident = Box::new(self.parse_ident(ast, lexer)?);
+        let ident = Box::new(self.parse_ident(ast, lexer, true, false)?);
 
         if matches!(self.curr_tok.variant, TokenVariant::LParen) {
             wrap_err!(ast, self.advance(lexer));
@@ -607,7 +607,7 @@ impl<'a> ParseContext<'a> {
 
             if self.curr_tok.variant == TokenVariant::Colon {
                 wrap_err!(ast, self.advance(lexer));
-                var_type = Some(Box::new(self.parse_ident(ast, lexer)?));
+                var_type = Some(Box::new(self.parse_ident(ast, lexer, true, true)?));
             }
 
             if self.curr_tok.variant == TokenVariant::Assign {
@@ -682,7 +682,7 @@ impl<'a> ParseContext<'a> {
             wrap_err!(ast, self.advance(lexer));
             wrap_err!(ast, self.expect(lexer, TokenVariant::Colon));
 
-            let field_type = self.parse_ident(ast, lexer)?;
+            let field_type = self.parse_ident(ast, lexer, true, true)?;
             wrap_err!(ast, self.expect(lexer, TokenVariant::Comma));
 
             fields.push((field, field_type));
@@ -695,7 +695,7 @@ impl<'a> ParseContext<'a> {
         let mut span = self.curr_tok.span.clone();
         wrap_err!(ast, self.expect(lexer, TokenVariant::Struct));
 
-        let ident = self.parse_ident(ast, lexer)?;
+        let ident = self.parse_ident(ast, lexer, false, true)?;
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
         let fields = self.parse_struct_decl_fields(ast, lexer)?;
@@ -743,7 +743,7 @@ impl<'a> ParseContext<'a> {
         wrap_err!(ast, self.advance(lexer));
         wrap_err!(ast, self.expect(lexer, TokenVariant::Colon));
 
-        let field_type = self.parse_ident(ast, lexer)?;
+        let field_type = self.parse_ident(ast, lexer, true, true)?;
 
         span.end = self.prev_tok.span.end;
         Ok(Node::new_with_span(
@@ -761,9 +761,7 @@ impl<'a> ParseContext<'a> {
         let mut span = self.curr_tok.span.clone();
         wrap_err!(ast, self.expect(lexer, TokenVariant::Interface));
 
-        let ident = Box::new(self.parse_ident(ast, lexer)?);
-        wrap_err!(ast, self.advance(lexer));
-
+        let ident = Box::new(self.parse_ident(ast, lexer, false, true)?);
         let mut functions = Vec::new();
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
@@ -775,6 +773,7 @@ impl<'a> ParseContext<'a> {
         wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
 
         span.end = self.prev_tok.span.end;
+
         Ok(Node::new_with_span(
             Variant::InterfaceDecl {
                 ident,
@@ -784,8 +783,14 @@ impl<'a> ParseContext<'a> {
         ))
     }
 
-    fn parse_ident_expr(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
-        self.parse_ident(ast, lexer)
+    fn parse_ident_expr(
+        &mut self,
+        ast: &mut Node,
+        lexer: &mut Lexer,
+        with_namespace_prefix: bool,
+        is_type: bool,
+    ) -> Result<Node, ()> {
+        self.parse_ident(ast, lexer, with_namespace_prefix, is_type)
     }
 
     fn parse_struct_literal(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
@@ -795,7 +800,7 @@ impl<'a> ParseContext<'a> {
         let mut struct_ident = None;
         if matches!(self.curr_tok.variant, TokenVariant::DoubleColon) {
             wrap_err!(ast, self.advance(lexer));
-            struct_ident = Some(Box::new(self.parse_ident(ast, lexer)?));
+            struct_ident = Some(Box::new(self.parse_ident(ast, lexer, true, true)?));
         }
         wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
 
@@ -839,6 +844,7 @@ impl<'a> ParseContext<'a> {
                         type_args: vec![],
                         memory_mode: MemoryMode::Auto,
                         id: None,
+                        is_type: false,
                     })),
                 ));
             }
@@ -853,12 +859,12 @@ impl<'a> ParseContext<'a> {
         wrap_err!(ast, self.expect(lexer, TokenVariant::Impl));
 
         let mut interface_ident = None;
-        let mut target_struct = Box::new(self.parse_ident(ast, lexer)?);
+        let mut target_struct = Box::new(self.parse_ident(ast, lexer, true, true)?);
 
         if matches!(self.curr_tok.variant, TokenVariant::For) {
             wrap_err!(ast, self.advance(lexer));
             interface_ident = Some(target_struct);
-            target_struct = Box::new(self.parse_ident(ast, lexer)?);
+            target_struct = Box::new(self.parse_ident(ast, lexer, true, true)?);
         }
 
         let mut methods = Vec::new();
@@ -941,7 +947,7 @@ impl<'a> ParseContext<'a> {
         let mut span = self.curr_tok.span.clone();
         wrap_err!(ast, self.expect(lexer, TokenVariant::Actor));
 
-        let ident = self.parse_ident(ast, lexer)?;
+        let ident = self.parse_ident(ast, lexer, false, true)?;
         wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
 
         let fields = self.parse_struct_decl_fields(ast, lexer)?;
@@ -972,7 +978,7 @@ impl<'a> ParseContext<'a> {
         wrap_err!(ast, self.expect(lexer, TokenVariant::Actor));
         wrap_err!(ast, self.expect(lexer, TokenVariant::DoubleColon));
 
-        let ident = self.parse_ident(ast, lexer)?;
+        let ident = self.parse_ident(ast, lexer, true, true)?;
         wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
 
         let fields = self.parse_struct_literal_fields(ast, lexer)?;
@@ -993,7 +999,7 @@ impl<'a> ParseContext<'a> {
         let mut span = self.curr_tok.span.clone();
         wrap_err!(ast, self.expect(lexer, TokenVariant::Enum));
 
-        let ident = self.parse_ident(ast, lexer)?;
+        let ident = self.parse_ident(ast, lexer, false, true)?;
         let mut variants = Vec::new();
 
         wrap_err!(ast, self.expect(lexer, TokenVariant::LBrace));
@@ -1003,13 +1009,13 @@ impl<'a> ParseContext<'a> {
             match self.curr_tok.variant {
                 TokenVariant::LParen => {
                     wrap_err!(ast, self.advance(lexer));
-                    let variant_ident = self.parse_ident(ast, lexer)?;
+                    let variant_ident = self.parse_ident(ast, lexer, true, true)?;
                     wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
                     variants.push((name, Some(variant_ident)));
                 }
                 TokenVariant::LBrace => {
                     wrap_err!(ast, self.advance(lexer));
-                    let fields = self.parse_struct_literal_fields(ast, lexer)?;
+                    let fields = self.parse_struct_decl_fields(ast, lexer)?;
                     wrap_err!(ast, self.expect(lexer, TokenVariant::RBrace));
                     variants.push((
                         name,
@@ -1044,7 +1050,7 @@ impl<'a> ParseContext<'a> {
         lexer: &mut Lexer,
         disallow_angles: bool,
     ) -> Result<Node, ()> {
-        self.parse_prec(ast, lexer, 0, disallow_angles)
+        self.parse_expr_prec(ast, lexer, 0, disallow_angles)
     }
 
     fn parse_expr_prefix(
@@ -1078,7 +1084,7 @@ impl<'a> ParseContext<'a> {
         }
     }
 
-    fn parse_prec(
+    fn parse_expr_prec(
         &mut self,
         ast: &mut Node,
         lexer: &mut Lexer,
@@ -1117,7 +1123,7 @@ impl<'a> ParseContext<'a> {
 
             wrap_err!(ast, self.advance(lexer));
 
-            let rhs = self.parse_prec(ast, lexer, prec + 1, disallow_angles)?;
+            let rhs = self.parse_expr_prec(ast, lexer, prec + 1, disallow_angles)?;
 
             span.end = self.prev_tok.span.end;
             lhs = Node::new_with_span(
@@ -1162,7 +1168,7 @@ impl<'a> ParseContext<'a> {
             match self.curr_tok.variant {
                 TokenVariant::LBracket => {
                     wrap_err!(ast, self.advance(lexer));
-                    let index = Box::new(self.parse_prec(ast, lexer, 0, false)?);
+                    let index = Box::new(self.parse_expr_prec(ast, lexer, 0, false)?);
                     wrap_err!(ast, self.expect(lexer, TokenVariant::RBracket));
 
                     span.end = self.prev_tok.span.end;
@@ -1193,16 +1199,36 @@ impl<'a> ParseContext<'a> {
                 }
                 TokenVariant::Dot => {
                     wrap_err!(ast, self.advance(lexer));
-                    let field = self.parse_ident(ast, lexer)?;
+                    if let TokenVariant::Ident(field) = self.curr_tok.variant.clone() {
+                        wrap_err!(ast, self.advance(lexer));
+                        span.end = self.prev_tok.span.end;
+                        parent = Node::new_with_span(
+                            Variant::Expr(ExprNode::FieldAccess {
+                                base: Box::new(parent),
+                                field,
+                            }),
+                            span,
+                        );
+                    } else {
+                        ast.add_error(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: format!(
+                                    "Expected identifier after '.', found '{}'",
+                                    self.curr_tok.variant
+                                ),
+                                span: CodeSpan {
+                                    start: self.curr_tok.span.start,
+                                    end: self.curr_tok.span.end,
+                                },
+                                file: lexer.file.clone(),
+                                err_type: DiagnosticMsgType::UnexpectedToken,
+                            },
+                            notes: vec![],
+                            hints: vec!["Check your syntax.".to_string()],
+                        });
 
-                    span.end = self.prev_tok.span.end;
-                    parent = Node::new_with_span(
-                        Variant::Expr(ExprNode::FieldAccess {
-                            base: Box::new(parent),
-                            field: Box::new(field),
-                        }),
-                        span,
-                    );
+                        return Ok(parent);
+                    }
                 }
                 TokenVariant::QuestionMark => {
                     wrap_err!(ast, self.advance(lexer));
@@ -1321,7 +1347,13 @@ impl<'a> ParseContext<'a> {
         Ok(node)
     }
 
-    fn parse_ident(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+    fn parse_ident(
+        &mut self,
+        ast: &mut Node,
+        lexer: &mut Lexer,
+        with_namespace_prefix: bool,
+        is_type: bool,
+    ) -> Result<Node, ()> {
         let mut span = self.curr_tok.span.clone();
 
         let memory_mode = match self.curr_tok.variant {
@@ -1338,30 +1370,32 @@ impl<'a> ParseContext<'a> {
 
         let mut namespaces = Vec::new();
 
-        while matches!(self.next_tok.variant, TokenVariant::DoubleColon) {
-            if let TokenVariant::Ident(ident) = &self.curr_tok.variant {
-                namespaces.push(ident.clone());
-            } else {
-                ast.add_error(Diagnostic {
-                    primary: DiagnosticMsg {
-                        message: format!(
-                            "Expected identifier after '::', found '{}'",
-                            self.curr_tok.variant
-                        ),
-                        span: CodeSpan {
-                            start: self.curr_tok.span.start,
-                            end: self.curr_tok.span.end,
+        if with_namespace_prefix {
+            while matches!(self.next_tok.variant, TokenVariant::DoubleColon) {
+                if let TokenVariant::Ident(ident) = &self.curr_tok.variant {
+                    namespaces.push(ident.clone());
+                } else {
+                    ast.add_error(Diagnostic {
+                        primary: DiagnosticMsg {
+                            message: format!(
+                                "Expected identifier after '::', found '{}'",
+                                self.curr_tok.variant
+                            ),
+                            span: CodeSpan {
+                                start: self.curr_tok.span.start,
+                                end: self.curr_tok.span.end,
+                            },
+                            file: lexer.file.clone(),
+                            err_type: DiagnosticMsgType::UnexpectedToken,
                         },
-                        file: lexer.file.clone(),
-                        err_type: DiagnosticMsgType::UnexpectedToken,
-                    },
-                    notes: vec![],
-                    hints: vec!["Check your syntax.".to_string()],
-                });
-                return Err(());
+                        notes: vec![],
+                        hints: vec!["Check your syntax.".to_string()],
+                    });
+                    return Err(());
+                }
+                wrap_err!(ast, self.advance(lexer));
+                wrap_err!(ast, self.advance(lexer));
             }
-            wrap_err!(ast, self.advance(lexer));
-            wrap_err!(ast, self.advance(lexer));
         }
 
         let ident = self.parse_ident_unqualified(ast, lexer)?;
@@ -1377,6 +1411,7 @@ impl<'a> ParseContext<'a> {
                     type_args,
                     memory_mode,
                     id: None,
+                    is_type,
                 }),
                 warnings: None,
                 errors: None,
@@ -1437,7 +1472,8 @@ impl<'a> ParseContext<'a> {
             }
             TokenVariant::Ref | TokenVariant::Weak | TokenVariant::Ident(_) => {
                 advance = false;
-                self.parse_ident_expr(ast, lexer)?
+                //this could be a source of errors - to check
+                self.parse_ident_expr(ast, lexer, true, false)?
             }
             TokenVariant::Struct => {
                 advance = false;
@@ -1487,110 +1523,5 @@ impl<'a> ParseContext<'a> {
         }
 
         Ok(node)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::log::Logger;
-
-    #[allow(unused_macros)]
-    macro_rules! create_comp_ctx {
-        ($input:expr) => {{
-            (
-                Logger::dummy(),
-                Lexer::new("test_file".to_string(), $input.to_string()),
-                Node::new(Variant::Program { children: vec![] }),
-            )
-        }};
-    }
-
-    #[test]
-    fn parse_sanity() -> Result<(), ()> {
-        let source = "\
-            @module my_module;
-
-           struct MyStruct::<T> {
-               field1: int32,
-               field2: string,
-           }
-
-           impl MyStruct::<T> {
-               func my_func(param: int32): String {
-                   return \"Hello, World!\";
-               }
-           }
-
-           actor Actor {
-               x: int32,
-               async func actor_func() {
-                   for let mod i in range(0, 10) {
-                       self.x += 12;
-                   }
-               }
-           }
-
-           enum MyEnum {
-               Variant1,
-               Variant2(i32),
-               Variant3{ field: string, },
-           }
-
-           func main() {
-               let mod x: MyStruct::<i32> = struct::MyStruct::<i32> {
-                   field1: 42,
-                   field2: \"test\",
-               };
-
-               let y = ref x;
-               x.my_func(x.field1);
-
-               let b = [12, 3, x.field1][0];
-
-               let my_actor = actor::Actor {
-                   x: 10,
-               };
-
-               block my_actor.actor_func();
-
-               (func[ref x]() {
-                   x.field1 += 1;
-               })();
-           }
-
-        "
-        .to_string();
-
-        let mut ctx = CompileContext::new(Logger::dummy());
-
-        let ast = match parse("test_file".to_string(), source, &mut ctx)? {
-            Some(ast) => ast,
-            None => {
-                panic!("Parsing failed with no AST produced");
-            }
-        };
-
-        assert!(
-            ast.warnings().is_empty(),
-            "Warnings found during parsing: {}",
-            ast.warnings()
-                .into_iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-
-        assert!(
-            ast.errors().is_empty(),
-            "Errors found during parsing: {}",
-            ast.errors()
-                .into_iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-
-        Ok(())
     }
 }

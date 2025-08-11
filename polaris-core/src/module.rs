@@ -263,15 +263,15 @@ impl ModuleContext {
                 .get_module(self.current_module_id)
                 .unwrap()
                 .exports
-                .push(Symbol {
-                    name: ident,
-                    id: INVALID_SYMBOL_ID,
-                    module_id: self.current_module_id,
-                    scope_id: INVALID_SYMBOL_ID,
-                    span: Some(ast.span),
-                    type_info: None,
-                    mutable: false,
-                })
+                .push(Symbol::new_var(
+                    INVALID_SYMBOL_ID,
+                    self.current_module_id,
+                    INVALID_SYMBOL_ID,
+                    ident,
+                    Some(ast.span),
+                    None,
+                    false,
+                ));
         } else {
             self.errors.push(Diagnostic {
                 primary: DiagnosticMsg {
@@ -308,9 +308,9 @@ impl ModuleContext {
             return Err(());
         }
 
-        let import_name = match args[0].get_qualified_ident_str() {
-            Some(name) => name,
-            None => {
+        let import_name = match args[0].variant.clone() {
+            Variant::Expr(ExprNode::String(name)) => name,
+            _ => {
                 self.errors.push(Diagnostic {
                     primary: DiagnosticMsg {
                         message: "Invalid import name".to_string(),
@@ -408,9 +408,9 @@ impl ModuleContext {
             return Err(());
         }
 
-        self.current_module_name = match args[0].get_qualified_ident_str() {
-            Some(name) => name,
-            None => {
+        self.current_module_name = match args[0].variant.clone() {
+            Variant::Expr(ExprNode::String(name)) => name,
+            _ => {
                 self.errors.push(Diagnostic {
                     primary: DiagnosticMsg {
                         message: "Invalid module name".to_string(),
