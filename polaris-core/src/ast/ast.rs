@@ -91,9 +91,6 @@ pub enum Variant {
         methods: Vec<Node>,
         fields: Vec<(String, Node)>,
     },
-    Import {
-        module_id: ModuleId,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -475,7 +472,7 @@ impl fmt::Display for Node {
             Variant::Failed => write!(f, "/* <failed> */\n"),
             Variant::Program { children, .. } => {
                 for child in children {
-                    write!(f, "{}", child)?;
+                    write!(f, "{}\n", child)?;
                 }
                 Ok(())
             }
@@ -488,9 +485,6 @@ impl fmt::Display for Node {
             }
             Variant::TypeDecl { ident, alias_of } => {
                 write!(f, "type {} = {};\n", ident, alias_of)
-            }
-            Variant::Import { module_id } => {
-                write!(f, "@import(Module[{}])", module_id)
             }
             Variant::ActorDecl {
                 ident,
@@ -531,7 +525,7 @@ impl fmt::Display for Node {
                 then_branch,
                 else_branch,
             } => {
-                write!(f, "if {} ", condition)?;
+                write!(f, "if {} \n", condition)?;
                 write!(f, "{}", then_branch)?;
                 if let Some(else_branch) = else_branch {
                     write!(f, "else {}", else_branch)?;

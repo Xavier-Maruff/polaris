@@ -566,26 +566,6 @@ impl<'a> ParseContext<'a> {
         ))
     }
 
-    // fn parse_directive(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
-    //     let mut span = self.curr_tok.span.clone();
-    //     wrap_err!(ast, self.expect(lexer, TokenVariant::Directive));
-
-    //     let mut args = Vec::new();
-    //     let ident = Box::new(self.parse_ident(ast, lexer, false)?);
-
-    //     if matches!(self.curr_tok.variant, TokenVariant::LParen) {
-    //         wrap_err!(ast, self.advance(lexer));
-    //         args = self.parse_list(ast, lexer, false)?;
-    //         wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
-    //     }
-
-    //     span.end = self.prev_tok.span.end;
-
-    //     let node = Node::new_with_span(Variant::Expr(ExprNode::Directive { ident, args }), span);
-
-    //     Ok(node)
-    // }
-
     fn parse_list(
         &mut self,
         ast: &mut Node,

@@ -11,7 +11,7 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     log::Logger,
     parse::CodeSpan,
-    symbol::{INVALID_SYMBOL_ID, PrimitiveType, Symbol, TypeVariant},
+    symbol::{INVALID_SYMBOL_ID, PrimitiveType, Symbol, SymbolId, SymbolVariant, TypeVariant},
     visit_ast_children,
 };
 
@@ -21,9 +21,12 @@ pub const INVALID_MODULE_ID: ModuleId = usize::MAX;
 #[derive(Debug, Clone)]
 pub struct ModuleTable {
     pub modules: HashMap<ModuleId, Module>,
+    //module name -> module id
     pub module_ids: HashMap<String, ModuleId>,
+    //module file path -> module id
     pub module_file_ids: HashMap<String, ModuleId>,
-    pub import_graph: Vec<Vec<ModuleId>>,
+    //import graph condensed to dag of sccs
+    pub condensed_import_graph: Vec<Vec<ModuleId>>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,8 +49,15 @@ pub fn module_graph_pass(ctx: &mut CompileContext) -> Result<(), ()> {
     ret
 }
 
-pub fn module_import_symbol_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    Ok(())
+pub fn module_import_resolution_pass(ctx: &mut CompileContext) -> Result<(), ()> {
+    let mut import_ctx = ImportResolutionPassContext::new(ctx.logger.clone());
+
+    let ret = import_ctx.run_import_resolution_pass(ctx);
+
+    ctx.errors.extend(import_ctx.errors);
+    ctx.warnings.extend(import_ctx.warnings);
+
+    ret
 }
 
 impl Module {
@@ -68,7 +78,7 @@ impl ModuleTable {
             modules: HashMap::new(),
             module_ids: HashMap::new(),
             module_file_ids: HashMap::new(),
-            import_graph: Vec::new(),
+            condensed_import_graph: Vec::new(),
         }
     }
 
@@ -107,6 +117,105 @@ struct ModGraphPassContext {
     errors: Vec<Diagnostic>,
     warnings: Vec<Diagnostic>,
     table: ModuleTable,
+}
+
+struct ImportResolutionPassContext {
+    _logger: Logger,
+    current_module_id: ModuleId,
+    current_file: String,
+    rewrite_ids: HashMap<SymbolId, SymbolId>,
+    errors: Vec<Diagnostic>,
+    warnings: Vec<Diagnostic>,
+}
+
+impl ImportResolutionPassContext {
+    pub fn new(logger: Logger) -> Self {
+        ImportResolutionPassContext {
+            _logger: logger,
+            current_module_id: 0,
+            current_file: String::new(),
+            rewrite_ids: HashMap::new(),
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    //this is pretty inefficient, should probably restructure symbol table links structure
+    pub fn run_import_resolution_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {
+        let module_ids = ctx.modules.module_ids.values().cloned().collect::<Vec<_>>();
+
+        //hashmap module ids -> symbol
+        let module_full_symbols = ctx
+            .symbol_table
+            .module_symbols
+            .iter()
+            .map(|(id, symbols)| {
+                (
+                    *id,
+                    symbols
+                        .iter()
+                        .map(|s| ctx.symbol_table.get(*s).unwrap())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<HashMap<ModuleId, Vec<&Symbol>>>();
+
+        //map symbol links to rewrite commands
+        for module_id in &module_ids {
+            let empty = vec![];
+            let module_symbols = module_full_symbols
+                .get(module_id)
+                .or_else(|| Some(&empty))
+                .unwrap();
+
+            let linked_symbols = ctx.symbol_table.symbol_links.get(&module_id);
+
+            if linked_symbols.is_none() {
+                continue;
+            }
+
+            for (symbol_name, aliased_by) in linked_symbols.unwrap() {
+                let symbol = module_symbols
+                    .iter()
+                    .find(|s| s.name == *symbol_name)
+                    .unwrap();
+
+                for alias_id in aliased_by {
+                    self.rewrite_ids.insert(*alias_id, symbol.id);
+                }
+            }
+        }
+
+        for (alias_id, _) in &self.rewrite_ids {
+            //enforce no more references to the alias id
+            ctx.symbol_table.remove(*alias_id);
+        }
+
+        //execute rewrites
+        for (file, ast) in ctx.asts.iter_mut() {
+            self.current_file = file.clone();
+            self.current_module_id = ctx.modules.module_file_ids[file];
+            self.rewrite_imports_visitor(ast)?;
+        }
+
+        Ok(())
+    }
+
+    fn rewrite_imports_visitor(&mut self, ast: &mut Node) -> Result<(), ()> {
+        match &mut ast.variant {
+            Variant::Expr(ExprNode::Ident { id, .. }) => {
+                if let Some(id) = id
+                    && let Some(rewrite_id) = self.rewrite_ids.get(id)
+                {
+                    *id = *rewrite_id;
+                }
+            }
+            _ => {}
+        }
+
+        visit_ast_children!(ast.variant, self, rewrite_imports_visitor, {});
+        Ok(())
+    }
 }
 
 impl ModGraphPassContext {
@@ -505,6 +614,6 @@ impl ModGraphPassContext {
         for idx in order {
             ordered.push(comps[idx].clone());
         }
-        self.table.import_graph = ordered;
+        self.table.condensed_import_graph = ordered;
     }
 }

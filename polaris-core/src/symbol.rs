@@ -17,8 +17,10 @@ pub const INVALID_SYMBOL_ID: SymbolId = usize::MAX;
 #[derive(Debug, Clone)]
 pub struct SymbolTable {
     pub symbols: HashMap<SymbolId, Symbol>,
-    pub module_symbols: HashMap<ModuleId, Vec<SymbolId>>, //module_id -> symbols in module
-    pub symbol_links: HashMap<SymbolId, (ModuleId, String)>, //symbol_id -> (module_id, name)
+    //module_id -> symbols in module
+    pub module_symbols: HashMap<ModuleId, Vec<SymbolId>>,
+    // module_id -> (symbol_name -> linked symbol_ids)
+    pub symbol_links: HashMap<ModuleId, HashMap<String, Vec<SymbolId>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +66,10 @@ impl SymbolTable {
 
     pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
         self.symbols.get_mut(&id)
+    }
+
+    pub fn remove(&mut self, id: SymbolId) -> Option<Symbol> {
+        self.symbols.remove(&id)
     }
 }
 
@@ -348,7 +354,16 @@ impl<'a> NameResolverPassContext<'a> {
     }
 
     fn link_symbol_to_module(&mut self, symbol_id: SymbolId, module_id: ModuleId, name: String) {
-        self.table.symbol_links.insert(symbol_id, (module_id, name));
+        let mut module_links = self.table.symbol_links.get_mut(&module_id);
+        if module_links.is_none() {
+            self.table.symbol_links.insert(module_id, HashMap::new());
+            module_links = self.table.symbol_links.get_mut(&module_id);
+        }
+        module_links
+            .unwrap()
+            .entry(name)
+            .or_default()
+            .push(symbol_id);
     }
 
     fn lookup(&self, name: &str) -> Option<SymbolId> {
@@ -871,14 +886,14 @@ impl<'a> NameResolverPassContext<'a> {
                         for export in module.exports {
                             let local_id = match export.variant {
                                 SymbolVariant::Var(var) => self.declare(
-                                    module.id,
+                                    self.current_module_id,
                                     export.name.clone(),
                                     export.span,
                                     var.type_id,
                                     var.mutable,
                                 ),
                                 SymbolVariant::Type(t) => self.declare_type(
-                                    module.id,
+                                    self.current_module_id,
                                     Some(export.name.clone()),
                                     t.generics,
                                     t.variant,

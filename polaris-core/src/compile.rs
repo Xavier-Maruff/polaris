@@ -5,7 +5,7 @@ use crate::{
     desugar::desugar_pass,
     diagnostic::Diagnostic,
     log,
-    module::{ModuleTable, module_graph_pass, module_import_symbol_pass},
+    module::{ModuleTable, module_graph_pass, module_import_resolution_pass},
     parse::parse,
     symbol::{SymbolTable, resolve_names_pass},
 };
@@ -71,6 +71,11 @@ impl CompileContext {
                     return Err(());
                 }
             }
+
+            // for (file, ast) in &self.asts {
+            //     self.logger
+            //         .info(&format!("AST for {} after {}:\n{}", file, name, ast));
+            // }
         }
 
         Ok(())
@@ -80,7 +85,7 @@ impl CompileContext {
         vec![
             ("Module Resolution", module_graph_pass),
             ("Name Resolution", resolve_names_pass),
-            ("Import Resolution", module_import_symbol_pass),
+            ("Import Resolution", module_import_resolution_pass),
         ]
     }
 
