@@ -21,7 +21,7 @@ Aside from its security focus, Polaris is a modern language with a syntax inspir
 
 Every Polaris program is a collection of modules, which can depend on each other. Modules can contain functions, structs, enums, and interfaces. The main entry point of a Polaris program is the `main` function, which is required to be defined in the root module. Modules are declared with the `@module` directive, and can be imported with the `@import` directive:
 
-```swift
+```zig
 //declaring a module, which must be unique
 @module("my_module");
 
@@ -36,7 +36,7 @@ let io = @import("core::io");
 
 Variables in Polaris are declared with the `let` keyword, and are immutable by default, but can be made mutable with the `mod` keyword. Constants are declared with the `const` keyword and must be evaluable at compile time:
 
-```swift
+```zig
 const MY_CONSTANT: int32 = 42; // must be evaluable at compile time
 let my_var: int32;
 let my_initialised_var = 42; // type is inferred as int32
@@ -64,7 +64,7 @@ let my_tagged_enum: TaggedEnum = TaggedEnum::Variant2(3.14);
 
 Function are first-class citizens in Polaris, and can be declared/defined by:
 
-```swift
+```zig
 //some required imports
 @import("core::io");
 @import("core::interfaces");
@@ -100,7 +100,7 @@ func my_closure_function() {
 
 With interfaces, you can define a set of methods that a type must implement. This allows for compile-time polymorphism, where you can write functions that work with any type that implements a specific interface.
 
-```swift
+```zig
 //defining an interface
 interface Add {
 	//a method that takes another instance of the same type and returns a new instance
@@ -123,7 +123,7 @@ impl Add for MyStruct {
 
 Structs are defined with the `struct` keyword, and can have fields of any type. Enums are defined with the `enum` keyword, and can have variants with associated data.
 
-```swift
+```zig
 struct MyStruct {
 	field1: int32,
 	field2: string,
@@ -162,7 +162,7 @@ let my_struct_enum: MyEnum = MyEnum::Variant3(struct {
 
 Enums must be unwrapped with a `match` expression to access underlying data, with a syntax stolen entirely from Rust:
 
-```swift
+```zig
 match my_enum {
 	MyEnum::Variant1 => {
 		@println("Variant1");
@@ -181,7 +181,7 @@ match my_enum {
 
 Polaris only supports `for` loops, which can exist in three modes: iterating over an iterable, iterating until a condition evaluates to false, or iterating infinitely:
 
-```swift
+```zig
 //iterating over an iterable
 let my_vec = [1, 2, 3, 4, 5];
 for item in my_vec {
@@ -207,7 +207,7 @@ for {
 
 Error handling in Polaris is the same as Rust, using the `Result` type. Functions can return a `Result` type, which can be either `Ok` or `Err`. The `?` operator can be used to propagate errors:
 
-```swift
+```zig
 let io = @import("core::io");
 @import("core::result");
 
@@ -224,7 +224,7 @@ func read_file(path: string): Result::<string, string> {
 
 Polaris uses automatic reference counting (ARC) for memory management, which means that you don't have to worry about manually allocating and deallocating memory unless you opt-in to manual memory management. References are created with the `ref` keyword, and can be used to mutate the underlying value via the dereference operator `*`.
 
-```swift
+```zig
 let mod my_var = 42;
 let my_ref = ref my_var; // creates a reference to my_var
 
@@ -234,7 +234,7 @@ let my_ref = ref my_var; // creates a reference to my_var
 
 If we have two structs that reference each other, we can use the `weak` keyword to create a weak reference that does not affect the reference count, to avoid circular references creating memory leaks.
 
-```swift
+```zig
 struct FirstStruct {
 	second: ref SecondStruct,
 }
@@ -253,7 +253,7 @@ let mod second = struct::SecondStruct {
 
 Weak references could have a deallocated underlying resource, so they must be checked before use. They are equivalent in the Polaris type system to `Option<ref T>`, so can be unwrapped with a `match` expression:
 
-```swift
+```zig
 let num = 42;
 let my_weak_ref = weak num;
 
@@ -269,7 +269,7 @@ match my_weak_ref {
 
 Manual memory management can only be performed in special `unsafe` blocks, which are used to escape the automatic memory management system. This is useful for low-level operations or when interfacing with external libraries that require manual memory management.
 
-```swift
+```zig
 let mem = @import("core::mem");
 
 unsafe {
@@ -306,7 +306,7 @@ unsafe {
 Polaris uses an asynchronous actor-based concurrency model, async functions are declared with the `async` keyword, and can be awaited with the `await` keyword. Async functions can be launched from synchronous functions via a `spawn` statement, which will return a `Future::<T>` that can be awaited later.
 Actors are defined with the `actor` keyword, and are the only way that async functions are allowed to mutate state that they do not own. Actors own an atomic queue of method calls, which are processed in the order they are received, eliminating the need for locks or other synchronization primitives while allowing for safe concurrent access to shared state and removing the risk of data races.
 
-```swift
+```zig
 @import("core::io");
 
 actor MyActor {
@@ -325,9 +325,9 @@ actor MyActor {
 
 
 async func my_func(shared_state: ref MyActor, index: int32) {
-	await my_actor.increment();
+	await shared_state.increment();
 
-	let value = await my_actor.get_value();
+	let value = await shared_state.get_value();
 	@println("Task {} completed, value: {}", index, value);
 }
 
@@ -354,7 +354,7 @@ func main() {
 
 The internal implementation of the async runtime includes a primary executor alongside a set of blocking executors, which are used to run compute-intensive or synchronous i/o-bound tasks. The compiler will, via static analysis, try to automatically offload what it deems to be blocking tasks to the blocking executors, but you can also manually signal to the compiler that a function is blocking by using the `@blocking` directive, or that a function is not blocking by using the `@nonblocking` directive. It is recommended to use these directives to help the compiler make better decisions about task scheduling and improve the performance of your program.
 
-```swift
+```zig
 @blocking;
 func blocking_function() {
    //e.g. something compute-intensive
@@ -371,7 +371,7 @@ func nonblocking_function() {
 Polaris automatically compiles an optimal subset of the program to GPU kernels, and handles the data transfer between CPU and GPU memory. This means that Polaris programs are by-default massively parallel, something which is essential for homomorphic encryption to be performant.
 The Polaris compiler tries to automatically parallelise where it makes performance sense, but you can also force a function to be compiled to a GPU kernel by using the `@gpu` directive:
 
-```swift
+```zig
 @import("core::range");
 
 @gpu;
