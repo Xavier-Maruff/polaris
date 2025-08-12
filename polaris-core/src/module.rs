@@ -36,7 +36,7 @@ pub struct Module {
 }
 
 pub fn module_graph_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let mut module_ctx = ModuleContext::new(ctx.logger.clone());
+    let mut module_ctx = ModGraphPassContext::new(ctx.logger.clone());
     let ret = module_ctx.run_module_graph_pass(ctx);
 
     ctx.modules = module_ctx.table.clone();
@@ -47,13 +47,7 @@ pub fn module_graph_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 }
 
 pub fn module_import_symbol_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let mut module_ctx = ModuleContext::new(ctx.logger.clone());
-    let ret = module_ctx.run_module_import_symbol_pass(ctx);
-
-    ctx.errors.extend(module_ctx.errors);
-    ctx.warnings.extend(module_ctx.warnings);
-
-    ret
+    Ok(())
 }
 
 impl Module {
@@ -104,7 +98,7 @@ impl ModuleTable {
     }
 }
 
-struct ModuleContext {
+struct ModGraphPassContext {
     _logger: Logger,
     current_file: String,
     current_module_name: String,
@@ -115,9 +109,9 @@ struct ModuleContext {
     table: ModuleTable,
 }
 
-impl ModuleContext {
+impl ModGraphPassContext {
     pub fn new(logger: Logger) -> Self {
-        ModuleContext {
+        ModGraphPassContext {
             _logger: logger,
             current_file: String::new(),
             current_module_name: String::new(),
@@ -127,10 +121,6 @@ impl ModuleContext {
             warnings: Vec::new(),
             table: ModuleTable::new(),
         }
-    }
-
-    fn run_module_import_symbol_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {
-        Ok(())
     }
 
     fn run_module_graph_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {

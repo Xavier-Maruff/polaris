@@ -101,30 +101,6 @@ impl<'a> ParseContext<'a> {
         }
     }
 
-    fn backtrack(&mut self, lexer: &mut Lexer) -> Result<(), Diagnostic> {
-        if self.prev_tok.variant == TokenVariant::Empty {
-            return Err(Diagnostic {
-                primary: DiagnosticMsg {
-                    message: "Cannot backtrack beyond the first token".to_string(),
-                    span: CodeSpan { start: 0, end: 0 },
-                    file: lexer.file.clone(),
-                    err_type: DiagnosticMsgType::UnexpectedToken,
-                },
-                notes: vec![],
-                hints: vec!["Ensure you have tokens to backtrack to.".to_string()],
-            });
-        }
-
-        std::mem::swap(&mut self.curr_tok, &mut self.next_tok);
-        self.curr_tok = self.prev_tok.clone();
-        self.prev_tok = Token {
-            variant: TokenVariant::Empty,
-            span: CodeSpan { start: 0, end: 0 },
-        };
-
-        Ok(())
-    }
-
     fn expect(&mut self, lexer: &mut Lexer, kind: TokenVariant) -> Result<(), Diagnostic> {
         while matches!(self.curr_tok.variant, TokenVariant::Comment(_)) {
             self.advance(lexer)?;

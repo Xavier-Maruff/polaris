@@ -7,7 +7,7 @@ use crate::{
     log,
     module::{ModuleTable, module_graph_pass, module_import_symbol_pass},
     parse::parse,
-    symbol::{Symbol, SymbolId, SymbolTable, resolve_names_pass},
+    symbol::{SymbolTable, resolve_names_pass},
 };
 
 pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);

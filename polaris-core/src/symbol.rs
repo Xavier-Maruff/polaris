@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::ast::{ExprNode, ForVariant, Node, UnaryOp, Variant},
+    ast::ast::{ExprNode, ForVariant, Node, Variant},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::declare_intrinsics,
-    module::{INVALID_MODULE_ID, Module, ModuleId, ModuleTable},
+    module::{ModuleId, ModuleTable},
     parse::CodeSpan,
     visit_ast_children,
 };
@@ -17,6 +17,7 @@ pub const INVALID_SYMBOL_ID: SymbolId = usize::MAX;
 #[derive(Debug, Clone)]
 pub struct SymbolTable {
     pub symbols: HashMap<SymbolId, Symbol>,
+    pub module_symbols: HashMap<ModuleId, Vec<SymbolId>>, //module_id -> symbols in module
     pub symbol_links: HashMap<SymbolId, (ModuleId, String)>, //symbol_id -> (module_id, name)
 }
 
@@ -53,6 +54,7 @@ impl SymbolTable {
         Self {
             symbols: HashMap::new(),
             symbol_links: HashMap::new(),
+            module_symbols: HashMap::new(),
         }
     }
 
@@ -160,7 +162,7 @@ pub enum PrimitiveType {
 }
 
 pub fn resolve_names_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let mut name_resolver = NameResolverContext::new(&ctx.modules);
+    let mut name_resolver = NameResolverPassContext::new(&ctx.modules);
 
     for (file, ast) in ctx.asts.iter_mut() {
         name_resolver.current_module_id = ctx.modules.module_file_ids[file];
@@ -206,7 +208,7 @@ pub struct Scope {
     pub entries: HashMap<String, SymbolId>,
 }
 
-pub struct NameResolverContext<'a> {
+pub struct NameResolverPassContext<'a> {
     pub id_counter: SymbolId,
     pub scope_id_counter: SymbolId,
     pub current_file: String,
@@ -221,7 +223,7 @@ pub struct NameResolverContext<'a> {
     pub type_context_override: bool,
 }
 
-impl<'a> NameResolverContext<'a> {
+impl<'a> NameResolverPassContext<'a> {
     pub fn new(module_table: &'a ModuleTable) -> Self {
         let mut ret = Self {
             scopes: vec![Scope {
@@ -282,6 +284,12 @@ impl<'a> NameResolverContext<'a> {
         let id = self.id_counter;
         self.id_counter += 1;
 
+        self.table
+            .module_symbols
+            .entry(module_id)
+            .or_default()
+            .push(id);
+
         let current_scope = self.scopes.last_mut().unwrap();
         current_scope.entries.insert(name.clone(), id);
 
@@ -311,6 +319,12 @@ impl<'a> NameResolverContext<'a> {
     ) -> SymbolId {
         let id = self.id_counter;
         self.id_counter += 1;
+
+        self.table
+            .module_symbols
+            .entry(module_id)
+            .or_default()
+            .push(id);
 
         self.table.symbols.insert(
             id,
@@ -475,10 +489,8 @@ impl<'a> NameResolverContext<'a> {
                 Variant::Expr(ExprNode::Ident {
                     ref mut name,
                     ref mut is_type,
-                    ref mut type_args,
-                    ref mut memory_mode,
                     ref mut id,
-                    ref mut is_directive,
+                    ..
                 }) => {
                     if let Ok(symbol_id) =
                         self.check_reference(name, ast.span, *is_type || self.type_context_override)
@@ -610,7 +622,7 @@ impl<'a> NameResolverContext<'a> {
 
     fn declare_pattern(&mut self, pattern: &mut Node) -> Result<(), ()> {
         match &mut pattern.variant {
-            Variant::Expr(ExprNode::Call { callee, args }) => {
+            Variant::Expr(ExprNode::Call { args, .. }) => {
                 //parsed as a func call, but is actually an enum pattern
                 //ignore callee, declare inner args as pattern variables
                 //enum variant will be checked during type checking
@@ -645,10 +657,8 @@ impl<'a> NameResolverContext<'a> {
             Variant::Expr(ExprNode::Ident {
                 name,
                 type_args,
-                memory_mode,
-                id,
-                is_directive,
                 is_type,
+                ..
             }) => {
                 if name != "_"
                     && let None = self.lookup(name)

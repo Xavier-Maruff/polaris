@@ -1,9 +1,9 @@
 use crate::{
     module::INVALID_MODULE_ID,
-    symbol::{NameResolverContext, PrimitiveType, TypeVariant},
+    symbol::{NameResolverPassContext, PrimitiveType, TypeVariant},
 };
 
-pub fn declare_intrinsics(nr: &mut NameResolverContext) {
+pub fn declare_intrinsics(nr: &mut NameResolverPassContext) {
     declare_intrinsic_primitives(nr);
     declare_intrinsic_directives(nr);
 }
@@ -48,7 +48,7 @@ macro_rules! s {
     };
 }
 
-pub fn declare_intrinsic_primitives(nr: &mut NameResolverContext) {
+pub fn declare_intrinsic_primitives(nr: &mut NameResolverPassContext) {
     declare_primitive!(nr, "bool", PrimitiveType::Bool);
     declare_primitive!(nr, "int32", PrimitiveType::Int32);
     declare_primitive!(nr, "int64", PrimitiveType::Int64);
@@ -61,7 +61,7 @@ pub fn declare_intrinsic_primitives(nr: &mut NameResolverContext) {
     declare_primitive!(nr, "vector", PrimitiveType::Vector, [s!("T", None)]);
 }
 
-pub fn declare_intrinsic_directives(nr: &mut NameResolverContext) {
+pub fn declare_intrinsic_directives(nr: &mut NameResolverPassContext) {
     declare!(
         nr,
         "@module",
