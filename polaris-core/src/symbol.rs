@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::ast::{ExprNode, ForVariant, Node, Variant},
+    ast::ast::{ExprNode, ForVariant, Node, UnaryOp, Variant},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::declare_intrinsics,
@@ -409,7 +409,10 @@ impl NameResolverContext {
                         });
                     }
                     Some(DiagnosticMsg {
-                        message: format!("Similar symbol '{}' is also declared", symbol.name),
+                        message: format!(
+                            "Similar symbol '{}' exists in the current scope",
+                            symbol.name
+                        ),
                         span: symbol.span.unwrap_or(CodeSpan::new(0, 0)),
                         //todo: this could throw, should handle better
                         file: self
@@ -563,13 +566,102 @@ impl NameResolverContext {
                 }
 
                 self.type_context_override = type_context_override;
-            }
+            },
+
+
+            Variant::Expr(ExprNode::Match {
+                ref mut subject,
+                ref mut cases,
+                ..
+            }) => {
+                self.name_resolution_visitor(subject)?;
+
+                for (cond, arm) in cases.iter_mut() {
+                    self.push_scope();
+                    self.declare_pattern(cond)?;
+                    self.name_resolution_visitor(arm)?;
+                    self.pop_scope();
+                }
+            },
         });
 
         if push_scope {
             self.pop_scope();
         }
 
+        Ok(())
+    }
+
+    fn declare_pattern(&mut self, pattern: &mut Node) -> Result<(), ()> {
+        match &mut pattern.variant {
+            Variant::Expr(ExprNode::Call { callee, args }) => {
+                //parsed as a func call, but is actually an enum pattern
+                //ignore callee, declare inner args as pattern variables
+                //enum variant will be checked during type checking
+                for arg in args.iter_mut() {
+                    self.declare_pattern(arg)?;
+                }
+            }
+            Variant::Expr(ExprNode::ListLit { elements }) => {
+                //list pattern, declare inner elements as pattern variables
+                for element in elements.iter_mut() {
+                    self.declare_pattern(element)?;
+                }
+            }
+            Variant::Expr(ExprNode::TupleLit { elements }) => {
+                //tuple pattern, declare inner elements as pattern variables
+                if elements.is_empty() {
+                    //empty tuple pattern, nothing to declare
+                    return Ok(());
+                }
+
+                for element in elements.iter_mut() {
+                    self.declare_pattern(element)?;
+                }
+            }
+            Variant::Expr(ExprNode::UnaryOp {
+                operand: inner_operand,
+                ..
+            }) => {
+                //unary op pattern, declare inner operand as pattern variable
+                self.declare_pattern(inner_operand)?;
+            }
+            Variant::Expr(ExprNode::Ident {
+                namespaces,
+                name,
+                type_args,
+                memory_mode,
+                id,
+                is_directive,
+                is_type,
+            }) => {
+                if name != "_"
+                    && let None = self.lookup(name)
+                {
+                    //this ident cannot have a namespace if is pattern decl
+                    if !namespaces.is_empty() || !type_args.is_empty() || *is_type {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: format!(
+                                    "Pattern variable '{}' must not have namespaces, type arguments, or be a type",
+                                    name
+                                ),
+                                span: pattern.span.clone(),
+                                file: self.current_file.clone(),
+                                err_type: DiagnosticMsgType::IllegalName,
+                            },
+                            notes: vec![],
+                            hints: vec![],
+                        });
+                        return Err(());
+                    }
+
+                    //is a pattern decl, not a matching ident, so declare for inner scope
+                    self.declare(name.clone(), Some(pattern.span.clone()), None, false);
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -636,7 +728,6 @@ impl NameResolverContext {
         return_type: &mut Option<Box<Node>>,
         body: &mut Option<Box<Node>>,
     ) -> Result<(), ()> {
-        //todo: temp remove all locals from scope, only import capture list
         if let Some(ident) = &ident {
             self.declare_type_args(ident)?;
         }
@@ -688,7 +779,8 @@ impl NameResolverContext {
             | Variant::TypeDecl { .. }
             | Variant::Block { .. }
             | Variant::If { .. }
-            | Variant::For { .. } => true,
+            | Variant::For { .. }
+            | Variant::Expr(ExprNode::Match { .. }) => true,
             _ => false,
         }
     }

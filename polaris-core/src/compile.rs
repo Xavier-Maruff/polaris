@@ -5,7 +5,7 @@ use crate::{
     desugar::desugar_pass,
     diagnostic::Diagnostic,
     log,
-    module::{ModuleTable, module_pass},
+    module::{ModuleTable, module_graph_pass, module_import_symbol_pass},
     parse::parse,
     symbol::resolve_names_pass,
 };
@@ -76,8 +76,9 @@ impl CompileContext {
 
     pub fn get_default_passes() -> Vec<Pass> {
         vec![
-            ("Module Resolution", module_pass),
+            ("Module Resolution", module_graph_pass),
             ("Name Resolution", resolve_names_pass),
+            ("Import Resolution", module_import_symbol_pass),
         ]
     }
 

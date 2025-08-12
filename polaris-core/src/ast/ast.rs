@@ -136,6 +136,7 @@ impl fmt::Display for MemoryMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprNode {
+    Empty,
     String(String),
     Ident {
         namespaces: Vec<String>,
@@ -149,6 +150,9 @@ pub enum ExprNode {
     IntLit(i64),
     FloatLit(f64),
     CharLit(String),
+    TupleLit {
+        elements: Vec<Node>,
+    },
     BinaryOp {
         op: BinaryOp,
         lhs: Box<Node>,
@@ -221,6 +225,8 @@ pub enum UnaryOp {
     Await,
     Block,
     FusedAssign,
+    Spread,
+    Spawn,
 }
 
 impl fmt::Display for UnaryOp {
@@ -234,6 +240,8 @@ impl fmt::Display for UnaryOp {
             UnaryOp::Await => write!(f, "await "),
             UnaryOp::Block => write!(f, "block "),
             UnaryOp::FusedAssign => write!(f, "="),
+            UnaryOp::Spread => write!(f, "..."),
+            UnaryOp::Spawn => write!(f, "spawn "),
         }
     }
 }
@@ -647,6 +655,7 @@ impl fmt::Display for Node {
 impl fmt::Display for ExprNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ExprNode::Empty => write!(f, "()"),
             ExprNode::String(s) => write!(f, "\"{}\"", s),
             ExprNode::Index { base, index } => {
                 write!(f, "{}[{}]", base, index)
@@ -656,6 +665,17 @@ impl fmt::Display for ExprNode {
             }
             ExprNode::FieldAccess { base, field } => {
                 write!(f, "{}.{}", base, field)
+            }
+            ExprNode::TupleLit { elements } => {
+                write!(
+                    f,
+                    "({})",
+                    elements
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
             ExprNode::ActorLit {
                 actor_ident,

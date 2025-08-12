@@ -71,6 +71,7 @@ pub enum TokenVariant {
     Async,
     Await,
     Block,
+    Spawn,
     Actor,
     Export,
 
@@ -213,6 +214,7 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::Async => write!(f, "async"),
             TokenVariant::Await => write!(f, "await"),
             TokenVariant::Block => write!(f, "block"),
+            TokenVariant::Spawn => write!(f, "spawn"),
             TokenVariant::Actor => write!(f, "actor"),
             TokenVariant::Export => write!(f, "export"),
             TokenVariant::Comment(s) => match s {

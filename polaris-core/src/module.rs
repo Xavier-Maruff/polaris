@@ -34,11 +34,21 @@ pub struct Module {
     pub exports: Vec<Symbol>,
 }
 
-pub fn module_pass(ctx: &mut CompileContext) -> Result<(), ()> {
+pub fn module_graph_pass(ctx: &mut CompileContext) -> Result<(), ()> {
     let mut module_ctx = ModuleContext::new(ctx.logger.clone());
-    let ret = module_ctx.run_module_pass(ctx);
+    let ret = module_ctx.run_module_graph_pass(ctx);
 
     ctx.modules = module_ctx.table.clone();
+    ctx.errors.extend(module_ctx.errors);
+    ctx.warnings.extend(module_ctx.warnings);
+
+    ret
+}
+
+pub fn module_import_symbol_pass(ctx: &mut CompileContext) -> Result<(), ()> {
+    let mut module_ctx = ModuleContext::new(ctx.logger.clone());
+    let ret = module_ctx.run_module_import_symbol_pass(ctx);
+
     ctx.errors.extend(module_ctx.errors);
     ctx.warnings.extend(module_ctx.warnings);
 
@@ -103,7 +113,11 @@ impl ModuleContext {
         }
     }
 
-    fn run_module_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {
+    fn run_module_import_symbol_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {
+        Ok(())
+    }
+
+    fn run_module_graph_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {
         //a million clonings here, but i'm not too stressed
         // its easier than dealing with the goddamn bc
         // and only runs once
@@ -153,30 +167,6 @@ impl ModuleContext {
         //    .info(&format!("{:#?}", self.table.import_graph));
 
         Ok(())
-    }
-
-    fn validate_directive(&mut self, span: CodeSpan, ident: &Node) -> Result<String, ()> {
-        let directive;
-        if let Some(directive_) = ident.get_qualified_ident_str() {
-            directive = directive_;
-        } else {
-            self.errors.push(Diagnostic {
-                primary: DiagnosticMsg {
-                    message: "Invalid directive identifier".to_string(),
-                    file: self.current_file.clone(),
-                    span,
-                    err_type: DiagnosticMsgType::IllegalName,
-                },
-                notes: vec![],
-                hints: vec![
-                    "Directive identifiers must be a valid identifier".to_string(),
-                    "A valid directive could look like `@module`".to_string(),
-                ],
-            });
-            return Err(());
-        }
-
-        Ok(directive)
     }
 
     fn register_module_visitor(&mut self, ast: &mut Node) -> Result<(), ()> {

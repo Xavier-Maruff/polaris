@@ -10,6 +10,12 @@ struct MyStruct::<T, X> {
     field2: T,
 }
 
+enum Option::<T> {
+    Some(T),
+    None,
+}
+
+
 type string_mystruct = MyStruct::<Inner::<string>, int32>;
 
 export let core: int32 = 2;
@@ -21,7 +27,26 @@ interface Addable::<T> {
 
 export func add::<X, T(Addable)>(a: T, b: int32): int32 {
     let check: T = test;
-    return a + b;
+
+    let closure = func[ref check](a: T, b: int32): int32 {
+        return check + b;
+    };
+
+    match check.val {
+        Some(ref inner) => {
+            // Do something with inner
+            inner = 4;
+        },
+        None => {
+            // Handle the case where check.val is None
+        },
+        [1, 2, ...b] => {
+            yield b;
+        },
+    };
+
+    return closure(a, b);
+
 }
 
 

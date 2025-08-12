@@ -1084,11 +1084,13 @@ impl<'a> ParseContext<'a> {
     ) -> Result<Option<UnaryOp>, ()> {
         match self.curr_tok.variant {
             TokenVariant::BitNot
+            | TokenVariant::Ellipsis
             | TokenVariant::Minus
             | TokenVariant::Not
             | TokenVariant::Star
             | TokenVariant::Assign
             | TokenVariant::Await
+            | TokenVariant::Spawn
             | TokenVariant::Block => {
                 let op = match self.curr_tok.variant {
                     TokenVariant::Minus => UnaryOp::Minus,
@@ -1098,6 +1100,8 @@ impl<'a> ParseContext<'a> {
                     TokenVariant::Await => UnaryOp::Await,
                     TokenVariant::Block => UnaryOp::Block,
                     TokenVariant::Assign => UnaryOp::FusedAssign,
+                    TokenVariant::Spawn => UnaryOp::Spawn,
+                    TokenVariant::Ellipsis => UnaryOp::Spread,
 
                     _ => unreachable!(),
                 };
@@ -1419,11 +1423,30 @@ impl<'a> ParseContext<'a> {
         let mut advance = true;
         let node = match &self.curr_tok.variant {
             TokenVariant::LParen => {
+                let mut span = self.curr_tok.span.clone();
                 advance = false;
+                if matches!(self.next_tok.variant, TokenVariant::RParen) {
+                    wrap_err!(ast, self.advance(lexer));
+                    wrap_err!(ast, self.advance(lexer));
+                    span.end = self.prev_tok.span.end;
+                    return Ok(Node::new_with_span(Variant::Expr(ExprNode::Empty), span));
+                }
+
+                let mut exprs = vec![];
+                while !matches!(self.curr_tok.variant, TokenVariant::RParen) {
+                    wrap_err!(ast, self.advance(lexer));
+                    exprs.push(self.parse_expr(ast, lexer, false)?);
+                }
                 wrap_err!(ast, self.advance(lexer));
-                let expr = self.parse_expr(ast, lexer, false)?;
-                wrap_err!(ast, self.expect(lexer, TokenVariant::RParen));
-                expr
+
+                span.end = self.prev_tok.span.end;
+                match exprs.len() {
+                    1 => return Ok(exprs.pop().unwrap()),
+                    _ => Node::new_with_span(
+                        Variant::Expr(ExprNode::TupleLit { elements: exprs }),
+                        span,
+                    ),
+                }
             }
             TokenVariant::LBracket => {
                 let mut span = self.curr_tok.span.clone();
