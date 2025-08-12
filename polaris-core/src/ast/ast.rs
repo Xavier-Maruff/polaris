@@ -37,6 +37,7 @@ pub enum Variant {
         return_type: Option<Box<Node>>,
         body: Option<Box<Node>>,
         is_async: bool,
+        is_extern: bool,
     },
     VarDecl {
         name: String,
@@ -584,7 +585,12 @@ impl fmt::Display for Node {
                 body,
                 capture_list,
                 is_async,
+                is_extern,
             } => {
+                if *is_extern {
+                    write!(f, "extern ")?;
+                }
+
                 if *is_async {
                     write!(f, "async ")?;
                 }

@@ -409,7 +409,9 @@ impl<'a> ParseContext<'a> {
         let node = match self.curr_tok.variant {
             TokenVariant::If => self.parse_if_stmt(ast, lexer),
             TokenVariant::For => self.parse_for_stmt(ast, lexer),
-            TokenVariant::Func | TokenVariant::Async => self.parse_func_decl(ast, lexer, false),
+            TokenVariant::Func | TokenVariant::Extern | TokenVariant::Async => {
+                self.parse_func_decl(ast, lexer, false)
+            }
             TokenVariant::Return => self.parse_return_stmt(ast, lexer),
             TokenVariant::Yield => self.parse_yield_stmt(ast, lexer),
             TokenVariant::Let => self.parse_var_decl(ast, lexer),
@@ -447,6 +449,15 @@ impl<'a> ParseContext<'a> {
         body_required: bool,
     ) -> Result<Node, ()> {
         let mut span = self.curr_tok.span.clone();
+
+        let is_extern = match self.curr_tok.variant {
+            TokenVariant::Extern => {
+                wrap_err!(ast, self.advance(lexer));
+                true
+            }
+            _ => false,
+        };
+
         let is_async = match self.curr_tok.variant {
             TokenVariant::Async => {
                 wrap_err!(ast, self.advance(lexer));
@@ -549,6 +560,7 @@ impl<'a> ParseContext<'a> {
                 body,
                 capture_list,
                 is_async,
+                is_extern,
             },
             span,
         ))

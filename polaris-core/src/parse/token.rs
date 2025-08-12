@@ -74,6 +74,7 @@ pub enum TokenVariant {
     Spawn,
     Actor,
     Export,
+    Extern,
 
     //comment (token, multiline)
     Comment((String, bool)),
@@ -217,6 +218,7 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::Spawn => write!(f, "spawn"),
             TokenVariant::Actor => write!(f, "actor"),
             TokenVariant::Export => write!(f, "export"),
+            TokenVariant::Extern => write!(f, "extern"),
             TokenVariant::Comment(s) => match s {
                 (text, true) => write!(f, "/*{}*/", text),
                 (text, false) => write!(f, "//{}", text),
