@@ -7,7 +7,7 @@ use crate::{
     log,
     module::{ModuleTable, module_graph_pass, module_import_symbol_pass},
     parse::parse,
-    symbol::{Symbol, SymbolId, resolve_names_pass},
+    symbol::{Symbol, SymbolId, SymbolTable, resolve_names_pass},
 };
 
 pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
@@ -17,7 +17,7 @@ pub struct CompileContext {
     pub logger: log::Logger,
     pub asts: HashMap<String, Node>,
     pub modules: ModuleTable,
-    pub symbol_table: HashMap<SymbolId, Symbol>,
+    pub symbol_table: SymbolTable,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
 }
@@ -28,7 +28,7 @@ impl CompileContext {
             logger,
             asts: HashMap::new(),
             modules: ModuleTable::new(),
-            symbol_table: HashMap::new(),
+            symbol_table: SymbolTable::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
         }

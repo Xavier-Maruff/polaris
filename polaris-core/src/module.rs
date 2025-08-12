@@ -93,6 +93,15 @@ impl ModuleTable {
         let id = self.module_ids.get(name)?;
         self.get_module(*id)
     }
+
+    pub fn get_module_borrow(&self, id: ModuleId) -> Option<&Module> {
+        self.modules.get(&id)
+    }
+
+    pub fn get_module_by_name_borrow(&self, name: &str) -> Option<&Module> {
+        let id = self.module_ids.get(name)?;
+        self.get_module_borrow(*id)
+    }
 }
 
 struct ModuleContext {

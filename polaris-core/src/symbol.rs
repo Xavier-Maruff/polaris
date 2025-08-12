@@ -15,6 +15,12 @@ pub type SymbolId = usize;
 pub const INVALID_SYMBOL_ID: SymbolId = usize::MAX;
 
 #[derive(Debug, Clone)]
+pub struct SymbolTable {
+    pub symbols: HashMap<SymbolId, Symbol>,
+    pub symbol_links: HashMap<SymbolId, (ModuleId, String)>, //symbol_id -> (module_id, name)
+}
+
+#[derive(Debug, Clone)]
 pub struct Symbol {
     pub id: SymbolId,
     pub module_id: ModuleId,
@@ -40,6 +46,23 @@ pub struct VarSymbol {
 pub struct TypeSymbol {
     pub generics: Vec<(String, Option<Vec<SymbolId>>)>, //type variables and required interfaces
     pub variant: TypeVariant,
+}
+
+impl SymbolTable {
+    pub fn new() -> Self {
+        Self {
+            symbols: HashMap::new(),
+            symbol_links: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, id: SymbolId) -> Option<&Symbol> {
+        self.symbols.get(&id)
+    }
+
+    pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
+        self.symbols.get_mut(&id)
+    }
 }
 
 impl Symbol {
@@ -137,7 +160,7 @@ pub enum PrimitiveType {
 }
 
 pub fn resolve_names_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let mut name_resolver = NameResolverContext::new(ctx.modules.clone());
+    let mut name_resolver = NameResolverContext::new(&ctx.modules);
 
     for (file, ast) in ctx.asts.iter_mut() {
         name_resolver.current_module_id = ctx.modules.module_file_ids[file];
@@ -173,6 +196,8 @@ pub fn resolve_names_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 
     ctx.errors.extend(name_resolver.errors);
     ctx.warnings.extend(name_resolver.warnings);
+
+    ctx.symbol_table = name_resolver.table;
     Ok(())
 }
 
@@ -181,7 +206,7 @@ pub struct Scope {
     pub entries: HashMap<String, SymbolId>,
 }
 
-pub struct NameResolverContext {
+pub struct NameResolverContext<'a> {
     pub id_counter: SymbolId,
     pub scope_id_counter: SymbolId,
     pub current_file: String,
@@ -190,15 +215,14 @@ pub struct NameResolverContext {
     pub scopes: Vec<Scope>,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
-    pub symbol_table: HashMap<SymbolId, Symbol>,
-    pub symbol_links: HashMap<SymbolId, (ModuleId, String)>,
+    pub table: SymbolTable,
     pub module_top_level_scope_ids: HashMap<ModuleId, SymbolId>,
-    pub module_table: ModuleTable,
+    pub module_table: &'a ModuleTable,
     pub type_context_override: bool,
 }
 
-impl NameResolverContext {
-    pub fn new(module_table: ModuleTable) -> Self {
+impl<'a> NameResolverContext<'a> {
+    pub fn new(module_table: &'a ModuleTable) -> Self {
         let mut ret = Self {
             scopes: vec![Scope {
                 id: 0,
@@ -210,9 +234,8 @@ impl NameResolverContext {
             id_counter: 0,
             scope_id_counter: 1,
             current_module_id: ModuleId::default(),
-            symbol_table: HashMap::new(),
+            table: SymbolTable::new(),
             module_top_level_scope_ids: HashMap::new(),
-            symbol_links: HashMap::new(),
             is_top_level: true,
             type_context_override: false,
             module_table,
@@ -262,7 +285,7 @@ impl NameResolverContext {
         let current_scope = self.scopes.last_mut().unwrap();
         current_scope.entries.insert(name.clone(), id);
 
-        self.symbol_table.insert(
+        self.table.symbols.insert(
             id,
             Symbol::new_var(
                 id,
@@ -289,7 +312,7 @@ impl NameResolverContext {
         let id = self.id_counter;
         self.id_counter += 1;
 
-        self.symbol_table.insert(
+        self.table.symbols.insert(
             id,
             Symbol::new_type(
                 id,
@@ -311,7 +334,7 @@ impl NameResolverContext {
     }
 
     fn link_symbol_to_module(&mut self, symbol_id: SymbolId, module_id: ModuleId, name: String) {
-        self.symbol_links.insert(symbol_id, (module_id, name));
+        self.table.symbol_links.insert(symbol_id, (module_id, name));
     }
 
     fn lookup(&self, name: &str) -> Option<SymbolId> {
@@ -346,7 +369,7 @@ impl NameResolverContext {
     }
 
     fn is_type(&self, symbol_id: &SymbolId) -> bool {
-        if let Some(symbol) = self.symbol_table.get(symbol_id) {
+        if let Some(symbol) = self.table.symbols.get(symbol_id) {
             match &symbol.variant {
                 SymbolVariant::Type(_) => true,
                 SymbolVariant::Var(_) => false,
@@ -393,7 +416,7 @@ impl NameResolverContext {
                 .fuzzy_lookup(name, is_type)
                 .iter()
                 .map(|id| {
-                    let symbol = self.symbol_table.get(id);
+                    let symbol = self.table.symbols.get(id);
                     if symbol.is_none() {
                         return None;
                     }
@@ -415,7 +438,7 @@ impl NameResolverContext {
                         //todo: this could throw, should handle better
                         file: self
                             .module_table
-                            .get_module(symbol.module_id)
+                            .get_module_borrow(symbol.module_id)
                             .unwrap()
                             .file
                             .clone(),
@@ -681,7 +704,7 @@ impl NameResolverContext {
                             Some(ident.span.clone()),
                         );
                     } else {
-                        let symbol = &self.symbol_table[&symbol_id.unwrap()];
+                        let symbol = &self.table.symbols[&symbol_id.unwrap()];
                         self.errors.push(Diagnostic {
                             primary: DiagnosticMsg {
                                 message: format!(
@@ -831,7 +854,7 @@ impl NameResolverContext {
                         //module must exist at this point
                         let module = self
                             .module_table
-                            .get_module_by_name(mod_name.as_str())
+                            .get_module_by_name_borrow(mod_name.as_str())
                             .unwrap()
                             .clone();
 
@@ -866,7 +889,7 @@ impl NameResolverContext {
         if let Some(name) = &name {
             if let Some(existing_id) = self.lookup_current_scope(name) {
                 let existing_is_type = self.is_type(&existing_id);
-                let symbol = self.symbol_table.get(&existing_id).unwrap();
+                let symbol = self.table.symbols.get(&existing_id).unwrap();
                 if existing_is_type != is_type {
                     self.errors.push(Diagnostic {
                         primary: DiagnosticMsg {
