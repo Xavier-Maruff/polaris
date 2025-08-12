@@ -162,8 +162,9 @@ impl DepResolutionPassContext {
                             });
                         }
 
+                        let export_id = export.unwrap().id;
                         for symbol_id in ref_ids {
-                            self.rewrite_map.insert(*symbol_id, export.unwrap().id);
+                            self.rewrite_map.insert(*symbol_id, export_id);
                         }
                     }
                 }
