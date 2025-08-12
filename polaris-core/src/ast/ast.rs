@@ -139,7 +139,6 @@ pub enum ExprNode {
     Empty,
     String(String),
     Ident {
-        namespaces: Vec<String>,
         name: String,
         type_args: Vec<Node>,
         memory_mode: MemoryMode,
@@ -279,11 +278,18 @@ impl ExprNode {
             _ => None,
         }
     }
-    pub fn get_qualified_ident_str(&self) -> Option<String> {
+    pub fn get_ident(&self) -> Option<String> {
         match self {
             ExprNode::Ident { name, .. } => Some(name.to_string()),
-            ExprNode::Call { callee, .. } => callee.get_qualified_ident_str(),
+            ExprNode::Call { callee, .. } => callee.get_ident(),
             _ => None,
+        }
+    }
+
+    pub fn is_type_ident(&self) -> bool {
+        match self {
+            ExprNode::Ident { is_type, .. } => *is_type,
+            _ => false,
         }
     }
 
@@ -386,60 +392,79 @@ impl Node {
         }
     }
 
-    pub fn get_qualified_ident_str(&self) -> Option<String> {
+    pub fn get_string(&self) -> Option<String> {
+        match &self.variant {
+            Variant::Expr(ExprNode::String(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn get_ident(&self) -> Option<String> {
         match &self.variant {
             Variant::FuncDecl {
                 ident: Some(ident), ..
             } => {
                 if let Variant::Expr(node) = &ident.variant {
-                    node.get_qualified_ident_str()
+                    node.get_ident()
                 } else {
                     None
                 }
             }
             Variant::ActorDecl { ident, .. } => {
                 if let Variant::Expr(node) = &ident.variant {
-                    node.get_qualified_ident_str()
+                    node.get_ident()
                 } else {
                     None
                 }
             }
             Variant::StructDecl { ident, .. } => {
                 if let Variant::Expr(node) = &ident.variant {
-                    node.get_qualified_ident_str()
+                    node.get_ident()
                 } else {
                     None
                 }
             }
             Variant::TypeDecl { ident, .. } => {
                 if let Variant::Expr(node) = &ident.variant {
-                    node.get_qualified_ident_str()
+                    node.get_ident()
                 } else {
                     None
                 }
             }
             Variant::EnumDecl { ident, .. } => {
                 if let Variant::Expr(node) = &ident.variant {
-                    node.get_qualified_ident_str()
+                    node.get_ident()
                 } else {
                     None
                 }
             }
             Variant::InterfaceDecl { ident, .. } => {
                 if let Variant::Expr(node) = &ident.variant {
-                    node.get_qualified_ident_str()
+                    node.get_ident()
                 } else {
                     None
                 }
             }
             Variant::VarDecl { name, .. } => Some(name.clone()),
-            Variant::Expr(node) => node.get_qualified_ident_str(),
+            Variant::Expr(node) => node.get_ident(),
             _ => None,
         }
     }
 
     pub fn is_expr(&self) -> bool {
         matches!(self.variant, Variant::Expr(_))
+    }
+
+    pub fn is_type_ident(&self) -> bool {
+        match &self.variant {
+            Variant::Expr(node) => node.is_type_ident(),
+            Variant::StructDecl { .. }
+            | Variant::ActorDecl { .. }
+            | Variant::TypeDecl { .. }
+            | Variant::EnumDecl { .. }
+            | Variant::InterfaceDecl { .. } => true,
+            _ => false,
+        }
     }
 }
 
@@ -695,7 +720,6 @@ impl fmt::Display for ExprNode {
             }
 
             ExprNode::Ident {
-                namespaces,
                 name,
                 type_args,
                 memory_mode,
@@ -718,9 +742,7 @@ impl fmt::Display for ExprNode {
                 if memory_mode != &MemoryMode::Auto {
                     write!(f, "{} ", memory_mode)?;
                 }
-                for ns in namespaces {
-                    write!(f, "{}::", ns)?;
-                }
+
                 write!(f, "{}", name)?;
                 if !type_args.is_empty() {
                     let type_arg_str = type_args

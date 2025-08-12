@@ -4,9 +4,9 @@ pub mod token;
 use crate::ast::ast::*;
 use crate::compile::CompileContext;
 use crate::diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType};
-use crate::log;
 use crate::parse::lexer::Lexer;
 use crate::parse::token::{Token, TokenVariant};
+use crate::{log, visit_ast_children};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CodeSpan {
@@ -862,7 +862,6 @@ impl<'a> ParseContext<'a> {
                 fields.push((
                     field_name.clone(),
                     Node::new(Variant::Expr(ExprNode::Ident {
-                        namespaces: vec![],
                         name: field_name,
                         type_args: vec![],
                         memory_mode: MemoryMode::Auto,
@@ -1393,23 +1392,21 @@ impl<'a> ParseContext<'a> {
             _ => {}
         }
 
-        let namespaces = idents
-            .iter()
-            .take(idents.len() - 1)
-            .map(|n| n.to_string())
-            .collect::<Vec<String>>();
-        let name = idents.last().unwrap().clone();
+        for arg in type_args.iter_mut() {
+            self.enforce_type_context(arg)?;
+        }
 
         span.end = self.prev_tok.span.end;
+        let is_directive = idents.last().map_or(false, |name| name.starts_with('@'));
+
         Ok(Node {
             variant: Variant::Expr(ExprNode::Ident {
-                namespaces,
-                name: name.clone(),
+                name: idents.join("::"),
                 type_args,
                 memory_mode,
                 id: None,
                 is_type,
-                is_directive: name.chars().next() == Some('@'),
+                is_directive,
             }),
             warnings: None,
             errors: None,
@@ -1417,6 +1414,16 @@ impl<'a> ParseContext<'a> {
             scope_id: None,
             export: false,
         })
+    }
+
+    fn enforce_type_context(&mut self, ast: &mut Node) -> Result<(), ()> {
+        if let Variant::Expr(ExprNode::Ident { is_type, .. }) = &mut ast.variant {
+            *is_type = true;
+            return Ok(());
+        }
+
+        visit_ast_children!(ast.variant, self, enforce_type_context, {});
+        Ok(())
     }
 
     fn parse_primary_expr(&mut self, ast: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {

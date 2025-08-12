@@ -11,7 +11,7 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     log::Logger,
     parse::CodeSpan,
-    symbol::{INVALID_SYMBOL_ID, Symbol},
+    symbol::{INVALID_SYMBOL_ID, PrimitiveType, Symbol, TypeVariant},
     visit_ast_children,
 };
 
@@ -28,6 +28,7 @@ pub struct ModuleTable {
 
 #[derive(Debug, Clone)]
 pub struct Module {
+    pub id: ModuleId,
     pub name: String,
     pub file: String,
     pub dependencies: Vec<ModuleId>,
@@ -56,8 +57,9 @@ pub fn module_import_symbol_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 }
 
 impl Module {
-    pub fn new(name: String, file: String) -> Self {
+    pub fn new(id: ModuleId, name: String, file: String) -> Self {
         Module {
+            id,
             name,
             file,
             dependencies: Vec::new(),
@@ -79,12 +81,17 @@ impl ModuleTable {
     pub fn add_module(&mut self, name: String, file: String) -> ModuleId {
         let id = self.modules.len();
         self.module_ids.insert(name.clone(), id);
-        self.modules.insert(id, Module::new(name, file));
+        self.modules.insert(id, Module::new(id, name, file));
         id
     }
 
     pub fn get_module(&mut self, id: ModuleId) -> Option<&mut Module> {
         self.modules.get_mut(&id)
+    }
+
+    pub fn get_module_by_name(&mut self, name: &str) -> Option<&mut Module> {
+        let id = self.module_ids.get(name)?;
+        self.get_module(*id)
     }
 }
 
@@ -250,12 +257,24 @@ impl ModuleContext {
             return Err(());
         }
 
-        if let Some(ident) = ast.get_qualified_ident_str() {
-            self.table
+        if let Some(ident) = ast.get_ident() {
+            let exports = &mut self
+                .table
                 .get_module(self.current_module_id)
                 .unwrap()
-                .exports
-                .push(Symbol::new_var(
+                .exports;
+            if ast.is_type_ident() {
+                exports.push(Symbol::new_type(
+                    INVALID_SYMBOL_ID,
+                    self.current_module_id,
+                    INVALID_SYMBOL_ID,
+                    Some(ident),
+                    vec![],
+                    TypeVariant::Primitive(PrimitiveType::Any),
+                    Some(ast.span),
+                ));
+            } else {
+                exports.push(Symbol::new_var(
                     INVALID_SYMBOL_ID,
                     self.current_module_id,
                     INVALID_SYMBOL_ID,
@@ -264,6 +283,7 @@ impl ModuleContext {
                     None,
                     false,
                 ));
+            }
         } else {
             self.errors.push(Diagnostic {
                 primary: DiagnosticMsg {

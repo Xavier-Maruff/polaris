@@ -1,4 +1,7 @@
-use crate::symbol::{NameResolverContext, PrimitiveType, TypeVariant};
+use crate::{
+    module::INVALID_MODULE_ID,
+    symbol::{NameResolverContext, PrimitiveType, TypeVariant},
+};
 
 pub fn declare_intrinsics(nr: &mut NameResolverContext) {
     declare_intrinsic_primitives(nr);
@@ -7,14 +10,20 @@ pub fn declare_intrinsics(nr: &mut NameResolverContext) {
 
 macro_rules! declare {
     ($nr:expr, $name:expr, $type_info:expr) => {{
-        let type_id = $nr.declare_type(None, vec![], $type_info, None);
-        $nr.declare($name.to_string(), None, Some(type_id), false);
+        let type_id = $nr.declare_type(INVALID_MODULE_ID, None, vec![], $type_info, None);
+        $nr.declare(
+            INVALID_MODULE_ID,
+            $name.to_string(),
+            None,
+            Some(type_id),
+            false,
+        );
     }};
 }
 
 macro_rules! declare_primitive {
     ($nr:expr, $name:expr, $primitive:expr) => {{
-        $nr.declare_type(
+        $nr.declare_type(INVALID_MODULE_ID,
             Some($name.to_string()),
             vec![],
             TypeVariant::Primitive($primitive),
@@ -24,6 +33,7 @@ macro_rules! declare_primitive {
 
     ($nr:expr, $name:expr, $primitive:expr, [$($generics:expr),*]) => {{
         $nr.declare_type(
+            INVALID_MODULE_ID,
             Some($name.to_string()),
             vec![$($generics),*],
             TypeVariant::Primitive($primitive),

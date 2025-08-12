@@ -190,8 +190,8 @@ pub struct NameResolverContext {
     pub scopes: Vec<Scope>,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
-    pub qualified_symbols: HashMap<String, SymbolId>,
-    pub global_symbol_table: HashMap<SymbolId, Symbol>,
+    pub symbol_table: HashMap<SymbolId, Symbol>,
+    pub symbol_links: HashMap<SymbolId, (ModuleId, String)>,
     pub module_top_level_scope_ids: HashMap<ModuleId, SymbolId>,
     pub module_table: ModuleTable,
     pub type_context_override: bool,
@@ -209,10 +209,10 @@ impl NameResolverContext {
             current_file: String::new(),
             id_counter: 0,
             scope_id_counter: 1,
-            qualified_symbols: HashMap::new(),
             current_module_id: ModuleId::default(),
-            global_symbol_table: HashMap::new(),
+            symbol_table: HashMap::new(),
             module_top_level_scope_ids: HashMap::new(),
+            symbol_links: HashMap::new(),
             is_top_level: true,
             type_context_override: false,
             module_table,
@@ -250,27 +250,23 @@ impl NameResolverContext {
 
     pub fn declare(
         &mut self,
+        module_id: ModuleId,
         name: String,
         span: Option<CodeSpan>,
         type_id: Option<SymbolId>,
         mutable: bool,
-    ) -> Option<SymbolId> {
+    ) -> SymbolId {
         let id = self.id_counter;
         self.id_counter += 1;
 
         let current_scope = self.scopes.last_mut().unwrap();
         current_scope.entries.insert(name.clone(), id);
 
-        //should probably create a composite hash key type for qualified names
-        //a problem for future me
-        let qualified_name = format!("{}::{}::{}", self.current_module_id, current_scope.id, name);
-        self.qualified_symbols.insert(qualified_name, id);
-
-        self.global_symbol_table.insert(
+        self.symbol_table.insert(
             id,
             Symbol::new_var(
                 id,
-                self.current_module_id,
+                module_id,
                 current_scope.id,
                 name,
                 span,
@@ -278,11 +274,13 @@ impl NameResolverContext {
                 mutable,
             ),
         );
-        Some(id)
+
+        id
     }
 
     pub fn declare_type(
         &mut self,
+        module_id: ModuleId,
         name: Option<String>,
         generics: Vec<(String, Option<Vec<SymbolId>>)>,
         variant: TypeVariant,
@@ -291,11 +289,11 @@ impl NameResolverContext {
         let id = self.id_counter;
         self.id_counter += 1;
 
-        self.global_symbol_table.insert(
+        self.symbol_table.insert(
             id,
             Symbol::new_type(
                 id,
-                self.current_module_id,
+                module_id,
                 self.scopes.last().unwrap().id,
                 name.clone(),
                 generics,
@@ -307,13 +305,13 @@ impl NameResolverContext {
         if let Some(name) = name {
             let current_scope = self.scopes.last_mut().unwrap();
             current_scope.entries.insert(name.clone(), id);
-
-            let qualified_name =
-                format!("{}::{}::{}", self.current_module_id, current_scope.id, name);
-            self.qualified_symbols.insert(qualified_name, id);
         }
 
         id
+    }
+
+    fn link_symbol_to_module(&mut self, symbol_id: SymbolId, module_id: ModuleId, name: String) {
+        self.symbol_links.insert(symbol_id, (module_id, name));
     }
 
     fn lookup(&self, name: &str) -> Option<SymbolId> {
@@ -348,7 +346,7 @@ impl NameResolverContext {
     }
 
     fn is_type(&self, symbol_id: &SymbolId) -> bool {
-        if let Some(symbol) = self.global_symbol_table.get(symbol_id) {
+        if let Some(symbol) = self.symbol_table.get(symbol_id) {
             match &symbol.variant {
                 SymbolVariant::Type(_) => true,
                 SymbolVariant::Var(_) => false,
@@ -395,7 +393,7 @@ impl NameResolverContext {
                 .fuzzy_lookup(name, is_type)
                 .iter()
                 .map(|id| {
-                    let symbol = self.global_symbol_table.get(id);
+                    let symbol = self.symbol_table.get(id);
                     if symbol.is_none() {
                         return None;
                     }
@@ -452,7 +450,6 @@ impl NameResolverContext {
         if !self.is_top_level {
             match ast.variant {
                 Variant::Expr(ExprNode::Ident {
-                    ref mut namespaces,
                     ref mut name,
                     ref mut is_type,
                     ref mut type_args,
@@ -460,14 +457,10 @@ impl NameResolverContext {
                     ref mut id,
                     ref mut is_directive,
                 }) => {
-                    if namespaces.is_empty() {
-                        if let Ok(symbol_id) = self.check_reference(
-                            name,
-                            ast.span,
-                            *is_type || self.type_context_override,
-                        ) {
-                            *id = Some(symbol_id);
-                        }
+                    if let Ok(symbol_id) =
+                        self.check_reference(name, ast.span, *is_type || self.type_context_override)
+                    {
+                        *id = Some(symbol_id);
                     }
                 }
 
@@ -627,7 +620,6 @@ impl NameResolverContext {
                 self.declare_pattern(inner_operand)?;
             }
             Variant::Expr(ExprNode::Ident {
-                namespaces,
                 name,
                 type_args,
                 memory_mode,
@@ -639,7 +631,7 @@ impl NameResolverContext {
                     && let None = self.lookup(name)
                 {
                     //this ident cannot have a namespace if is pattern decl
-                    if !namespaces.is_empty() || !type_args.is_empty() || *is_type {
+                    if Self::is_qualified(name) || !type_args.is_empty() || *is_type {
                         self.errors.push(Diagnostic {
                             primary: DiagnosticMsg {
                                 message: format!(
@@ -657,7 +649,13 @@ impl NameResolverContext {
                     }
 
                     //is a pattern decl, not a matching ident, so declare for inner scope
-                    self.declare(name.clone(), Some(pattern.span.clone()), None, false);
+                    self.declare(
+                        self.current_module_id,
+                        name.clone(),
+                        Some(pattern.span.clone()),
+                        None,
+                        false,
+                    );
                 }
             }
             _ => {}
@@ -665,20 +663,25 @@ impl NameResolverContext {
         Ok(())
     }
 
+    fn is_qualified(name: &str) -> bool {
+        name.contains("::")
+    }
+
     fn declare_type_args(&mut self, ident: &Box<Node>) -> Result<(), ()> {
         if let Some(type_args) = &ident.get_type_args() {
             for arg in type_args.iter() {
-                if let Some(arg_ident) = arg.get_qualified_ident_str() {
+                if let Some(arg_ident) = arg.get_ident() {
                     let symbol_id = self.lookup_current_scope(arg_ident.as_str());
                     if symbol_id.is_none() {
                         self.declare_type(
+                            self.current_module_id,
                             Some(arg_ident.clone()),
                             Vec::new(), //no second order generics for now
                             TypeVariant::Primitive(PrimitiveType::Any),
                             Some(ident.span.clone()),
                         );
                     } else {
-                        let symbol = &self.global_symbol_table[&symbol_id.unwrap()];
+                        let symbol = &self.symbol_table[&symbol_id.unwrap()];
                         self.errors.push(Diagnostic {
                             primary: DiagnosticMsg {
                                 message: format!(
@@ -777,6 +780,7 @@ impl NameResolverContext {
             | Variant::FuncDecl { .. }
             | Variant::ImplDecl { .. }
             | Variant::TypeDecl { .. }
+            | Variant::VarDecl {..} //pushes scope so that labeled imports are scoped to the label
             | Variant::Block { .. }
             | Variant::If { .. }
             | Variant::For { .. }
@@ -795,19 +799,19 @@ impl NameResolverContext {
             | Variant::InterfaceDecl { ident, .. }
             | Variant::EnumDecl { ident, .. }
             | Variant::StructDecl { ident, .. } => {
-                let name = ident.get_qualified_ident_str();
+                let name = ident.get_ident();
                 (Some(ident), name)
             }
             Variant::TypeDecl { ident, .. } => {
                 is_type = true;
-                let name = ident.get_qualified_ident_str();
+                let name = ident.get_ident();
                 (Some(ident), name)
             }
             Variant::FuncDecl { ident, .. } => {
                 is_type = false;
                 match ident {
                     Some(ident) => {
-                        let name = ident.get_qualified_ident_str();
+                        let name = ident.get_ident();
                         (Some(ident), name)
                     }
                     None => (None, None),
@@ -820,13 +824,49 @@ impl NameResolverContext {
                 mutable = *modifiable;
                 (None, Some(name.to_string()))
             }
+            Variant::Expr(ExprNode::Call { callee, args }) => {
+                if Some("@import".to_string()) == callee.get_directive() {
+                    //args.len already asserted == 1
+                    if let Some(mod_name) = args.first().unwrap().get_string() {
+                        //module must exist at this point
+                        let module = self
+                            .module_table
+                            .get_module_by_name(mod_name.as_str())
+                            .unwrap()
+                            .clone();
+
+                        for export in module.exports {
+                            let local_id = match export.variant {
+                                SymbolVariant::Var(var) => self.declare(
+                                    module.id,
+                                    export.name.clone(),
+                                    export.span,
+                                    var.type_id,
+                                    var.mutable,
+                                ),
+                                SymbolVariant::Type(t) => self.declare_type(
+                                    module.id,
+                                    Some(export.name.clone()),
+                                    t.generics,
+                                    t.variant,
+                                    export.span,
+                                ),
+                            };
+
+                            self.link_symbol_to_module(local_id, module.id, export.name);
+                        }
+                    }
+                }
+
+                (None, None)
+            }
             _ => (None, None),
         };
 
         if let Some(name) = &name {
             if let Some(existing_id) = self.lookup_current_scope(name) {
                 let existing_is_type = self.is_type(&existing_id);
-                let symbol = self.global_symbol_table.get(&existing_id).unwrap();
+                let symbol = self.symbol_table.get(&existing_id).unwrap();
                 if existing_is_type != is_type {
                     self.errors.push(Diagnostic {
                         primary: DiagnosticMsg {
@@ -881,13 +921,20 @@ impl NameResolverContext {
             } else {
                 if is_type {
                     id = Some(self.declare_type(
+                        self.current_module_id,
                         Some(name.clone()),
                         Vec::new(),                                 //todo: generics
                         TypeVariant::Primitive(PrimitiveType::Any), //todo: default type variant
                         Some(ast.span.clone()),
                     ));
                 } else {
-                    id = self.declare(name.clone(), Some(ast.span), None, mutable);
+                    id = Some(self.declare(
+                        self.current_module_id,
+                        name.clone(),
+                        Some(ast.span),
+                        None,
+                        mutable,
+                    ));
                 }
             }
         }

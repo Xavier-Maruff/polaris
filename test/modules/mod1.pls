@@ -1,8 +1,7 @@
 @module("mod1");
 
-let mod2 = @import("mod2");
 
-export struct Add {
+export struct Add::<T> {
   a: int32,
-  b: int32,
+  b: T,
 }
