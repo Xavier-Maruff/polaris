@@ -1,6 +1,9 @@
 # 🔵 Polaris
 
-Polaris is a privacy-first statically-typed compiled language producing homomorphically encrypted code. This means that the value of every variable and every constant is encrypted for the entire life of the program, and never decrypted within the program. All computations are performed on the encrypted data thanks to homomorphic encryption schemes like CKKS, BGV, TFHE.
+> [!CAUTION]
+> Polaris is a work in progress, and is not yet even capable of codegen. Watch this space for updates!
+
+Polaris is a privacy-first statically-typed compiled language producing homomorphically encrypted code. This means that the value of every variable and every constant is encrypted for the entire life of the program, and never decrypted within the program. All computations are performed on the encrypted data thanks to homomorphic encryption schemes like CKKS, BGV, and TFHE.
 
 ## I/O in a homomorphic world
 
