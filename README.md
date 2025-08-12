@@ -3,11 +3,11 @@
 > [!CAUTION]
 > Polaris is a work in progress, and is not yet even capable of codegen. Watch this space for updates!
 
-Polaris is a privacy-first statically-typed compiled language producing homomorphically encrypted code. This means that the value of every variable and every constant is encrypted for the entire life of the program, and never decrypted within the program. All computations are performed on the encrypted data thanks to homomorphic encryption schemes like CKKS, BGV, and TFHE.
+Polaris is a high-security procedural compiled language for sensitive computation. All operations are performed homomorphically on encrypted data, meaning that a Polaris program can operate on sensitive data in untrusted environments without ever exposing plaintexts, even to the program itself - in fact, no Polaris program can ever deal with plaintext data.
 
 ## I/O in a homomorphic world
 
-The question arises, if everything everywhere all the time is encrypted, how can we interact with the outside world? Polaris' approach to this is the host harness. Function declarations marked with a special attribute `host` are required to be implemented in this harness, functions like reading from stdin, network requests, etc. Host functions all receive encrypted data as arguments, and are expected to respond with encrypted data. Where the cryptographic boundaries lie is up to the harness implementation - chuck in some over-the-network separation, a TEE enclave, whatever your requirements are.
+The question arises, if everything everywhere all the time is encrypted, how can we interact with the outside world? Polaris' approach to this is the host harness. Extern function declarations marked with a special attribute `@host` are required to be implemented in this harness, functions like reading from stdin, network requests, etc. Host functions all receive encrypted data as arguments, and are expected to respond with encrypted data. Where the cryptographic boundaries lie is up to the harness implementation - behind the scenes, your harness could be talking to a trusted enclave, a remote server, or even just decrypting the data and handling it in plaintext, as long as the Polaris program never sees plaintext data itself. We will provide some standard harness implementation for common use cases, as well as a guide on how to implement your own harness.
 
 ## Getting started
 
