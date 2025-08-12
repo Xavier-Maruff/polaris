@@ -11,12 +11,13 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     log::Logger,
     parse::CodeSpan,
-    symbol::{INVALID_SYMBOL_ID, PrimitiveType, Symbol, SymbolId, SymbolVariant, TypeVariant},
+    symbol::{INVALID_SYMBOL_ID, PrimitiveType, Symbol, SymbolId, TypeVariant},
     visit_ast_children,
 };
 
 pub type ModuleId = usize;
 pub const INVALID_MODULE_ID: ModuleId = usize::MAX;
+pub const EXTRINSINC_ID_COUNTER_INITIAL: SymbolId = 512;
 
 #[derive(Debug, Clone)]
 pub struct ModuleTable {
@@ -35,27 +36,17 @@ pub struct Module {
     pub name: String,
     pub file: String,
     pub dependencies: Vec<ModuleId>,
-    pub exports: Vec<Symbol>,
+    pub exports: HashMap<String, Symbol>,
 }
 
 pub fn module_graph_pass(ctx: &mut CompileContext) -> Result<(), ()> {
     let mut module_ctx = ModGraphPassContext::new(ctx.logger.clone());
     let ret = module_ctx.run_module_graph_pass(ctx);
 
-    ctx.modules = module_ctx.table.clone();
+    ctx.modules = module_ctx.table;
+    ctx.symbol_id_counter = module_ctx.id_counter;
     ctx.errors.extend(module_ctx.errors);
     ctx.warnings.extend(module_ctx.warnings);
-
-    ret
-}
-
-pub fn module_import_resolution_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let mut import_ctx = ImportResolutionPassContext::new(ctx.logger.clone());
-
-    let ret = import_ctx.run_import_resolution_pass(ctx);
-
-    ctx.errors.extend(import_ctx.errors);
-    ctx.warnings.extend(import_ctx.warnings);
 
     ret
 }
@@ -67,7 +58,7 @@ impl Module {
             name,
             file,
             dependencies: Vec::new(),
-            exports: Vec::new(),
+            exports: HashMap::new(),
         }
     }
 }
@@ -114,108 +105,10 @@ struct ModGraphPassContext {
     current_module_name: String,
     current_module_id: ModuleId,
     current_module_decl_loc: Option<CodeSpan>,
+    id_counter: SymbolId,
     errors: Vec<Diagnostic>,
     warnings: Vec<Diagnostic>,
     table: ModuleTable,
-}
-
-struct ImportResolutionPassContext {
-    _logger: Logger,
-    current_module_id: ModuleId,
-    current_file: String,
-    rewrite_ids: HashMap<SymbolId, SymbolId>,
-    errors: Vec<Diagnostic>,
-    warnings: Vec<Diagnostic>,
-}
-
-impl ImportResolutionPassContext {
-    pub fn new(logger: Logger) -> Self {
-        ImportResolutionPassContext {
-            _logger: logger,
-            current_module_id: 0,
-            current_file: String::new(),
-            rewrite_ids: HashMap::new(),
-            errors: Vec::new(),
-            warnings: Vec::new(),
-        }
-    }
-
-    //this is pretty inefficient, should probably restructure symbol table links structure
-    pub fn run_import_resolution_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {
-        let module_ids = ctx.modules.module_ids.values().cloned().collect::<Vec<_>>();
-
-        //hashmap module ids -> symbol
-        let module_full_symbols = ctx
-            .symbol_table
-            .module_symbols
-            .iter()
-            .map(|(id, symbols)| {
-                (
-                    *id,
-                    symbols
-                        .iter()
-                        .map(|s| ctx.symbol_table.get(*s).unwrap())
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<HashMap<ModuleId, Vec<&Symbol>>>();
-
-        //map symbol links to rewrite commands
-        for module_id in &module_ids {
-            let empty = vec![];
-            let module_symbols = module_full_symbols
-                .get(module_id)
-                .or_else(|| Some(&empty))
-                .unwrap();
-
-            let linked_symbols = ctx.symbol_table.symbol_links.get(&module_id);
-
-            if linked_symbols.is_none() {
-                continue;
-            }
-
-            for (symbol_name, aliased_by) in linked_symbols.unwrap() {
-                let symbol = module_symbols
-                    .iter()
-                    .find(|s| s.name == *symbol_name)
-                    .unwrap();
-
-                for alias_id in aliased_by {
-                    self.rewrite_ids.insert(*alias_id, symbol.id);
-                }
-            }
-        }
-
-        for (alias_id, _) in &self.rewrite_ids {
-            //enforce no more references to the alias id
-            ctx.symbol_table.remove(*alias_id);
-        }
-
-        //execute rewrites
-        for (file, ast) in ctx.asts.iter_mut() {
-            self.current_file = file.clone();
-            self.current_module_id = ctx.modules.module_file_ids[file];
-            self.rewrite_imports_visitor(ast)?;
-        }
-
-        Ok(())
-    }
-
-    fn rewrite_imports_visitor(&mut self, ast: &mut Node) -> Result<(), ()> {
-        match &mut ast.variant {
-            Variant::Expr(ExprNode::Ident { id, .. }) => {
-                if let Some(id) = id
-                    && let Some(rewrite_id) = self.rewrite_ids.get(id)
-                {
-                    *id = *rewrite_id;
-                }
-            }
-            _ => {}
-        }
-
-        visit_ast_children!(ast.variant, self, rewrite_imports_visitor, {});
-        Ok(())
-    }
 }
 
 impl ModGraphPassContext {
@@ -226,6 +119,7 @@ impl ModGraphPassContext {
             current_module_name: String::new(),
             current_module_id: 0,
             current_module_decl_loc: None,
+            id_counter: EXTRINSINC_ID_COUNTER_INITIAL,
             errors: Vec::new(),
             warnings: Vec::new(),
             table: ModuleTable::new(),
@@ -303,7 +197,7 @@ impl ModGraphPassContext {
 
     fn extract_module_meta_visitor(&mut self, ast: &mut Node) -> Result<(), ()> {
         if ast.export {
-            if ast.is_expr() {
+            if ast.is_expr() && !matches!(ast.variant, Variant::Expr(ExprNode::Ident { .. })) {
                 self.errors.push(Diagnostic {
                     primary: DiagnosticMsg {
                         message: "Attempted to export expression".to_string(),
@@ -316,7 +210,7 @@ impl ModGraphPassContext {
                 });
                 return Err(());
             }
-            self.register_exported_symbol(&ast)?;
+            self.register_exported_symbol(ast)?;
         }
 
         visit_ast_children!(ast.variant, self, extract_module_meta_visitor, {
@@ -335,7 +229,13 @@ impl ModGraphPassContext {
         Ok(())
     }
 
-    fn register_exported_symbol(&mut self, ast: &Node) -> Result<(), ()> {
+    fn new_id(&mut self) -> SymbolId {
+        let id = self.id_counter;
+        self.id_counter += 1;
+        id
+    }
+
+    fn register_exported_symbol(&mut self, ast: &mut Node) -> Result<(), ()> {
         //check for valid export node variant
         let valid_export = match ast.variant {
             Variant::ActorDecl { .. }
@@ -366,31 +266,40 @@ impl ModGraphPassContext {
         }
 
         if let Some(ident) = ast.get_ident() {
+            let id = self.new_id();
+            ast.set_symbol_id(id);
             let exports = &mut self
                 .table
                 .get_module(self.current_module_id)
                 .unwrap()
                 .exports;
+
             if ast.is_type_ident() {
-                exports.push(Symbol::new_type(
-                    INVALID_SYMBOL_ID,
-                    self.current_module_id,
-                    INVALID_SYMBOL_ID,
-                    Some(ident),
-                    vec![],
-                    TypeVariant::Primitive(PrimitiveType::Any),
-                    Some(ast.span),
-                ));
+                exports.insert(
+                    ident.clone(),
+                    Symbol::new_type(
+                        id,
+                        self.current_module_id,
+                        INVALID_SYMBOL_ID,
+                        Some(ident),
+                        vec![],
+                        TypeVariant::Primitive(PrimitiveType::Any),
+                        Some(ast.span),
+                    ),
+                );
             } else {
-                exports.push(Symbol::new_var(
-                    INVALID_SYMBOL_ID,
-                    self.current_module_id,
-                    INVALID_SYMBOL_ID,
-                    ident,
-                    Some(ast.span),
-                    None,
-                    false,
-                ));
+                exports.insert(
+                    ident.clone(),
+                    Symbol::new_var(
+                        id,
+                        self.current_module_id,
+                        INVALID_SYMBOL_ID,
+                        ident,
+                        Some(ast.span),
+                        None,
+                        false,
+                    ),
+                );
             }
         } else {
             self.errors.push(Diagnostic {

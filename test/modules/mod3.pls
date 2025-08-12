@@ -1,3 +1,7 @@
 @module("mod3");
 
-export let reexport = @import("mod2");
+let mod2 = @import("mod2");
+
+export func test() {
+    mod2::mod1::check();
+}

@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod compile;
+pub mod dependency;
 pub mod desugar;
 pub mod diagnostic;
 pub mod intrinsics;

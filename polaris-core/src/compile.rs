@@ -2,12 +2,13 @@ use std::collections::HashMap;
 
 use crate::{
     ast::ast::Node,
+    dependency::dependency_resolution_pass,
     desugar::desugar_pass,
     diagnostic::Diagnostic,
     log,
-    module::{ModuleTable, module_graph_pass, module_import_resolution_pass},
+    module::{ModuleTable, module_graph_pass},
     parse::parse,
-    symbol::{SymbolTable, resolve_names_pass},
+    symbol::{SymbolId, SymbolTable, name_resolution_pass},
 };
 
 pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
@@ -16,6 +17,7 @@ pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
 pub struct CompileContext {
     pub logger: log::Logger,
     pub asts: HashMap<String, Node>,
+    pub symbol_id_counter: SymbolId,
     pub modules: ModuleTable,
     pub symbol_table: SymbolTable,
     pub errors: Vec<Diagnostic>,
@@ -29,6 +31,7 @@ impl CompileContext {
             asts: HashMap::new(),
             modules: ModuleTable::new(),
             symbol_table: SymbolTable::new(),
+            symbol_id_counter: 0,
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -84,8 +87,8 @@ impl CompileContext {
     pub fn get_default_passes() -> Vec<Pass> {
         vec![
             ("Module Resolution", module_graph_pass),
-            ("Name Resolution", resolve_names_pass),
-            ("Import Resolution", module_import_resolution_pass),
+            ("Name Resolution", name_resolution_pass),
+            ("Deps Resolution", dependency_resolution_pass),
         ]
     }
 

@@ -21,6 +21,10 @@ pub struct SymbolTable {
     pub module_symbols: HashMap<ModuleId, Vec<SymbolId>>,
     // module_id -> (symbol_name -> linked symbol_ids)
     pub symbol_links: HashMap<ModuleId, HashMap<String, Vec<SymbolId>>>,
+    //import symbol id -> local ident name
+    pub import_symbols: HashMap<SymbolId, String>,
+    //symbol name -> (symbol id, symbol module id, imported module id)
+    pub exported_imports: HashMap<String, (SymbolId, ModuleId, ModuleId)>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +61,8 @@ impl SymbolTable {
             symbols: HashMap::new(),
             symbol_links: HashMap::new(),
             module_symbols: HashMap::new(),
+            import_symbols: HashMap::new(),
+            exported_imports: HashMap::new(),
         }
     }
 
@@ -70,6 +76,19 @@ impl SymbolTable {
 
     pub fn remove(&mut self, id: SymbolId) -> Option<Symbol> {
         self.symbols.remove(&id)
+    }
+
+    pub fn merge(&mut self, other: SymbolTable) {
+        self.symbols.extend(other.symbols);
+        self.symbol_links.extend(other.symbol_links);
+        self.import_symbols.extend(other.import_symbols);
+        self.exported_imports.extend(other.exported_imports);
+        for (module_id, symbols) in other.module_symbols {
+            self.module_symbols
+                .entry(module_id)
+                .or_default()
+                .extend(symbols);
+        }
     }
 }
 
@@ -150,6 +169,10 @@ pub enum TypeVariant {
         element_type: Box<TypeVariant>,
         generics: Vec<String>,
     },
+    Import {
+        module_name: String,
+        module_id: ModuleId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -167,8 +190,8 @@ pub enum PrimitiveType {
     Any, //for internal use only
 }
 
-pub fn resolve_names_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let mut name_resolver = NameResolverPassContext::new(&ctx.modules);
+pub fn name_resolution_pass(ctx: &mut CompileContext) -> Result<(), ()> {
+    let mut name_resolver = NameResolverPassContext::new(&ctx.modules, ctx.symbol_id_counter);
 
     for (file, ast) in ctx.asts.iter_mut() {
         name_resolver.current_module_id = ctx.modules.module_file_ids[file];
@@ -187,6 +210,7 @@ pub fn resolve_names_pass(ctx: &mut CompileContext) -> Result<(), ()> {
         name_resolver.scopes.push(Scope {
             id: module_scope_id.clone(),
             entries: HashMap::new(),
+            import_label_entries: HashMap::new(),
         });
 
         name_resolver.top_level_decl_visitor(ast)?;
@@ -205,13 +229,16 @@ pub fn resolve_names_pass(ctx: &mut CompileContext) -> Result<(), ()> {
     ctx.errors.extend(name_resolver.errors);
     ctx.warnings.extend(name_resolver.warnings);
 
-    ctx.symbol_table = name_resolver.table;
+    ctx.symbol_table.merge(name_resolver.table);
+    ctx.symbol_id_counter = name_resolver.id_counter;
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub struct Scope {
     pub id: SymbolId,
     pub entries: HashMap<String, SymbolId>,
+    pub import_label_entries: HashMap<String, SymbolId>,
 }
 
 pub struct NameResolverPassContext<'a> {
@@ -226,24 +253,30 @@ pub struct NameResolverPassContext<'a> {
     pub table: SymbolTable,
     pub module_top_level_scope_ids: HashMap<ModuleId, SymbolId>,
     pub module_table: &'a ModuleTable,
+    //map symbol id of import label symbols to the module they import from
+    pub import_label_ids: HashMap<SymbolId, ModuleId>,
+    pub import_symbol_ids: Vec<SymbolId>,
     pub type_context_override: bool,
 }
 
 impl<'a> NameResolverPassContext<'a> {
-    pub fn new(module_table: &'a ModuleTable) -> Self {
+    pub fn new(module_table: &'a ModuleTable, id_offset: SymbolId) -> Self {
         let mut ret = Self {
             scopes: vec![Scope {
                 id: 0,
                 entries: HashMap::new(),
+                import_label_entries: HashMap::new(),
             }],
             errors: Vec::new(),
             warnings: Vec::new(),
             current_file: String::new(),
-            id_counter: 0,
+            id_counter: id_offset,
             scope_id_counter: 1,
             current_module_id: ModuleId::default(),
             table: SymbolTable::new(),
             module_top_level_scope_ids: HashMap::new(),
+            import_label_ids: HashMap::new(),
+            import_symbol_ids: Vec::new(),
             is_top_level: true,
             type_context_override: false,
             module_table,
@@ -256,6 +289,7 @@ impl<'a> NameResolverPassContext<'a> {
         self.scopes.push(Scope {
             id: self.scope_id_counter,
             entries: HashMap::new(),
+            import_label_entries: HashMap::new(),
         });
         self.scope_id_counter += 1;
     }
@@ -264,6 +298,12 @@ impl<'a> NameResolverPassContext<'a> {
         if self.scopes.len() > 1 {
             self.scopes.pop();
         }
+    }
+
+    fn new_id(&mut self) -> SymbolId {
+        let id = self.id_counter;
+        self.id_counter += 1;
+        id
     }
 
     fn is_intrinsic_type(&self, symbol: &Symbol) -> bool {
@@ -287,8 +327,7 @@ impl<'a> NameResolverPassContext<'a> {
         type_id: Option<SymbolId>,
         mutable: bool,
     ) -> SymbolId {
-        let id = self.id_counter;
-        self.id_counter += 1;
+        let id = self.new_id();
 
         self.table
             .module_symbols
@@ -323,8 +362,7 @@ impl<'a> NameResolverPassContext<'a> {
         variant: TypeVariant,
         span: Option<CodeSpan>,
     ) -> SymbolId {
-        let id = self.id_counter;
-        self.id_counter += 1;
+        let id = self.new_id();
 
         self.table
             .module_symbols
@@ -366,12 +404,59 @@ impl<'a> NameResolverPassContext<'a> {
             .push(symbol_id);
     }
 
-    fn lookup(&self, name: &str) -> Option<SymbolId> {
+    fn lookup_import_label(&self, module_name: &str) -> Option<SymbolId> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(&id) = scope.import_label_entries.get(module_name) {
+                return Some(id);
+            }
+        }
+
+        None
+    }
+
+    fn lookup(&mut self, name: &str) -> Option<SymbolId> {
         for scope in self.scopes.iter().rev() {
             if let Some(&id) = scope.entries.get(name) {
                 return Some(id);
             }
         }
+
+        //check namespaced symbols, which reference imports
+        //every symbol referencing a namespaced import
+
+        let new_symbol_id = self.new_id();
+
+        if let Some((module_name, symbol_name)) = name.split_once("::") {
+            let module_symbol_id = self.lookup_import_label(module_name);
+            if module_symbol_id.is_none() {
+                self.errors.push(Diagnostic {
+                    primary: DiagnosticMsg {
+                        message: format!("Unknown namespace '{}'", module_name),
+                        span: CodeSpan::new(0, 0), //todo: use actual span
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::UndeclaredSymbol,
+                    },
+                    notes: vec![],
+                    hints: vec!["Did you forget to import a module?".to_string()],
+                });
+                return None;
+            }
+
+            //not going to actually declare the symbol, just get a unique id, link it, and return it
+            let module_id = self.import_label_ids.get(&module_symbol_id.unwrap());
+            if module_id.is_none() {
+                return None;
+            }
+
+            self.import_symbol_ids.push(new_symbol_id);
+            self.table
+                .import_symbols
+                .insert(new_symbol_id, symbol_name.to_string());
+            self.link_symbol_to_module(new_symbol_id, *module_id.unwrap(), symbol_name.to_string());
+
+            return Some(new_symbol_id);
+        }
+
         None
     }
 
@@ -384,11 +469,13 @@ impl<'a> NameResolverPassContext<'a> {
         None
     }
 
-    fn fuzzy_lookup(&self, name: &str, is_type: bool) -> Vec<SymbolId> {
+    fn fuzzy_lookup(&self, name: &str, is_type: Option<bool>) -> Vec<SymbolId> {
         let mut results = Vec::new();
         for scope in self.scopes.iter().rev() {
             for (key, val) in &scope.entries {
-                if self.is_type(val) == is_type && edit_distance(name, key) <= 2 {
+                if is_type.is_none()
+                    || (self.is_type(val) == is_type.unwrap()) && edit_distance(name, key) <= 2
+                {
                     results.push(val.clone());
                 }
             }
@@ -412,33 +499,38 @@ impl<'a> NameResolverPassContext<'a> {
         &mut self,
         name: &String,
         span: CodeSpan,
-        is_type: bool,
+        is_type: Option<bool>,
     ) -> Result<SymbolId, ()> {
         //todo: deal with namespaces and type_args
         let symbol_id = self.lookup(name);
+
         if let Some(symbol_id) = symbol_id {
-            if self.is_type(&symbol_id) != is_type {
-                self.errors.push(Diagnostic {
-                    primary: DiagnosticMsg {
-                        message: format!(
-                            "'{}' is a {} but was used as a {}",
-                            name,
-                            if self.is_type(&symbol_id) {
-                                "type"
-                            } else {
-                                "runtime symbol"
-                            },
-                            if is_type { "type" } else { "runtime symbol" }
-                        ),
-                        span,
-                        file: self.current_file.clone(),
-                        err_type: DiagnosticMsgType::UndeclaredSymbol,
-                    },
-                    notes: vec![],
-                    hints: vec![],
-                });
-                return Err(());
-            }
+            // if is_type.is_some() && self.is_type(&symbol_id) != is_type.unwrap() {
+            //     self.errors.push(Diagnostic {
+            //         primary: DiagnosticMsg {
+            //             message: format!(
+            //                 "'{}' is a {} but was used as a {}",
+            //                 name,
+            //                 if self.is_type(&symbol_id) {
+            //                     "type"
+            //                 } else {
+            //                     "runtime symbol"
+            //                 },
+            //                 if is_type.unwrap() {
+            //                     "type"
+            //                 } else {
+            //                     "runtime symbol"
+            //                 }
+            //             ),
+            //             span,
+            //             file: self.current_file.clone(),
+            //             err_type: DiagnosticMsgType::UndeclaredSymbol,
+            //         },
+            //         notes: vec![],
+            //         hints: vec![],
+            //     });
+            //     return Err(());
+            // }
             return Ok(symbol_id);
         } else {
             let notes = self
@@ -482,8 +574,16 @@ impl<'a> NameResolverPassContext<'a> {
             self.errors.push(Diagnostic {
                 primary: DiagnosticMsg {
                     message: format!(
-                        "{} '{}' has not been declared",
-                        if is_type { "Type" } else { "Symbol" },
+                        "{}'{}' has not been declared",
+                        match is_type {
+                            Some(is_type) =>
+                                if is_type {
+                                    "Type "
+                                } else {
+                                    "Symbol "
+                                },
+                            None => "",
+                        },
                         name
                     ),
                     span: span,
@@ -507,9 +607,11 @@ impl<'a> NameResolverPassContext<'a> {
                     ref mut id,
                     ..
                 }) => {
-                    if let Ok(symbol_id) =
-                        self.check_reference(name, ast.span, *is_type || self.type_context_override)
-                    {
+                    if let Ok(symbol_id) = self.check_reference(
+                        name,
+                        ast.span,
+                        Some(*is_type || self.type_context_override),
+                    ) {
                         *id = Some(symbol_id);
                     }
                 }
@@ -828,7 +930,7 @@ impl<'a> NameResolverPassContext<'a> {
             | Variant::FuncDecl { .. }
             | Variant::ImplDecl { .. }
             | Variant::TypeDecl { .. }
-            | Variant::VarDecl {..} //pushes scope so that labeled imports are scoped to the label
+           // | Variant::VarDecl {..} //pushes scope so that labeled imports are scoped to the label
             | Variant::Block { .. }
             | Variant::If { .. }
             | Variant::For { .. }
@@ -838,6 +940,53 @@ impl<'a> NameResolverPassContext<'a> {
     }
 
     fn register_decl(&mut self, ast: &mut Node) {
+        //check for import directive, override variable declaration
+        if let Variant::VarDecl {
+            name, initialiser, ..
+        } = &mut ast.variant
+        {
+            if initialiser.is_some()
+                && initialiser.as_ref().unwrap().get_directive() == Some("@import".to_string())
+            {
+                //this is an import declaration, just looks like a variable declaration
+                let module_name = match &initialiser.as_ref().unwrap().variant {
+                    Variant::Expr(ExprNode::Call { args, .. }) => {
+                        //already validated in module resolution pass
+                        args[0].get_string().unwrap().clone()
+                    }
+                    _ => unreachable!("Expected import call expression"),
+                };
+
+                let module_id = self
+                    .module_table
+                    .get_module_by_name_borrow(module_name.as_str())
+                    .unwrap()
+                    .id;
+
+                //add an import label symbol
+                let new_symbol_id = self.new_id();
+                //self.pop_scope();
+                self.scopes
+                    .last_mut()
+                    .unwrap()
+                    .import_label_entries
+                    .insert(module_name.clone(), new_symbol_id);
+
+                if ast.export {
+                    self.table
+                        .exported_imports
+                        //todo: check if self.current_module_id or module_id should be used
+                        .insert(
+                            name.clone(),
+                            (new_symbol_id, self.current_module_id, module_id),
+                        );
+                }
+                self.import_label_ids.insert(new_symbol_id, module_id);
+
+                return;
+            }
+        }
+
         let mut mutable = false;
         let mut is_type = true;
         let mut id = None;
@@ -883,7 +1032,7 @@ impl<'a> NameResolverPassContext<'a> {
                             .unwrap()
                             .clone();
 
-                        for export in module.exports {
+                        for (_, export) in module.exports {
                             let local_id = match export.variant {
                                 SymbolVariant::Var(var) => self.declare(
                                     self.current_module_id,

@@ -318,6 +318,13 @@ impl ExprNode {
             _ => None,
         }
     }
+
+    pub fn set_symbol_id(&mut self, id: SymbolId) {
+        match self {
+            ExprNode::Ident { id: i, .. } => *i = Some(id),
+            _ => {}
+        }
+    }
 }
 
 impl Node {
@@ -464,6 +471,25 @@ impl Node {
             _ => false,
         }
     }
+
+    pub fn set_symbol_id(&mut self, id: SymbolId) {
+        match &mut self.variant {
+            Variant::Expr(expr) => expr.set_symbol_id(id),
+            Variant::ActorDecl { ident, .. }
+            | Variant::EnumDecl { ident, .. }
+            | Variant::StructDecl { ident, .. }
+            | Variant::TypeDecl { ident, .. }
+            | Variant::InterfaceDecl { ident, .. } => {
+                ident.set_symbol_id(id);
+            }
+            Variant::FuncDecl { ident, .. } => {
+                if let Some(ident) = ident {
+                    ident.set_symbol_id(id);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl fmt::Display for Node {
@@ -472,7 +498,12 @@ impl fmt::Display for Node {
             Variant::Failed => write!(f, "/* <failed> */\n"),
             Variant::Program { children, .. } => {
                 for child in children {
-                    write!(f, "{}\n", child)?;
+                    write!(
+                        f,
+                        "{}{}\n",
+                        if child.export { "export " } else { "" },
+                        child
+                    )?;
                 }
                 Ok(())
             }
@@ -729,6 +760,7 @@ impl fmt::Display for ExprNode {
                 ..
             } => {
                 write!(f, "[")?;
+
                 if *is_type {
                     write!(f, "type, ")?;
                 }
