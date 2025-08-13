@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::{
     ast::ast::Node,
@@ -9,6 +9,7 @@ use crate::{
     module::{ModuleTable, module_graph_pass},
     parse::parse,
     symbol::{SymbolId, SymbolTable, name_resolution_pass},
+    typecheck::typecheck_pass,
 };
 
 pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
@@ -16,7 +17,7 @@ pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
 #[derive(Debug, Clone)]
 pub struct CompileContext {
     pub logger: log::Logger,
-    pub asts: BTreeMap<String, Node>,
+    pub asts: HashMap<String, Node>,
     pub symbol_id_counter: SymbolId,
     pub modules: ModuleTable,
     pub symbol_table: SymbolTable,
@@ -28,7 +29,7 @@ impl CompileContext {
     pub fn new(logger: log::Logger) -> Self {
         Self {
             logger,
-            asts: BTreeMap::new(),
+            asts: HashMap::new(),
             modules: ModuleTable::new(),
             symbol_table: SymbolTable::new(),
             symbol_id_counter: 0,
@@ -88,7 +89,8 @@ impl CompileContext {
         vec![
             ("Module Resolution", module_graph_pass),
             ("Name Resolution", name_resolution_pass),
-            ("Deps Resolution", dependency_resolution_pass),
+            ("Dependency Resolution", dependency_resolution_pass),
+            ("Typechecking", typecheck_pass),
         ]
     }
 
