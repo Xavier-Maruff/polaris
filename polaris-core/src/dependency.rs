@@ -5,7 +5,6 @@ use crate::{
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg},
     log::Logger,
-    module::ModuleId,
     parse::CodeSpan,
     symbol::SymbolId,
     visit_ast_children,
@@ -40,6 +39,11 @@ impl DepResolutionPassContext {
     }
 
     fn run_dep_resolution_pass(&mut self, ctx: &mut CompileContext) -> Result<(), ()> {
+        self._logger.info(&format!(
+            "Dep graph: {:#?}",
+            ctx.modules.condensed_import_graph
+        ));
+
         for scc in &ctx.modules.condensed_import_graph {
             let mut unresolved_links = ctx
                 .symbol_table
@@ -160,6 +164,7 @@ impl DepResolutionPassContext {
                                 notes: vec![],
                                 hints: vec![],
                             });
+                            continue;
                         }
 
                         let export_id = export.unwrap().id;

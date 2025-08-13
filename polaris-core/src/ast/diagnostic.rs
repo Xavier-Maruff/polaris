@@ -10,6 +10,10 @@ macro_rules! collect_node_diagnostics {
                 }
             }
 
+            Variant::Defer { body, .. } => {
+                $diagnostics.extend(body.$method());
+            }
+
             Variant::FuncDecl {
                 params,
                 return_type,

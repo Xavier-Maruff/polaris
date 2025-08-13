@@ -15,6 +15,12 @@ macro_rules! visit_ast_children {
                 }
             }
 
+            Variant::Defer {
+                ref mut body, ..
+            } => {
+                $obj.$visit(body)?;
+            },
+
             /*Variant::Directive { ref mut args, .. } => {
                 for arg in args.iter_mut() {
                     $obj.$visit(arg)?;

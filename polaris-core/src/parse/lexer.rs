@@ -312,6 +312,7 @@ impl Lexer {
                 "actor" => TokenVariant::Actor,
                 "export" => TokenVariant::Export,
                 "extern" => TokenVariant::Extern,
+                "defer" => TokenVariant::Defer,
                 _ => TokenVariant::Ident(ident_str),
             },
             span: CodeSpan {

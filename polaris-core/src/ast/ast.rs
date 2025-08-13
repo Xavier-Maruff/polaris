@@ -91,6 +91,9 @@ pub enum Variant {
         methods: Vec<Node>,
         fields: Vec<(String, Node)>,
     },
+    Defer {
+        body: Box<Node>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -513,6 +516,9 @@ impl fmt::Display for Node {
                     write!(f, "  {};\n", child)?;
                 }
                 write!(f, " }}\n")
+            }
+            Variant::Defer { body } => {
+                write!(f, "defer {};\n", body)
             }
             Variant::TypeDecl { ident, alias_of } => {
                 write!(f, "type {} = {};\n", ident, alias_of)

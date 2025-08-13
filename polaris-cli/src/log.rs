@@ -9,7 +9,7 @@ use polaris_core::{
     log::{self, Logger},
     parse::CodeSpan,
 };
-use std::{cmp::min, collections::HashMap, fs::read_to_string, io::Write, thread};
+use std::{collections::HashMap, fs::read_to_string, io::Write, thread};
 use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
 
 const MAX_DIAGNOSTIC_LENGTH: usize = 100;

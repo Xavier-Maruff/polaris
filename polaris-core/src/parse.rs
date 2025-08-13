@@ -406,6 +406,13 @@ impl<'a> ParseContext<'a> {
             false
         };
 
+        let defer = if self.curr_tok.variant == TokenVariant::Defer {
+            wrap_err!(ast, self.advance(lexer));
+            true
+        } else {
+            false
+        };
+
         let node = match self.curr_tok.variant {
             TokenVariant::If => self.parse_if_stmt(ast, lexer),
             TokenVariant::For => self.parse_for_stmt(ast, lexer),
@@ -436,6 +443,15 @@ impl<'a> ParseContext<'a> {
                 if export {
                     node.export = true;
                     node.span.start = expr_start;
+                }
+                if defer {
+                    let span = CodeSpan::new(expr_start, node.span.end);
+                    return Ok(Node::new_with_span(
+                        Variant::Defer {
+                            body: Box::new(node),
+                        },
+                        span,
+                    ));
                 }
                 Ok(node)
             }

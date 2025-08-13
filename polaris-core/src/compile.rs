@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     ast::ast::Node,
@@ -16,7 +16,7 @@ pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
 #[derive(Debug, Clone)]
 pub struct CompileContext {
     pub logger: log::Logger,
-    pub asts: HashMap<String, Node>,
+    pub asts: BTreeMap<String, Node>,
     pub symbol_id_counter: SymbolId,
     pub modules: ModuleTable,
     pub symbol_table: SymbolTable,
@@ -28,7 +28,7 @@ impl CompileContext {
     pub fn new(logger: log::Logger) -> Self {
         Self {
             logger,
-            asts: HashMap::new(),
+            asts: BTreeMap::new(),
             modules: ModuleTable::new(),
             symbol_table: SymbolTable::new(),
             symbol_id_counter: 0,
