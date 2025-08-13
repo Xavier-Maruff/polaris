@@ -148,6 +148,31 @@ impl ModGraphPassContext {
                     failed = true;
                 }
             };
+
+            if self.current_module_decl_loc.is_none() {
+                self.errors.push(Diagnostic {
+                    primary: DiagnosticMsg {
+                        message: format!("File '{}' does not declare a module", file.clone()),
+                        span: CodeSpan::new(0, 10),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::InvalidModuleName,
+                    },
+                    notes: vec![],
+                    hints: vec![
+                        "Each file must declare a module using the @module directive".to_string(),
+                        format!(
+                            "A valid module declaration could look like `@module({})`",
+                            file.clone()
+                                .split('.')
+                                .next()
+                                .unwrap_or("my_module")
+                                .replace(|c: char| !c.is_alphanumeric() && c != '_', "_")
+                                .to_lowercase()
+                        ),
+                    ],
+                });
+                failed = true;
+            }
         }
 
         if failed {

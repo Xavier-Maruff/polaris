@@ -1,3 +1,5 @@
+@module("mod4");
+
 let mod3 = @import("mod3");
 let mod1 = @import("mod1");
 
