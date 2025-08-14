@@ -17,6 +17,7 @@ macro_rules! declare {
             None,
             Some(type_id),
             false,
+            false,
         );
     }};
 }

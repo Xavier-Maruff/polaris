@@ -323,6 +323,7 @@ impl ModGraphPassContext {
                         Some(ast.span),
                         None,
                         false,
+                        false,
                     ),
                 );
             }

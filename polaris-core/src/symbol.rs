@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::ast::{ExprNode, ForVariant, Node, Variant},
+    ast::ast::{ExprNode, ForVariant, Node, UnaryOp, Variant},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::declare_intrinsics,
@@ -47,6 +47,7 @@ pub enum SymbolVariant {
 pub struct VarSymbol {
     pub type_id: Option<SymbolId>,
     pub mutable: bool,
+    pub is_ref: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +101,7 @@ impl Symbol {
         name: String,
         span: Option<CodeSpan>,
         type_id: Option<SymbolId>,
+        is_ref: bool,
         mutable: bool,
     ) -> Self {
         Self {
@@ -108,7 +110,11 @@ impl Symbol {
             scope_id,
             name,
             span,
-            variant: SymbolVariant::Var(VarSymbol { type_id, mutable }),
+            variant: SymbolVariant::Var(VarSymbol {
+                type_id,
+                mutable,
+                is_ref,
+            }),
         }
     }
 
@@ -246,6 +252,7 @@ pub struct NameResolverPassContext<'a> {
     pub scope_id_counter: SymbolId,
     pub current_file: String,
     pub current_module_id: ModuleId,
+    pub current_is_ref: bool,
     pub is_top_level: bool,
     pub scopes: Vec<Scope>,
     pub errors: Vec<Diagnostic>,
@@ -273,6 +280,7 @@ impl<'a> NameResolverPassContext<'a> {
             id_counter: id_offset,
             scope_id_counter: 1,
             current_module_id: ModuleId::default(),
+            current_is_ref: false,
             table: SymbolTable::new(),
             module_top_level_scope_ids: HashMap::new(),
             import_label_ids: HashMap::new(),
@@ -326,6 +334,7 @@ impl<'a> NameResolverPassContext<'a> {
         span: Option<CodeSpan>,
         type_id: Option<SymbolId>,
         mutable: bool,
+        is_ref: bool,
     ) -> SymbolId {
         let id = self.new_id();
 
@@ -347,6 +356,7 @@ impl<'a> NameResolverPassContext<'a> {
                 name,
                 span,
                 type_id,
+                is_ref,
                 mutable,
             ),
         );
@@ -739,6 +749,16 @@ impl<'a> NameResolverPassContext<'a> {
 
     fn declare_pattern(&mut self, pattern: &mut Node) -> Result<(), ()> {
         match &mut pattern.variant {
+            Variant::Expr(ExprNode::UnaryOp { operand, op }) => {
+                let current_is_ref = self.current_is_ref;
+                if matches!(op, UnaryOp::Ref) {
+                    self.current_is_ref = true;
+                }
+
+                self.declare_pattern(operand)?;
+                self.current_is_ref = current_is_ref;
+            }
+
             Variant::Expr(ExprNode::Call { args, .. }) => {
                 //parsed as a func call, but is actually an enum pattern
                 //ignore callee, declare inner args as pattern variables
@@ -764,13 +784,7 @@ impl<'a> NameResolverPassContext<'a> {
                     self.declare_pattern(element)?;
                 }
             }
-            Variant::Expr(ExprNode::UnaryOp {
-                operand: inner_operand,
-                ..
-            }) => {
-                //unary op pattern, declare inner operand as pattern variable
-                self.declare_pattern(inner_operand)?;
-            }
+
             Variant::Expr(ExprNode::Ident {
                 name,
                 type_args,
@@ -805,6 +819,7 @@ impl<'a> NameResolverPassContext<'a> {
                         Some(pattern.span.clone()),
                         None,
                         false,
+                        self.current_is_ref,
                     );
                 }
             }
@@ -1040,6 +1055,7 @@ impl<'a> NameResolverPassContext<'a> {
                                     export.span,
                                     var.type_id,
                                     var.mutable,
+                                    var.is_ref,
                                 ),
                                 SymbolVariant::Type(t) => self.declare_type(
                                     self.current_module_id,
@@ -1131,6 +1147,7 @@ impl<'a> NameResolverPassContext<'a> {
                         Some(ast.span),
                         None,
                         mutable,
+                        false,
                     ));
                 }
             }

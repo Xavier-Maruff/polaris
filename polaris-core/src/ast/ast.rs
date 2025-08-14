@@ -220,6 +220,7 @@ pub enum UnaryOp {
     Minus,
     Not,
     BitNot,
+    Ref,
     Deref,
     BindMonad,
     Await,
@@ -242,6 +243,7 @@ impl fmt::Display for UnaryOp {
             UnaryOp::FusedAssign => write!(f, "="),
             UnaryOp::Spread => write!(f, "..."),
             UnaryOp::Spawn => write!(f, "spawn "),
+            UnaryOp::Ref => write!(f, "ref "),
         }
     }
 }
