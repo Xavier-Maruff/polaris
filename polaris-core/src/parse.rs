@@ -632,6 +632,7 @@ impl<'a> ParseContext<'a> {
                     var_type,
                     modifiable,
                     initialiser,
+                    id: None,
                 },
                 span,
             ))
@@ -760,6 +761,7 @@ impl<'a> ParseContext<'a> {
                 var_type: Some(Box::new(field_type)),
                 initialiser: None,
                 modifiable,
+                id: None,
             },
             span,
         ))
@@ -1396,6 +1398,7 @@ impl<'a> ParseContext<'a> {
             errors: None,
             span,
             scope_id: None,
+            type_id: None,
             export: false,
         })
     }
@@ -1483,6 +1486,9 @@ impl<'a> ParseContext<'a> {
                 Variant::Expr(ExprNode::FloatLit(f.parse::<f64>().unwrap())),
                 self.curr_tok.span,
             ),
+            TokenVariant::BoolLit(b) => {
+                Node::new_with_span(Variant::Expr(ExprNode::BoolLit(*b)), self.curr_tok.span)
+            }
             TokenVariant::CharLit(c) => Node::new_with_span(
                 Variant::Expr(ExprNode::CharLit(c.clone())),
                 self.curr_tok.span,

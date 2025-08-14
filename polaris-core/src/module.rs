@@ -11,7 +11,7 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     log::Logger,
     parse::CodeSpan,
-    symbol::{INVALID_SYMBOL_ID, PrimitiveType, Symbol, SymbolId, TypeVariant},
+    symbol::{INVALID_SYMBOL_ID, Symbol, SymbolId},
     visit_ast_children,
 };
 
@@ -307,8 +307,6 @@ impl ModGraphPassContext {
                         self.current_module_id,
                         INVALID_SYMBOL_ID,
                         Some(ident),
-                        vec![],
-                        TypeVariant::Primitive(PrimitiveType::Any),
                         Some(ast.span),
                     ),
                 );
@@ -321,7 +319,6 @@ impl ModGraphPassContext {
                         INVALID_SYMBOL_ID,
                         ident,
                         Some(ast.span),
-                        None,
                         false,
                         false,
                     ),
@@ -375,7 +372,7 @@ impl ModGraphPassContext {
                     },
                     notes: vec![],
                     hints: vec![
-                        "Import names must be an identifier".to_string(),
+                        "@import accepts a single string argument".to_string(),
                         "A valid import could look like `@import('module_name')`".to_string(),
                     ],
                 });

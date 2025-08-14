@@ -34,26 +34,9 @@ pub struct Symbol {
     pub scope_id: SymbolId,
     pub name: String,
     pub span: Option<CodeSpan>,
-    pub variant: SymbolVariant,
-}
-
-#[derive(Debug, Clone)]
-pub enum SymbolVariant {
-    Var(VarSymbol),
-    Type(TypeSymbol),
-}
-
-#[derive(Debug, Clone)]
-pub struct VarSymbol {
-    pub type_id: Option<SymbolId>,
     pub mutable: bool,
     pub is_ref: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct TypeSymbol {
-    pub generics: Vec<(String, Option<Vec<SymbolId>>)>, //type variables and required interfaces
-    pub variant: TypeVariant,
+    pub is_type: bool,
 }
 
 impl SymbolTable {
@@ -100,7 +83,6 @@ impl Symbol {
         scope_id: SymbolId,
         name: String,
         span: Option<CodeSpan>,
-        type_id: Option<SymbolId>,
         is_ref: bool,
         mutable: bool,
     ) -> Self {
@@ -110,11 +92,9 @@ impl Symbol {
             scope_id,
             name,
             span,
-            variant: SymbolVariant::Var(VarSymbol {
-                type_id,
-                mutable,
-                is_ref,
-            }),
+            is_ref,
+            mutable,
+            is_type: false,
         }
     }
 
@@ -123,8 +103,6 @@ impl Symbol {
         module_id: ModuleId,
         scope_id: SymbolId,
         name: Option<String>,
-        generics: Vec<(String, Option<Vec<SymbolId>>)>,
-        variant: TypeVariant,
         span: Option<CodeSpan>,
     ) -> Self {
         Self {
@@ -137,63 +115,11 @@ impl Symbol {
                 format!("$anon_type_{}", id)
             },
             span,
-            variant: SymbolVariant::Type(TypeSymbol::new(generics, variant)),
+            is_ref: false,
+            mutable: false,
+            is_type: true,
         }
     }
-}
-
-impl TypeSymbol {
-    pub fn new(generics: Vec<(String, Option<Vec<SymbolId>>)>, variant: TypeVariant) -> Self {
-        Self { generics, variant }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum TypeVariant {
-    Primitive(PrimitiveType),
-    Directive {
-        args: Vec<TypeVariant>,
-    },
-    Struct {
-        fields: HashMap<String, TypeVariant>,
-        generics: Vec<String>,
-    },
-    Enum {
-        variants: HashMap<String, TypeVariant>,
-        generics: Vec<String>,
-    },
-    Interface {
-        methods: HashMap<String, TypeVariant>,
-        generics: Vec<String>,
-    },
-    Actor {
-        methods: HashMap<String, TypeVariant>,
-        fields: HashMap<String, TypeVariant>,
-        generics: Vec<String>,
-    },
-    Vector {
-        element_type: Box<TypeVariant>,
-        generics: Vec<String>,
-    },
-    Import {
-        module_name: String,
-        module_id: ModuleId,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PrimitiveType {
-    Int32,
-    Int64,
-    UInt32,
-    UInt64,
-    Float32,
-    Float64,
-    Bool,
-    String,
-    Void,
-    Vector,
-    Any, //for internal use only
 }
 
 pub fn name_resolution_pass(ctx: &mut CompileContext) -> Result<(), ()> {
@@ -314,25 +240,11 @@ impl<'a> NameResolverPassContext<'a> {
         id
     }
 
-    fn is_intrinsic_type(&self, symbol: &Symbol) -> bool {
-        match &symbol.variant {
-            SymbolVariant::Type(t) => match &t.variant {
-                TypeVariant::Primitive(primitive) => match primitive {
-                    PrimitiveType::Any => false,
-                    _ => true,
-                },
-                _ => false,
-            },
-            SymbolVariant::Var(_) => false,
-        }
-    }
-
     pub fn declare(
         &mut self,
         module_id: ModuleId,
         name: String,
         span: Option<CodeSpan>,
-        type_id: Option<SymbolId>,
         mutable: bool,
         is_ref: bool,
     ) -> SymbolId {
@@ -349,16 +261,7 @@ impl<'a> NameResolverPassContext<'a> {
 
         self.table.symbols.insert(
             id,
-            Symbol::new_var(
-                id,
-                module_id,
-                current_scope.id,
-                name,
-                span,
-                type_id,
-                is_ref,
-                mutable,
-            ),
+            Symbol::new_var(id, module_id, current_scope.id, name, span, is_ref, mutable),
         );
 
         id
@@ -368,8 +271,6 @@ impl<'a> NameResolverPassContext<'a> {
         &mut self,
         module_id: ModuleId,
         name: Option<String>,
-        generics: Vec<(String, Option<Vec<SymbolId>>)>,
-        variant: TypeVariant,
         span: Option<CodeSpan>,
     ) -> SymbolId {
         let id = self.new_id();
@@ -387,8 +288,6 @@ impl<'a> NameResolverPassContext<'a> {
                 module_id,
                 self.scopes.last().unwrap().id,
                 name.clone(),
-                generics,
-                variant,
                 span,
             ),
         );
@@ -496,10 +395,7 @@ impl<'a> NameResolverPassContext<'a> {
 
     fn is_type(&self, symbol_id: &SymbolId) -> bool {
         if let Some(symbol) = self.table.symbols.get(symbol_id) {
-            match &symbol.variant {
-                SymbolVariant::Type(_) => true,
-                SymbolVariant::Var(_) => false,
-            }
+            symbol.is_type
         } else {
             false
         }
@@ -511,36 +407,34 @@ impl<'a> NameResolverPassContext<'a> {
         span: CodeSpan,
         is_type: Option<bool>,
     ) -> Result<SymbolId, ()> {
-        //todo: deal with namespaces and type_args
         let symbol_id = self.lookup(name);
 
         if let Some(symbol_id) = symbol_id {
-            // if is_type.is_some() && self.is_type(&symbol_id) != is_type.unwrap() {
-            //     self.errors.push(Diagnostic {
-            //         primary: DiagnosticMsg {
-            //             message: format!(
-            //                 "'{}' is a {} but was used as a {}",
-            //                 name,
-            //                 if self.is_type(&symbol_id) {
-            //                     "type"
-            //                 } else {
-            //                     "runtime symbol"
-            //                 },
-            //                 if is_type.unwrap() {
-            //                     "type"
-            //                 } else {
-            //                     "runtime symbol"
-            //                 }
-            //             ),
-            //             span,
-            //             file: self.current_file.clone(),
-            //             err_type: DiagnosticMsgType::UndeclaredSymbol,
-            //         },
-            //         notes: vec![],
-            //         hints: vec![],
-            //     });
-            //     return Err(());
-            // }
+            if let Some(symbol) = self.table.get(symbol_id)
+                && symbol.is_type != is_type.unwrap_or(false)
+            {
+                self.errors.push(Diagnostic {
+                    primary: DiagnosticMsg {
+                        message: format!(
+                            "'{}' is a {} but was used as a {}",
+                            name,
+                            if symbol.is_type { "type" } else { "variable" },
+                            if is_type.unwrap_or(false) {
+                                "type"
+                            } else {
+                                "variable"
+                            }
+                        ),
+                        span: span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::IllegalName,
+                    },
+                    notes: vec![],
+                    hints: vec![],
+                });
+                return Err(());
+            }
+
             return Ok(symbol_id);
         } else {
             let notes = self
@@ -552,14 +446,7 @@ impl<'a> NameResolverPassContext<'a> {
                         return None;
                     }
                     let symbol = symbol.unwrap();
-                    if self.is_intrinsic_type(symbol) {
-                        return Some(DiagnosticMsg {
-                            message: format!("Did you mean the intrinsic type '{}'?", symbol.name),
-                            span: CodeSpan::new(0, 0),
-                            file: self.current_file.clone(),
-                            err_type: DiagnosticMsgType::UndeclaredSymbol,
-                        });
-                    }
+
                     Some(DiagnosticMsg {
                         message: format!(
                             "Similar symbol '{}' exists in the current scope",
@@ -799,7 +686,7 @@ impl<'a> NameResolverPassContext<'a> {
                         self.errors.push(Diagnostic {
                             primary: DiagnosticMsg {
                                 message: format!(
-                                    "Pattern variable '{}' must not have namespaces, type arguments, or be a type",
+                                    "Pattern variable '{}' must not have namespaces, type parameters, or be a type",
                                     name
                                 ),
                                 span: pattern.span.clone(),
@@ -817,7 +704,6 @@ impl<'a> NameResolverPassContext<'a> {
                         self.current_module_id,
                         name.clone(),
                         Some(pattern.span.clone()),
-                        None,
                         false,
                         self.current_is_ref,
                     );
@@ -841,8 +727,6 @@ impl<'a> NameResolverPassContext<'a> {
                         self.declare_type(
                             self.current_module_id,
                             Some(arg_ident.clone()),
-                            Vec::new(), //no second order generics for now
-                            TypeVariant::Primitive(PrimitiveType::Any),
                             Some(ident.span.clone()),
                         );
                     } else {
@@ -850,7 +734,7 @@ impl<'a> NameResolverPassContext<'a> {
                         self.errors.push(Diagnostic {
                             primary: DiagnosticMsg {
                                 message: format!(
-                                    "Type argument '{}' has already been declared as a {}",
+                                    "Type parameter '{}' has already been declared as a {}",
                                     arg_ident,
                                     if self.is_type(&symbol_id.unwrap()) {
                                         "type"
@@ -874,7 +758,7 @@ impl<'a> NameResolverPassContext<'a> {
                 } else {
                     self.errors.push(Diagnostic {
                         primary: DiagnosticMsg {
-                            message: "Type argument must have a valid identifier".to_string(),
+                            message: "Type parameter must have a valid identifier".to_string(),
                             span: arg.span,
                             file: self.current_file.clone(),
                             err_type: DiagnosticMsgType::IllegalName,
@@ -957,9 +841,31 @@ impl<'a> NameResolverPassContext<'a> {
     fn register_decl(&mut self, ast: &mut Node) {
         //check for import directive, override variable declaration
         if let Variant::VarDecl {
-            name, initialiser, ..
+            name,
+            initialiser,
+            var_type,
+            id,
+            ..
         } = &mut ast.variant
         {
+            if var_type.is_some() {
+                if self
+                    .check_reference(name, ast.span.clone(), Some(true))
+                    .is_err()
+                {
+                    self.errors.push(Diagnostic {
+                        primary: DiagnosticMsg {
+                            message: format!("Type '{}' has not been declared", name),
+                            span: ast.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::UndeclaredSymbol,
+                        },
+                        notes: vec![],
+                        hints: vec![],
+                    });
+                }
+            }
+
             if initialiser.is_some()
                 && initialiser.as_ref().unwrap().get_directive() == Some("@import".to_string())
             {
@@ -997,6 +903,9 @@ impl<'a> NameResolverPassContext<'a> {
                         );
                 }
                 self.import_label_ids.insert(new_symbol_id, module_id);
+
+                //delete the node
+                ast.variant = Variant::Dead;
 
                 return;
             }
@@ -1048,20 +957,17 @@ impl<'a> NameResolverPassContext<'a> {
                             .clone();
 
                         for (_, export) in module.exports {
-                            let local_id = match export.variant {
-                                SymbolVariant::Var(var) => self.declare(
+                            let local_id = match export.is_type {
+                                false => self.declare(
                                     self.current_module_id,
                                     export.name.clone(),
                                     export.span,
-                                    var.type_id,
-                                    var.mutable,
-                                    var.is_ref,
+                                    export.mutable,
+                                    export.is_ref,
                                 ),
-                                SymbolVariant::Type(t) => self.declare_type(
+                                true => self.declare_type(
                                     self.current_module_id,
                                     Some(export.name.clone()),
-                                    t.generics,
-                                    t.variant,
                                     export.span,
                                 ),
                             };
@@ -1136,8 +1042,6 @@ impl<'a> NameResolverPassContext<'a> {
                     id = Some(self.declare_type(
                         self.current_module_id,
                         Some(name.clone()),
-                        Vec::new(),                                 //todo: generics
-                        TypeVariant::Primitive(PrimitiveType::Any), //todo: default type variant
                         Some(ast.span.clone()),
                     ));
                 } else {
@@ -1145,7 +1049,6 @@ impl<'a> NameResolverPassContext<'a> {
                         self.current_module_id,
                         name.clone(),
                         Some(ast.span),
-                        None,
                         mutable,
                         false,
                     ));
@@ -1153,12 +1056,21 @@ impl<'a> NameResolverPassContext<'a> {
             }
         }
         if let Some(ident) = ident {
-            if let Variant::Expr(ExprNode::Ident { id: expr_id, .. }) = &mut ident.variant {
-                if let Some(symbol_id) = id {
-                    *expr_id = Some(symbol_id);
-                } else {
-                    *expr_id = None;
+            match &mut ident.variant {
+                Variant::VarDecl {
+                    id: expr_id, name, ..
                 }
+                | Variant::Expr(ExprNode::Ident {
+                    id: expr_id, name, ..
+                }) => {
+                    println!("Registering {} with id {:?}", name, id);
+                    if let Some(symbol_id) = id {
+                        *expr_id = Some(symbol_id);
+                    } else {
+                        *expr_id = None;
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -1166,7 +1078,37 @@ impl<'a> NameResolverPassContext<'a> {
     fn top_level_decl_visitor(&mut self, ast: &mut Node) -> Result<(), ()> {
         if let Variant::Program { children, .. } = &mut ast.variant {
             for child in children.iter_mut() {
-                self.register_decl(child);
+                match child.variant {
+                    Variant::ActorDecl { .. }
+                    | Variant::InterfaceDecl { .. }
+                    | Variant::EnumDecl { .. }
+                    | Variant::StructDecl { .. }
+                    | Variant::FuncDecl { .. }
+                    | Variant::ImplDecl { .. }
+                    | Variant::VarDecl { .. }
+                    | Variant::TypeDecl { .. } => {
+                        self.register_decl(child);
+                    }
+                    _ => {
+                        if child.get_directive().is_none() {
+                            self.errors.push(Diagnostic {
+                                primary: DiagnosticMsg {
+                                    message: format!(
+                                        "Top-level declarations must be actors, interfaces, enums, structs, functions, impls, variables, or types, found {}",
+                                        child.variant.user_friendly_name()
+                                    ),
+                                    span: child.span.clone(),
+                                    file: self.current_file.clone(),
+                                    err_type: DiagnosticMsgType::InvalidTopLevelDeclaration,
+                                },
+                                notes: vec![],
+                                hints: vec![],
+                            });
+                        } else {
+                            self.register_decl(child);
+                        }
+                    }
+                }
             }
         } else {
             self.register_decl(ast);

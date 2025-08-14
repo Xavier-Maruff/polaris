@@ -6,6 +6,7 @@ pub enum TokenVariant {
     Ident(String),
     IntLit(String),
     FloatLit(String),
+    BoolLit(bool),
     StringLit(String),
     CharLit(String),
 
@@ -157,6 +158,7 @@ impl std::fmt::Display for TokenVariant {
             TokenVariant::Ident(s) => write!(f, "{}", s),
             TokenVariant::IntLit(s) => write!(f, "{}", s),
             TokenVariant::FloatLit(s) => write!(f, "{}", s),
+            TokenVariant::BoolLit(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             TokenVariant::StringLit(s) => write!(f, "\"{}\"", s),
             TokenVariant::CharLit(s) => write!(f, "'{}'", s),
             TokenVariant::Plus => write!(f, "+"),

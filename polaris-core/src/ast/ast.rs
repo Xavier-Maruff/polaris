@@ -10,15 +10,23 @@ use crate::{collect_expr_diagnostics, collect_node_diagnostics};
 pub struct Node {
     pub variant: Variant,
     pub scope_id: Option<SymbolId>,
+    pub type_id: Option<SymbolId>,
     pub warnings: Option<Vec<Diagnostic>>,
     pub errors: Option<Vec<Diagnostic>>,
     pub span: CodeSpan,
     pub export: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeIdent {
+    pub body_symbol_id: SymbolId,
+    pub params: Vec<TypeIdent>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Variant {
     Failed,
+    Dead,
     Program {
         file: String,
         module_id: Option<ModuleId>,
@@ -41,6 +49,7 @@ pub enum Variant {
     },
     VarDecl {
         name: String,
+        id: Option<SymbolId>,
         var_type: Option<Box<Node>>,
         modifiable: bool,
         initialiser: Option<Box<Node>>,
@@ -147,6 +156,7 @@ pub enum ExprNode {
         is_directive: bool,
         is_type: bool,
     },
+    BoolLit(bool),
     IntLit(i64),
     FloatLit(f64),
     CharLit(String),
@@ -230,6 +240,132 @@ pub enum UnaryOp {
     Spawn,
 }
 
+impl Variant {
+    pub fn user_friendly_name(&self) -> String {
+        match self {
+            Variant::Dead => "dead node".to_string(),
+            Variant::Failed => "failed node".to_string(),
+            Variant::Program { .. } => "program".to_string(),
+            Variant::Expr(expr) => expr.user_friendly_name(),
+            Variant::StructDecl { ident, .. } => {
+                if let Some(ident) = ident.get_ident() {
+                    format!("struct `{}`", ident)
+                } else {
+                    "struct".to_string()
+                }
+            }
+            Variant::FuncDecl { ident, .. } => {
+                if let Some(ident) = ident {
+                    format!(
+                        "function `{}`",
+                        ident.get_ident().unwrap_or("unknown".to_string())
+                    )
+                } else {
+                    "function".to_string()
+                }
+            }
+            Variant::VarDecl { name, .. } => format!("variable `{}`", name),
+            Variant::EnumDecl { ident, .. } => {
+                if let Some(ident) = ident.get_ident() {
+                    format!("enum `{}`", ident)
+                } else {
+                    "enum".to_string()
+                }
+            }
+            Variant::InterfaceDecl { ident, .. } => {
+                if let Some(ident) = ident.get_ident() {
+                    format!("interface `{}`", ident)
+                } else {
+                    "interface".to_string()
+                }
+            }
+            Variant::ImplDecl { target, .. } => {
+                if let Some(ident) = target.get_ident() {
+                    format!("implementation for `{}`", ident)
+                } else {
+                    "implementation".to_string()
+                }
+            }
+            Variant::Block { .. } => "block".to_string(),
+            Variant::Return { value } => {
+                if let Some(val) = value {
+                    format!("return with value `{}`", val)
+                } else {
+                    "return".to_string()
+                }
+            }
+            Variant::Yield { value } => {
+                if let Some(val) = value {
+                    format!("yield with value `{}`", val)
+                } else {
+                    "yield".to_string()
+                }
+            }
+            Variant::Break => "break statement".to_string(),
+            Variant::Continue => "continue statement".to_string(),
+            Variant::Assert {
+                condition,
+                messages,
+            } => {
+                let mut msg = format!("assertion on `{}`", condition);
+                if !messages.is_empty() {
+                    msg.push_str(" with messages: ");
+                    msg.push_str(
+                        &messages
+                            .iter()
+                            .map(|m| m.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+                msg
+            }
+            Variant::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let mut msg = format!("if statement on `{}`", condition);
+                msg.push_str(&format!(" then branch: {}", then_branch));
+                if let Some(else_branch) = else_branch {
+                    msg.push_str(&format!(" else branch: {}", else_branch));
+                }
+                msg
+            }
+            Variant::For { variant, body } => {
+                format!("for loop with variant `{}` and body `{}`", variant, body)
+            }
+            Variant::TypeDecl { ident, .. } => {
+                if let Some(ident) = ident.get_ident() {
+                    format!("type declaration `{}`", ident)
+                } else {
+                    "type declaration".to_string()
+                }
+            }
+            Variant::ActorDecl {
+                ident,
+                methods,
+                fields,
+            } => {
+                let mut msg = format!(
+                    "actor `{}`",
+                    ident.get_ident().unwrap_or("unknown".to_string())
+                );
+                if !fields.is_empty() {
+                    msg.push_str(" with fields");
+                }
+                if !methods.is_empty() {
+                    msg.push_str(" and methods");
+                }
+                msg
+            }
+            Variant::Defer { body } => {
+                format!("defer statement with body `{}`", body)
+            }
+        }
+    }
+}
+
 impl fmt::Display for UnaryOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -296,6 +432,58 @@ impl ExprNode {
         }
     }
 
+    pub fn user_friendly_name(&self) -> String {
+        match self {
+            ExprNode::Empty => "empty expression".to_string(),
+            ExprNode::String(_) => "string literal".to_string(),
+            ExprNode::Ident { name, .. } => format!("identifier `{}`", name),
+            ExprNode::IntLit(_) => "integer literal".to_string(),
+            ExprNode::FloatLit(_) => "float literal".to_string(),
+            ExprNode::BoolLit(_) => "boolean literal".to_string(),
+            ExprNode::CharLit(_) => "character literal".to_string(),
+            ExprNode::TupleLit { .. } => "tuple literal".to_string(),
+            ExprNode::BinaryOp { op, .. } => format!("binary operation `{}`", op),
+            ExprNode::StructLit { struct_ident, .. } => {
+                if let Some(ident) = struct_ident {
+                    format!("struct literal `{}`", ident)
+                } else {
+                    "struct literal".to_string()
+                }
+            }
+            ExprNode::ActorLit {
+                actor_ident,
+                fields,
+                ..
+            } => {
+                if fields.is_empty() {
+                    format!("actor literal `{}`", actor_ident)
+                } else {
+                    format!("actor literal `{}` with fields", actor_ident)
+                }
+            }
+            ExprNode::Call { callee, .. } => {
+                if let Some(ident) = callee.get_ident() {
+                    format!("function call to `{}`", ident)
+                } else {
+                    "function call".to_string()
+                }
+            }
+            ExprNode::ListLit { .. } => "list literal".to_string(),
+            ExprNode::Match { subject, .. } => {
+                format!("match expression on `{}`", subject)
+            }
+            ExprNode::FieldAccess { base, field } => {
+                format!("field access `{}` on `{}`", field, base)
+            }
+            ExprNode::Index { base, index } => {
+                format!("indexing `{}` with `{}`", base, index)
+            }
+            ExprNode::UnaryOp { op, operand } => {
+                format!("unary operation `{}` on `{}`", op, operand)
+            }
+        }
+    }
+
     pub fn warnings(&self) -> Vec<Diagnostic> {
         let mut warnings = Vec::new();
         collect_expr_diagnostics!(self, warnings, warnings);
@@ -341,6 +529,7 @@ impl Node {
             errors: None,
             export: false,
             scope_id: None,
+            type_id: None,
         }
     }
 
@@ -352,6 +541,7 @@ impl Node {
             errors: None,
             export: false,
             scope_id: None,
+            type_id: None,
         }
     }
 
@@ -405,6 +595,33 @@ impl Node {
     pub fn get_string(&self) -> Option<String> {
         match &self.variant {
             Variant::Expr(ExprNode::String(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    //symbol id + type param ids
+    pub fn get_symbol_ids(&self) -> Option<TypeIdent> {
+        match &self.variant {
+            Variant::Expr(ExprNode::Ident { id, type_args, .. }) => {
+                assert!(id.is_some(), "Identifier must have a symbol id");
+
+                let type_params = type_args
+                    .iter()
+                    .map(|t| t.get_symbol_ids())
+                    .filter(|t| t.is_some())
+                    .map(|t| t.unwrap())
+                    .collect::<Vec<_>>();
+
+                assert!(
+                    type_args.len() == type_params.len(),
+                    "Not all type argument symbols associated ids"
+                );
+
+                Some(TypeIdent {
+                    body_symbol_id: id.unwrap(),
+                    params: type_params,
+                })
+            }
             _ => None,
         }
     }
@@ -500,6 +717,7 @@ impl Node {
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.variant {
+            Variant::Dead => Ok(()),
             Variant::Failed => write!(f, "/* <failed> */\n"),
             Variant::Program { children, .. } => {
                 for child in children {
@@ -671,6 +889,7 @@ impl fmt::Display for Node {
                 var_type,
                 initialiser,
                 modifiable,
+                ..
             } => {
                 write!(f, "let ")?;
                 if *modifiable {
@@ -817,6 +1036,7 @@ impl fmt::Display for ExprNode {
             }
             ExprNode::IntLit(i) => write!(f, "{}", i),
             ExprNode::FloatLit(v) => write!(f, "{}", v),
+            ExprNode::BoolLit(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             ExprNode::CharLit(c) => write!(f, "'{}'", c),
             ExprNode::BinaryOp { op, lhs, rhs } => {
                 write!(f, "({} {} {})", lhs, op, rhs)
