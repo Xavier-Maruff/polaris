@@ -59,6 +59,16 @@ pub enum DiagnosticMsgType {
     ModuleNotFound,
     MultipleDeclarations,
     UndeclaredSymbol,
+    InvalidTopLevelDeclaration,
+    TypeMismatch,
+    UnificationFailure,
+    OccursCheckFailure,
+    InfiniteType,
+    ArityMismatch,
+    UndeclaredFunction,
+    InvalidFunctionCall,
+    RecursiveTypeDefinition,
+    Unimplemented,
 }
 
 pub fn code(c: &DiagnosticMsgType) -> &'static str {
@@ -82,7 +92,16 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         DiagnosticMsgType::ModuleNotFound => "EN0015",
         DiagnosticMsgType::MultipleDeclarations => "EN0016",
         DiagnosticMsgType::UndeclaredSymbol => "EN0017",
-        // todo
+        DiagnosticMsgType::InvalidTopLevelDeclaration => "ET0018",
+        DiagnosticMsgType::TypeMismatch => "ET0019",
+        DiagnosticMsgType::UnificationFailure => "ET0020",
+        DiagnosticMsgType::OccursCheckFailure => "ET0021",
+        DiagnosticMsgType::InfiniteType => "ET0022",
+        DiagnosticMsgType::ArityMismatch => "ET0023",
+        DiagnosticMsgType::UndeclaredFunction => "EN0024",
+        DiagnosticMsgType::InvalidFunctionCall => "ET0025",
+        DiagnosticMsgType::RecursiveTypeDefinition => "ET0026",
+        DiagnosticMsgType::Unimplemented => "EC0027", // todo
     }
 }
 

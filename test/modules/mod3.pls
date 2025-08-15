@@ -3,5 +3,5 @@
 let mod2 = @import("mod2");
 
 export func test() {
-    mod2::mod1::check();
+    return mod2::mod1::check();
 }
