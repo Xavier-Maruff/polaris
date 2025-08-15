@@ -844,7 +844,6 @@ impl<'a> NameResolverPassContext<'a> {
             name,
             initialiser,
             var_type,
-            id,
             ..
         } = &mut ast.variant
         {
@@ -921,29 +920,32 @@ impl<'a> NameResolverPassContext<'a> {
             | Variant::EnumDecl { ident, .. }
             | Variant::StructDecl { ident, .. } => {
                 let name = ident.get_ident();
-                (Some(ident), name)
+                (Some(ident.get_symbol_id()), name)
             }
             Variant::TypeDecl { ident, .. } => {
                 is_type = true;
                 let name = ident.get_ident();
-                (Some(ident), name)
+                (Some(ident.get_symbol_id()), name)
             }
             Variant::FuncDecl { ident, .. } => {
                 is_type = false;
                 match ident {
                     Some(ident) => {
                         let name = ident.get_ident();
-                        (Some(ident), name)
+                        (Some(ident.get_symbol_id()), name)
                     }
                     None => (None, None),
                 }
             }
             Variant::VarDecl {
-                name, modifiable, ..
+                name,
+                modifiable,
+                id,
+                ..
             } => {
                 is_type = false;
                 mutable = *modifiable;
-                (None, Some(name.to_string()))
+                (Some(id), Some(name.to_string()))
             }
             Variant::Expr(ExprNode::Call { callee, args }) => {
                 if Some("@import".to_string()) == callee.get_directive() {
@@ -1056,22 +1058,7 @@ impl<'a> NameResolverPassContext<'a> {
             }
         }
         if let Some(ident) = ident {
-            match &mut ident.variant {
-                Variant::VarDecl {
-                    id: expr_id, name, ..
-                }
-                | Variant::Expr(ExprNode::Ident {
-                    id: expr_id, name, ..
-                }) => {
-                    println!("Registering {} with id {:?}", name, id);
-                    if let Some(symbol_id) = id {
-                        *expr_id = Some(symbol_id);
-                    } else {
-                        *expr_id = None;
-                    }
-                }
-                _ => {}
-            }
+            *ident = id;
         }
     }
 

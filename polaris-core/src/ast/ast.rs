@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Binary};
 
 use crate::diagnostic::Diagnostic;
 use crate::module::ModuleId;
@@ -384,6 +384,50 @@ impl fmt::Display for UnaryOp {
     }
 }
 
+impl UnaryOp {
+    pub fn name(&self) -> &'static str {
+        match self {
+            UnaryOp::Minus => "numerical_negation",
+            UnaryOp::Not => "logical_negation",
+            UnaryOp::BitNot => "bitwise_negation",
+            UnaryOp::Deref => "dereference",
+            UnaryOp::BindMonad => "bind_monad",
+            UnaryOp::Await => "await",
+            UnaryOp::Block => "block",
+            UnaryOp::FusedAssign => "fused_assignment",
+            UnaryOp::Spread => "spread",
+            UnaryOp::Spawn => "spawn",
+            UnaryOp::Ref => "reference",
+        }
+    }
+}
+
+impl BinaryOp {
+    pub fn name(&self) -> &'static str {
+        match self {
+            BinaryOp::Add => "sum",
+            BinaryOp::Assign => "assign",
+            BinaryOp::BitAnd => "bitwise_and",
+            BinaryOp::BitOr => "bitwise_or",
+            BinaryOp::BitXor => "bitwise_xor",
+            BinaryOp::BitNot => "bitwise_not",
+            BinaryOp::And => "boolean_conjunction",
+            BinaryOp::Or => "boolean_disjunction",
+            BinaryOp::Not => "boolean_negation",
+            BinaryOp::Subtract => "difference",
+            BinaryOp::Multiply => "product",
+            BinaryOp::Divide => "quotient",
+            BinaryOp::Modulo => "modulus",
+            BinaryOp::Equiv => "equivalence",
+            BinaryOp::NotEquiv => "non_equivalence",
+            BinaryOp::LessThan => "less_than",
+            BinaryOp::GreaterThan => "greater_than",
+            BinaryOp::LessThanEquiv => "less_than_or_equivalent",
+            BinaryOp::GreaterThanEquiv => "greater_than_or_equivalent",
+        }
+    }
+}
+
 impl fmt::Display for BinaryOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -596,6 +640,18 @@ impl Node {
         match &self.variant {
             Variant::Expr(ExprNode::String(s)) => Some(s.clone()),
             _ => None,
+        }
+    }
+
+    pub fn get_symbol_id(&mut self) -> &mut Option<SymbolId> {
+        match &mut self.variant {
+            //TODO: there might be others, jsut eyeballed this wihtout thinking too much
+            Variant::Expr(ExprNode::Ident { id, .. }) => id,
+            Variant::EnumDecl { ident, .. }
+            | Variant::StructDecl { ident, .. }
+            | Variant::TypeDecl { ident, .. }
+            | Variant::ActorDecl { ident, .. } => ident.get_symbol_id(),
+            _ => unreachable!("Tried to get symbol id for non-symbol node"),
         }
     }
 

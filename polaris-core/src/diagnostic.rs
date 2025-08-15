@@ -68,6 +68,7 @@ pub enum DiagnosticMsgType {
     UndeclaredFunction,
     InvalidFunctionCall,
     RecursiveTypeDefinition,
+    Unimplemented,
 }
 
 pub fn code(c: &DiagnosticMsgType) -> &'static str {
@@ -100,7 +101,7 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         DiagnosticMsgType::UndeclaredFunction => "EN0024",
         DiagnosticMsgType::InvalidFunctionCall => "ET0025",
         DiagnosticMsgType::RecursiveTypeDefinition => "ET0026",
-        // todo
+        DiagnosticMsgType::Unimplemented => "EC0027", // todo
     }
 }
 

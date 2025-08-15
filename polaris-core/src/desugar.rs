@@ -2,6 +2,7 @@ use crate::{
     ast::ast::{BinaryOp, ExprNode, ForVariant, Node, UnaryOp, Variant},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg},
+    parse::CodeSpan,
     visit_ast_children,
 };
 
@@ -24,54 +25,66 @@ struct DesugarContext<'a> {
 }
 
 impl DesugarContext<'_> {
-    fn visit_expr(&mut self, expr: &mut ExprNode) -> Result<(), ()> {
+    fn visit_expr(&mut self, expr: &mut ExprNode, span: CodeSpan) -> Result<(), ()> {
         match expr {
             ExprNode::BinaryOp { lhs, rhs, op } => {
-                if let Variant::Expr(ExprNode::UnaryOp {
-                    op: rhs_op,
-                    operand: rhs_operand,
-                }) = &mut rhs.variant
-                {
+                if let Variant::Expr(ExprNode::UnaryOp { op: rhs_op, .. }) = &rhs.variant {
                     if matches!(rhs_op, UnaryOp::FusedAssign) {
-                        //replace expr_node with a new binary operation a += b => a = a + b
-                        //rewrite rhs from unary(fused_assign, rhs_operand) to binary(lhs, rhs, op)
-                        match op {
-                        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
-                        | BinaryOp::Modulo | BinaryOp::BitOr | BinaryOp::BitXor
-                        | BinaryOp::BitAnd | BinaryOp::BitNot => {}
-                        _ => {
-                            self.ctx.add_error(Diagnostic{
-                                primary: DiagnosticMsg {
-                                    message: format!("Unsupported fused assignment operator: {:?}", op),
-                                    file: self.file.clone(),
-                                    span: lhs.span,
-                                    err_type: crate::diagnostic::DiagnosticMsgType::InvalidOperator,
-                                },
-                                notes: vec![],
-                                hints: vec!["Only +=, -=, *=, /=, %=, |=, ^=, ~=, and &= are supported for fused assignment.".to_string()],
-                            })
-                        }
-                    };
-
-                        rhs.variant = Variant::Expr(ExprNode::BinaryOp {
-                            op: op.clone(),
-                            lhs: lhs.clone(),
-                            rhs: rhs_operand.clone(),
-                        });
-
-                        *op = BinaryOp::Assign;
+                        self.rewrite_fused_op(lhs, rhs, op);
                     }
                 }
+
+                //map binary ops to function calls
+                //     *expr = ExprNode::Call {
+                //         callee: Node::new_with_span(Variant::Expr(ExprNode::Ident { name: format!(""), type_args: (), memory_mode: (), id: (), is_directive: (), is_type: () }), span),
+                //         args: vec![lhs, rhs],
+                //     }
             }
             _ => {}
         }
         Ok(())
     }
 
+    fn rewrite_fused_op(&mut self, lhs: &mut Box<Node>, rhs: &mut Box<Node>, op: &mut BinaryOp) {
+        if let Variant::Expr(ExprNode::UnaryOp {
+            op: rhs_op,
+            operand: rhs_operand,
+        }) = &mut rhs.variant
+        {
+            //replace expr_node with a new binary operation a += b => a = a + b
+            //rewrite rhs from unary(fused_assign, rhs_operand) to binary(lhs, rhs, op)
+            match op {
+            BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
+            | BinaryOp::Modulo | BinaryOp::BitOr | BinaryOp::BitXor
+            | BinaryOp::BitAnd | BinaryOp::BitNot => {}
+            _ => {
+                self.ctx.add_error(Diagnostic{
+                    primary: DiagnosticMsg {
+                        message: format!("Unsupported fused assignment operator: {:?}", op),
+                        file: self.file.clone(),
+                        span: lhs.span,
+                        err_type: crate::diagnostic::DiagnosticMsgType::InvalidOperator,
+                    },
+                    notes: vec![],
+                    hints: vec!["Only +=, -=, *=, /=, %=, |=, ^=, ~=, and &= are supported for fused assignment.".to_string()],
+                })
+            }
+        };
+
+            rhs.variant = Variant::Expr(ExprNode::BinaryOp {
+                op: op.clone(),
+                lhs: lhs.clone(),
+                rhs: rhs_operand.clone(),
+            });
+
+            *op = BinaryOp::Assign;
+        }
+    }
+
     fn visit(&mut self, ast: &mut Node) -> Result<(), ()> {
         match ast.variant {
             Variant::Expr(ref mut expr) => {
-                self.visit_expr(expr)?;
+                self.visit_expr(expr, ast.span)?;
             }
             _ => {}
         };
