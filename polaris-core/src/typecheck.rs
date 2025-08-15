@@ -258,7 +258,7 @@ impl TypecheckPassContext {
             ExprNode::Ident { id: Some(id), .. } => Type::TypeVar(self.get_symbol_type_var(*id)),
             ExprNode::String(_) => Type::String,
             ExprNode::CharLit(_) => Type::Char,
-            //default to int64, will implement subtyping later??
+            //default to 64 bit types, will implement subtyping later??
             ExprNode::IntLit(_) => Type::Int64,
             ExprNode::FloatLit(_) => Type::Float64,
             ExprNode::TupleLit { elements } => {

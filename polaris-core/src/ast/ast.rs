@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Binary};
 
 use crate::diagnostic::Diagnostic;
 use crate::module::ModuleId;
@@ -380,6 +380,50 @@ impl fmt::Display for UnaryOp {
             UnaryOp::Spread => write!(f, "..."),
             UnaryOp::Spawn => write!(f, "spawn "),
             UnaryOp::Ref => write!(f, "ref "),
+        }
+    }
+}
+
+impl UnaryOp {
+    pub fn name(&self) -> &'static str {
+        match self {
+            UnaryOp::Minus => "numerical_negation",
+            UnaryOp::Not => "logical_negation",
+            UnaryOp::BitNot => "bitwise_negation",
+            UnaryOp::Deref => "dereference",
+            UnaryOp::BindMonad => "bind_monad",
+            UnaryOp::Await => "await",
+            UnaryOp::Block => "block",
+            UnaryOp::FusedAssign => "fused_assignment",
+            UnaryOp::Spread => "spread",
+            UnaryOp::Spawn => "spawn",
+            UnaryOp::Ref => "reference",
+        }
+    }
+}
+
+impl BinaryOp {
+    pub fn name(&self) -> &'static str {
+        match self {
+            BinaryOp::Add => "sum",
+            BinaryOp::Assign => "assign",
+            BinaryOp::BitAnd => "bitwise_and",
+            BinaryOp::BitOr => "bitwise_or",
+            BinaryOp::BitXor => "bitwise_xor",
+            BinaryOp::BitNot => "bitwise_not",
+            BinaryOp::And => "boolean_conjunction",
+            BinaryOp::Or => "boolean_disjunction",
+            BinaryOp::Not => "boolean_negation",
+            BinaryOp::Subtract => "difference",
+            BinaryOp::Multiply => "product",
+            BinaryOp::Divide => "quotient",
+            BinaryOp::Modulo => "modulus",
+            BinaryOp::Equiv => "equivalence",
+            BinaryOp::NotEquiv => "non_equivalence",
+            BinaryOp::LessThan => "less_than",
+            BinaryOp::GreaterThan => "greater_than",
+            BinaryOp::LessThanEquiv => "less_than_or_equivalent",
+            BinaryOp::GreaterThanEquiv => "greater_than_or_equivalent",
         }
     }
 }
