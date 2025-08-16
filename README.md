@@ -43,9 +43,6 @@ let my_initialised_var = 42; // type is inferred as int32
 let mod my_mutable_var: int32 = 42;
 ```
 
-> [!NOTE]
-> The `mod` keyword declares the _binding_ to be mutable, allowing reassignment of the variable - variables such as struct instances can still have their fields mutated even if the binding is immutable.
-
 As you saw, types are written after the variable name, and can be inferred by the compiler. Polaris has a rich set of built-in types, including integers, floats, booleans, strings, vectors, and arrays. It also supports user-defined types like structs and enums:
 
 ```go
