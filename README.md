@@ -181,7 +181,7 @@ Polaris only supports `for` loops, which can exist in three modes: iterating ove
 ```zig
 //iterating over an iterable
 let my_vec = [1, 2, 3, 4, 5];
-for item in my_vec {
+for let mod item in my_vec {
 	@println(item);
 }
 

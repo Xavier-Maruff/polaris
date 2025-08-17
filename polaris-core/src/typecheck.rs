@@ -1,17 +1,21 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::ast::{BinaryOp, ExprNode, ForVariant, Node, TypeIdent, Variant},
+    ast::ast::{BinaryOp, ExprNode, ForVariant, Node, TypeIdent, UnaryOp, Variant},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
+    intrinsics::declare_intrinsic_types,
     log::Logger,
+    module::INVALID_MODULE_ID,
     parse::CodeSpan,
-    symbol::SymbolId,
+    symbol::{INVALID_SYMBOL_ID, SymbolId},
     visit_ast_children,
 };
 
 pub fn typecheck_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let mut typecheck_ctx = TypecheckPassContext::new(ctx.logger.clone());
+    let mut typecheck_ctx = TypecheckPassContext::new(ctx);
+    declare_intrinsic_types(&mut typecheck_ctx, &ctx.symbol_table);
+
     let ret = typecheck_ctx.run_typecheck_pass(ctx);
 
     ctx.errors.extend(typecheck_ctx.errors);
@@ -30,6 +34,7 @@ type TypeId = usize;
 pub struct TypeScheme {
     pub body: Type,
     pub quantified_vars: Vec<TypeId>,
+    pub constraints: Vec<Constraint>,
 }
 
 impl TypeScheme {
@@ -37,13 +42,20 @@ impl TypeScheme {
         TypeScheme {
             body,
             quantified_vars,
+            constraints: Vec::new(),
         }
     }
 
-    pub fn instantiate<T: TypeGenerator>(&self, type_gen: &mut T) -> Self {
+    pub fn instantiate(&self, type_gen: &mut TypeGenerator) -> Self {
+        let (body, subs) = self.body.with_fresh_vars(type_gen, &self.quantified_vars);
         TypeScheme {
-            body: self.body.with_fresh_vars(type_gen, &self.quantified_vars),
+            body,
             quantified_vars: self.quantified_vars.clone(),
+            constraints: self
+                .constraints
+                .iter()
+                .map(|c| c.clone().apply_subst(&subs[0]))
+                .collect(),
         }
     }
 }
@@ -75,35 +87,66 @@ pub enum Type {
         fields: HashMap<String, Type>,
     },
     List(Box<Type>),
+    Vector(Box<Type>),
     Tuple(Vec<Type>),
     Enum {
         symbol: SymbolId,
         variants: Option<HashMap<String, Type>>,
     },
     TypeVar(TypeId),
+    Ref(Box<Type>),
 }
 
-trait TypeGenerator {
-    fn fresh_type_var(&mut self) -> TypeId;
+pub type Substitution = (TypeId, TypeId);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypeGenerator {
+    type_var_counter: usize,
+}
+
+impl TypeGenerator {
+    fn new(initial_counter: usize) -> Self {
+        TypeGenerator {
+            type_var_counter: initial_counter,
+        }
+    }
+
+    fn fresh_type_var(&mut self) -> TypeId {
+        self.type_var_counter += 1;
+        self.type_var_counter
+    }
 }
 
 impl Type {
     // replace all free type variables with new free type variables,
     // keep fixed type variables, as we want to don't want to re-generialise the type
-    fn with_fresh_vars<T: TypeGenerator>(
+    fn with_fresh_vars(
         &self,
-        type_gen: &mut T,
+        type_gen: &mut TypeGenerator,
         quantified: &Vec<TypeId>,
-    ) -> Self {
-        let mut m = move |id: &TypeId| {
+    ) -> (Self, Vec<Substitution>) {
+        let mut subs = Vec::new();
+        let mut m = |id: &TypeId| {
             if !quantified.contains(id) {
-                type_gen.fresh_type_var()
+                let tv = type_gen.fresh_type_var();
+                subs.push((*id, tv));
+                tv
             } else {
                 id.clone()
             }
         };
 
-        self.apply_subst_func(&mut m)
+        (self.apply_subst_func(&mut m), subs)
+    }
+
+    fn apply_subst(&self, subst: &Substitution) -> Self {
+        self.apply_subst_func(&mut |id| {
+            if id == &subst.0 {
+                subst.1.clone()
+            } else {
+                id.clone()
+            }
+        })
     }
 
     fn apply_subst_func<M: FnMut(&TypeId) -> TypeId>(&self, m: &mut M) -> Self {
@@ -147,6 +190,7 @@ impl Type {
 
             Type::List(t) => Type::List(Box::new(t.apply_subst_func(m))),
             Type::Tuple(t) => Type::Tuple(t.iter().map(|t| t.apply_subst_func(m)).collect()),
+            Type::Ref(t) => Type::Ref(Box::new(t.apply_subst_func(m))),
 
             Type::Enum { symbol, variants } => Type::Enum {
                 symbol: *symbol,
@@ -172,12 +216,45 @@ impl Type {
     }
 }
 
-enum Constraint {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Constraint {
     Equality(Type, Type),
     Instance(Type, TypeScheme),
+    Implementation(Type, SymbolId),
 }
 
-struct TypecheckPassContext {
+impl Constraint {
+    pub fn apply_subst(self, subst: &Substitution) -> Self {
+        match self {
+            Constraint::Equality(lhs, rhs) => {
+                Constraint::Equality(lhs.apply_subst(subst), rhs.apply_subst(subst))
+            }
+            Constraint::Instance(target, scheme) => Constraint::Instance(
+                target.apply_subst(subst),
+                TypeScheme {
+                    body: scheme.body.apply_subst(subst),
+                    quantified_vars: scheme.quantified_vars.clone(),
+                    constraints: scheme
+                        .constraints
+                        .iter()
+                        .map(|c| c.clone().apply_subst(subst))
+                        .collect(),
+                },
+            ),
+            Constraint::Implementation(target, symbol) => {
+                Constraint::Implementation(target.apply_subst(subst), symbol)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Op {
+    BinOp(BinaryOp),
+    UOp(UnaryOp),
+}
+
+pub struct TypecheckPassContext {
     _logger: Logger,
     current_file: String,
     errors: Vec<Diagnostic>,
@@ -186,35 +263,82 @@ struct TypecheckPassContext {
     //could just use the symbol id and offset typeid gen by current symbol id counter
     symbol_type_vars: HashMap<SymbolId, TypeId>,
     parent_function: Option<SymbolId>,
-    type_var_counter: usize,
-}
-
-impl TypeGenerator for TypecheckPassContext {
-    fn fresh_type_var(&mut self) -> TypeId {
-        self.type_var_counter += 1;
-        self.type_var_counter
-    }
+    symbol_schemes: HashMap<SymbolId, TypeScheme>,
+    interface_impls: HashMap<SymbolId, Vec<SymbolId>>,
+    op_schemes: HashMap<Op, TypeScheme>,
+    //generating symbol ids for operators
+    //and treating them during typecheck as interfaces
+    //to simplify
+    intrinsic_interfaces: HashMap<String, SymbolId>,
+    type_var_generator: TypeGenerator,
+    symbol_id_counter: SymbolId,
 }
 
 impl TypecheckPassContext {
-    fn new(logger: Logger) -> Self {
+    fn new(ctx: &CompileContext) -> Self {
         Self {
-            _logger: logger,
+            _logger: ctx.logger.clone(),
+            symbol_schemes: ctx.symbol_table.type_schemes.clone(),
             current_file: String::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
             constraints: Vec::new(),
             symbol_type_vars: HashMap::new(),
-            type_var_counter: 0,
+            type_var_generator: TypeGenerator::new(0),
+            symbol_id_counter: ctx.symbol_id_counter + 1,
+            interface_impls: HashMap::new(),
+            op_schemes: HashMap::new(),
+            intrinsic_interfaces: HashMap::new(),
             parent_function: None,
         }
     }
 
+    pub fn decl_op(&mut self, op: Op, type_scheme: TypeScheme) {
+        self.op_schemes.insert(op, type_scheme);
+    }
+
+    pub fn decl_intrinsic_interface(&mut self, name: &str) {
+        let symbol_id = self.symbol_id_counter;
+        self.symbol_id_counter += 1;
+        self.intrinsic_interfaces
+            .insert(name.to_string(), symbol_id);
+    }
+
+    pub fn intrinsic_interface_id(&mut self, name: &str) -> SymbolId {
+        match self.intrinsic_interfaces.get(name).cloned() {
+            Some(id) => id,
+            None => {
+                self.errors.push(Diagnostic {
+                    primary: DiagnosticMsg {
+                        message: format!("Intrinsic interface '{}' not declared", name),
+                        span: CodeSpan::new(0, 0),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::UndeclaredSymbol,
+                    },
+                    notes: vec![],
+                    hints: vec![],
+                });
+                INVALID_SYMBOL_ID
+            }
+        }
+    }
+
+    pub fn decl_intrinsic_interface_impls(
+        &mut self,
+        symbol_id: SymbolId,
+        interface_symbol_ids: Vec<SymbolId>,
+    ) {
+        self.interface_impls
+            .entry(symbol_id)
+            .or_insert_with(Vec::new)
+            .extend(interface_symbol_ids);
+    }
+
     fn get_symbol_type_var(&mut self, symbol: SymbolId) -> TypeId {
-        self.type_var_counter += 1;
+        let type_var = self.type_var_generator.fresh_type_var();
         self.symbol_type_vars
             .entry(symbol)
-            .or_insert_with(|| self.type_var_counter)
+            .or_insert_with(|| type_var)
             .clone()
     }
 
@@ -271,9 +395,9 @@ impl TypecheckPassContext {
                 let ident_type_var = match struct_ident {
                     Some(ident) => match ident.get_symbol_id() {
                         Some(symbol_id) => self.get_symbol_type_var(*symbol_id),
-                        None => self.fresh_type_var(),
+                        None => self.type_var_generator.fresh_type_var(),
                     },
-                    None => self.fresh_type_var(),
+                    None => self.type_var_generator.fresh_type_var(),
                 };
                 Type::Struct {
                     symbol: ident_type_var,
@@ -287,7 +411,9 @@ impl TypecheckPassContext {
                 actor_ident,
                 fields,
             } => Type::Actor {
-                symbol: actor_ident.get_symbol_id().unwrap_or(self.fresh_type_var()),
+                symbol: actor_ident
+                    .get_symbol_id()
+                    .unwrap_or(self.type_var_generator.fresh_type_var()),
                 methods: None,
                 fields: fields
                     .iter_mut()
@@ -295,9 +421,121 @@ impl TypecheckPassContext {
                     .collect(),
             },
 
-            //todo: in desugaring map binops to interface calls
-            //also add internal flag for commutative interfaces
-            //todo: handle calls - will include all unary and bin ops after symbol rewrite
+            ExprNode::UnaryOp { op, operand } => {
+                let op_scheme = self.op_schemes.get(&Op::UOp(op.clone()));
+                if op_scheme.is_none() {
+                    self.errors.push(Diagnostic {
+                        primary: DiagnosticMsg {
+                            message: format!(
+                                "Unimplemented unary operator '{}' - available {:?}",
+                                op, self.op_schemes
+                            ),
+                            span: ast.span,
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::Unimplemented,
+                        },
+                        notes: vec![],
+                        hints: vec![],
+                    });
+                    return Type::Never;
+                }
+
+                let mut type_var_generator = self.type_var_generator.clone();
+                let op_scheme = op_scheme.unwrap().instantiate(&mut type_var_generator);
+                self.type_var_generator = type_var_generator;
+
+                let operand_expr_type = self.expr_type(operand);
+
+                let return_type = match &op_scheme.body {
+                    Type::Lambda { return_type, .. } => return_type.as_ref().clone(),
+                    _ => {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: format!(
+                                    "Expected lambda type for unary operator '{}', found '{:?}'",
+                                    op, op_scheme.body
+                                ),
+                                span: ast.span,
+                                file: self.current_file.clone(),
+                                err_type: DiagnosticMsgType::TypeMismatch,
+                            },
+                            notes: vec![],
+                            hints: vec![],
+                        });
+                        Type::Never
+                    }
+                };
+
+                self.constraints.push(Constraint::Equality(
+                    op_scheme.body,
+                    Type::Lambda {
+                        params: vec![operand_expr_type],
+                        return_type: Box::new(return_type.clone()),
+                    },
+                ));
+
+                self.constraints.extend(op_scheme.constraints);
+                return_type
+            }
+
+            ExprNode::BinaryOp { op, lhs, rhs } => {
+                let op_scheme = self.op_schemes.get(&Op::BinOp(op.clone()));
+                if op_scheme.is_none() {
+                    self.errors.push(Diagnostic {
+                        primary: DiagnosticMsg {
+                            message: format!(
+                                "Unimplemented binary operator '{}' - available {:?}",
+                                op, self.op_schemes
+                            ),
+                            span: ast.span,
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::Unimplemented,
+                        },
+                        notes: vec![],
+                        hints: vec![],
+                    });
+                    return Type::Never;
+                }
+
+                let mut type_var_generator = self.type_var_generator.clone();
+                let op_scheme = op_scheme.unwrap().instantiate(&mut type_var_generator);
+                self.type_var_generator = type_var_generator;
+
+                let lhs_expr_type = self.expr_type(lhs);
+                let rhs_expr_type = self.expr_type(rhs);
+
+                let return_type = match &op_scheme.body {
+                    Type::Lambda { return_type, .. } => return_type.as_ref().clone(),
+                    _ => {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: format!(
+                                    "Expected lambda type for binary operator '{}', found '{:?}'",
+                                    op, op_scheme.body
+                                ),
+                                span: ast.span,
+                                file: self.current_file.clone(),
+                                err_type: DiagnosticMsgType::TypeMismatch,
+                            },
+                            notes: vec![],
+                            hints: vec![],
+                        });
+                        Type::Never
+                    }
+                };
+
+                self.constraints.push(Constraint::Equality(
+                    op_scheme.body,
+                    Type::Lambda {
+                        params: vec![lhs_expr_type.clone(), rhs_expr_type],
+                        return_type: Box::new(return_type.clone()),
+                    },
+                ));
+
+                self.constraints.extend(op_scheme.constraints);
+                return_type
+            }
+
             //todo: sort field accessing
             _ => {
                 self.errors.push(Diagnostic {
@@ -440,10 +678,10 @@ impl TypecheckPassContext {
         type_vars.dedup();
 
         return (
-            Some(TypeScheme {
-                body: Type::TypeVar(self.get_symbol_type_var(ident.body_symbol_id)),
-                quantified_vars: type_vars,
-            }),
+            Some(TypeScheme::new(
+                Type::TypeVar(self.get_symbol_type_var(ident.body_symbol_id)),
+                type_vars,
+            )),
             None,
         );
     }

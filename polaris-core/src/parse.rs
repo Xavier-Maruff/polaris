@@ -1078,7 +1078,7 @@ impl<'a> ParseContext<'a> {
             | TokenVariant::Spawn
             | TokenVariant::Block => {
                 let op = match self.curr_tok.variant {
-                    TokenVariant::Minus => UnaryOp::Minus,
+                    TokenVariant::Minus => UnaryOp::Negate,
                     TokenVariant::Not => UnaryOp::Not,
                     TokenVariant::BitNot => UnaryOp::BitNot,
                     TokenVariant::Star => UnaryOp::Deref,

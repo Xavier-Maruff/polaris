@@ -33,12 +33,6 @@ impl DesugarContext<'_> {
                         self.rewrite_fused_op(lhs, rhs, op);
                     }
                 }
-
-                //map binary ops to function calls
-                //     *expr = ExprNode::Call {
-                //         callee: Node::new_with_span(Variant::Expr(ExprNode::Ident { name: format!(""), type_args: (), memory_mode: (), id: (), is_directive: (), is_type: () }), span),
-                //         args: vec![lhs, rhs],
-                //     }
             }
             _ => {}
         }
@@ -47,8 +41,8 @@ impl DesugarContext<'_> {
 
     fn rewrite_fused_op(&mut self, lhs: &mut Box<Node>, rhs: &mut Box<Node>, op: &mut BinaryOp) {
         if let Variant::Expr(ExprNode::UnaryOp {
-            op: rhs_op,
             operand: rhs_operand,
+            ..
         }) = &mut rhs.variant
         {
             //replace expr_node with a new binary operation a += b => a = a + b

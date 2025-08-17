@@ -1,12 +1,13 @@
-use std::collections::HashMap;
+use std::{any::TypeId, collections::HashMap};
 
 use crate::{
     ast::ast::{ExprNode, ForVariant, Node, UnaryOp, Variant},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
-    intrinsics::declare_intrinsics,
+    intrinsics::declare_intrinsic_symbols,
     module::{ModuleId, ModuleTable},
     parse::CodeSpan,
+    typecheck::TypeScheme,
     visit_ast_children,
 };
 use edit_distance::edit_distance;
@@ -25,6 +26,8 @@ pub struct SymbolTable {
     pub import_symbols: HashMap<SymbolId, String>,
     //symbol name -> (symbol id, symbol module id, imported module id)
     pub exported_imports: HashMap<String, (SymbolId, ModuleId, ModuleId)>,
+    //intrinsic type schemes
+    pub type_schemes: HashMap<SymbolId, TypeScheme>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +50,7 @@ impl SymbolTable {
             module_symbols: HashMap::new(),
             import_symbols: HashMap::new(),
             exported_imports: HashMap::new(),
+            type_schemes: HashMap::new(),
         }
     }
 
@@ -56,6 +60,12 @@ impl SymbolTable {
 
     pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
         self.symbols.get_mut(&id)
+    }
+
+    pub fn get_id_by_name(&self, name: &str) -> Option<SymbolId> {
+        self.symbols
+            .iter()
+            .find_map(|(id, symbol)| if symbol.name == name { Some(*id) } else { None })
     }
 
     pub fn remove(&mut self, id: SymbolId) -> Option<Symbol> {
@@ -215,7 +225,7 @@ impl<'a> NameResolverPassContext<'a> {
             type_context_override: false,
             module_table,
         };
-        declare_intrinsics(&mut ret);
+        declare_intrinsic_symbols(&mut ret);
         ret
     }
 

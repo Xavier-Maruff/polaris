@@ -1,4 +1,4 @@
-use std::fmt::{self, Binary};
+use std::fmt;
 
 use crate::diagnostic::Diagnostic;
 use crate::module::ModuleId;
@@ -201,7 +201,7 @@ pub enum ExprNode {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     Add,
     Subtract,
@@ -225,9 +225,9 @@ pub enum BinaryOp {
     Assign,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
-    Minus,
+    Negate,
     Not,
     BitNot,
     Ref,
@@ -369,7 +369,7 @@ impl Variant {
 impl fmt::Display for UnaryOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            UnaryOp::Minus => write!(f, "-"),
+            UnaryOp::Negate => write!(f, "-"),
             UnaryOp::Not => write!(f, "!"),
             UnaryOp::BitNot => write!(f, "~"),
             UnaryOp::Deref => write!(f, "*"),
@@ -387,17 +387,16 @@ impl fmt::Display for UnaryOp {
 impl UnaryOp {
     pub fn name(&self) -> &'static str {
         match self {
-            UnaryOp::Minus => "numerical_negation",
-            UnaryOp::Not => "logical_negation",
-            UnaryOp::BitNot => "bitwise_negation",
-            UnaryOp::Deref => "dereference",
-            UnaryOp::BindMonad => "bind_monad",
-            UnaryOp::Await => "await",
-            UnaryOp::Block => "block",
-            UnaryOp::FusedAssign => "fused_assignment",
-            UnaryOp::Spread => "spread",
-            UnaryOp::Spawn => "spawn",
-            UnaryOp::Ref => "reference",
+            UnaryOp::Negate => "_negate",
+            UnaryOp::Not => "_not",
+            UnaryOp::BitNot => "_bit_not",
+            UnaryOp::Deref => "_deref",
+            UnaryOp::BindMonad => "_bind_monad",
+            UnaryOp::Await => "_await",
+            UnaryOp::Block => "_block",
+            UnaryOp::Spawn => "_spawn",
+            UnaryOp::Ref => "_ref",
+            _ => "_unknown",
         }
     }
 }
@@ -405,25 +404,25 @@ impl UnaryOp {
 impl BinaryOp {
     pub fn name(&self) -> &'static str {
         match self {
-            BinaryOp::Add => "sum",
-            BinaryOp::Assign => "assign",
-            BinaryOp::BitAnd => "bitwise_and",
-            BinaryOp::BitOr => "bitwise_or",
-            BinaryOp::BitXor => "bitwise_xor",
-            BinaryOp::BitNot => "bitwise_not",
-            BinaryOp::And => "boolean_conjunction",
-            BinaryOp::Or => "boolean_disjunction",
-            BinaryOp::Not => "boolean_negation",
-            BinaryOp::Subtract => "difference",
-            BinaryOp::Multiply => "product",
-            BinaryOp::Divide => "quotient",
-            BinaryOp::Modulo => "modulus",
-            BinaryOp::Equiv => "equivalence",
-            BinaryOp::NotEquiv => "non_equivalence",
-            BinaryOp::LessThan => "less_than",
-            BinaryOp::GreaterThan => "greater_than",
-            BinaryOp::LessThanEquiv => "less_than_or_equivalent",
-            BinaryOp::GreaterThanEquiv => "greater_than_or_equivalent",
+            BinaryOp::Add => "_add",
+            BinaryOp::Assign => "_assign",
+            BinaryOp::BitAnd => "_bit_and",
+            BinaryOp::BitOr => "_bit_or",
+            BinaryOp::BitXor => "_bit_xor",
+            BinaryOp::BitNot => "_bit_not",
+            BinaryOp::And => "_and",
+            BinaryOp::Or => "_or",
+            BinaryOp::Not => "_not",
+            BinaryOp::Subtract => "_sub",
+            BinaryOp::Multiply => "_prod",
+            BinaryOp::Divide => "_div",
+            BinaryOp::Modulo => "_mod",
+            BinaryOp::Equiv => "_equiv",
+            BinaryOp::LessThan => "_lt",
+            BinaryOp::GreaterThan => "_gre",
+            BinaryOp::LessThanEquiv => "_lte",
+            BinaryOp::GreaterThanEquiv => "_gte",
+            BinaryOp::NotEquiv => "_not_equiv",
         }
     }
 }
