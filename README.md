@@ -219,7 +219,7 @@ func read_file(path: string): Result::<string, string> {
 
 ### References and Memory Management
 
-Polaris uses automatic reference counting (ARC) for memory management, which means that you don't have to worry about manually allocating and deallocating memory unless you opt-in to manual memory management. References are created with the `ref` keyword, and can be used to mutate the underlying value via the dereference operator `*`.
+Polaris uses automatic reference counting (ARC) for memory management, meaning you don't have to worry about memory management _or_ the overhead of a GC (though really the performance bottleneck will always be the homomorphic operations). References are created with the `ref` keyword, and can be used to mutate the underlying value via the dereference operator `*`, or its fields with the `.` operator. References can be created to any type as long as its instantiation is marked as mutable, including structs, enums, and arrays. Polaris will error during compilation if you try to create a ref to an immutable variable - this is because is no reason to create a reference to an immutable variable, as immutable variables are already default passed by reference if they are larger than a pointer size (which turns out to be all types in Polaris, as polynomials are the fundamental data type used internally by the homomorphic encryption schemes).
 
 ```zig
 let mod my_var = 42;
@@ -309,13 +309,13 @@ Actors are defined with the `actor` keyword, and are the only way that async fun
 actor MyActor {
 	my_val: int32,
 
-	async func increment(self) {
+	async func increment(mod ref self) {
 		//self if a reference to the actor instance
 		self.my_val += 1;
 	}
 
   //all actor methods must be async
-	async func get_value(self): int32 {
+	async func get_value(ref self): int32 {
 		return self.my_val;
 	}
 }
@@ -329,7 +329,7 @@ async func my_func(shared_state: ref MyActor, index: int32) {
 }
 
 func main() {
-	let my_actor = actor::MyActor { my_val: 0 };
+	let mod my_actor = actor::MyActor { my_val: 0 };
 
   let futures = [];
 	for i in range(0, 10) {
