@@ -1,7 +1,11 @@
-# 🔵 Polaris
+
+
+
+# <img width="30" height="30" alt="Polaris Logo" src="https://github.com/user-attachments/assets/b62872c0-521b-4d59-8407-c852d2af2a81" />  Polaris
 
 > [!CAUTION]
 > Polaris is a work in progress, and is not yet even capable of codegen. Watch this space for updates!
+
 
 Polaris is a high-security procedural compiled language for sensitive computation. All operations are performed homomorphically on encrypted data, meaning that a Polaris program can operate on sensitive data in untrusted environments without ever exposing plaintexts, even to the program itself - in fact, no Polaris program can ever deal with plaintext data.
 
