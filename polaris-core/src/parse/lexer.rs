@@ -296,7 +296,6 @@ impl Lexer {
                 "interface" => TokenVariant::Interface,
                 "impl" => TokenVariant::Impl,
                 "enum" => TokenVariant::Enum,
-                "priv" => TokenVariant::Priv,
                 "type" => TokenVariant::Type,
                 "in" => TokenVariant::In,
                 "ref" => TokenVariant::Ref,

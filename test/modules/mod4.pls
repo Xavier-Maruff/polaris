@@ -8,6 +8,10 @@ export func main::<T>() {
         a: 10,
     };
 
+    let my_func = func(a: int32, b: int32): int32 {
+        return a + b;
+    };
+
     let val = 1 + "test";
 
 

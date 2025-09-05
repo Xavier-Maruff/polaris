@@ -694,7 +694,18 @@ impl TypecheckPassContext {
                 modifiable,
                 initialiser,
                 id,
-            } => self.visit_var_decl(name, var_type, id, initialiser, ast.span)?,
+            } => return self.visit_var_decl(name, var_type, id, initialiser, ast.span),
+            Variant::FuncDecl {
+                ident,
+                capture_list,
+                params,
+                return_type,
+                body,
+                is_async,
+                is_extern,
+            } => {
+                //
+            }
             _ => {}
         }
 
