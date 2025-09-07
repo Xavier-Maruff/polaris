@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-pub struct Lexer{
+pub struct Lexer {
     source: String,
     pub file: String,
     pub position: usize,
@@ -53,28 +53,28 @@ impl Lexer {
                 'a'..='z' | 'A'..='Z' | '_' | '@' => return Ok(self.consume_identifier()),
                 '0'..='9' => return Ok(self.consume_number()),
                 '"' => return self.consume_string(),
-                '\'' => return self.consume_char(),
-                //'@' => return Ok(self.consume_directive()),
-
-                '+' | '-' | '*' | '%' | '^' | '~' | '&' | '|' | '!' | '<' | '>' => {
+                '+' | '*' | '%' | '^' | '~' | '&' | '|' | '!' | '<' | '>' => {
                     return Ok(self.consume_operator());
                 }
-                '=' => {
+                '-' => {
                     if let Some(next_char) = self.peek() {
                         if next_char == '>' {
-                            self.advance();
-                            self.advance();
+                            self.advance(); // skip '-'
+                            self.advance(); // skip '>'
                             return Ok(Token {
                                 variant: TokenVariant::Arrow,
                                 span: CodeSpan {
-                                    start: self.position - 2,
-                                    end: self.position,
+                                    start: self.position - 3,
+                                    end: self.position - 1,
                                 },
                             });
                         }
 
                         return Ok(self.consume_operator());
                     }
+                }
+                '=' => {
+                    return Ok(self.consume_operator());
                 }
                 '/' => {
                     if let Some(next_char) = self.peek() {
@@ -98,34 +98,12 @@ impl Lexer {
                 }
                 ':' => {
                     self.advance();
-                    if let Some(next_char) = self.current_char {
-                        if next_char == ':' {
-                            self.advance();
-                            return Ok(Token {
-                                variant: TokenVariant::DoubleColon,
-                                span: CodeSpan {
-                                    start: self.position - 3,
-                                    end: self.position - 1,
-                                },
-                            });
-                        }
-                    }
+
                     return Ok(Token {
                         variant: TokenVariant::Colon,
                         span: CodeSpan {
                             start: self.position - 2,
                             end: self.position - 1,
-                        },
-                    });
-                }
-                ';' => {
-                    self.advance();
-                    return Ok(Token {
-                        variant: TokenVariant::Semicolon,
-                        span: CodeSpan {
-                            start: self.position - 2,
-                            end: self.position-1,
-
                         },
                     });
                 }
@@ -135,7 +113,7 @@ impl Lexer {
                         variant: TokenVariant::Comma,
                         span: CodeSpan {
                             start: self.position - 2,
-                            end: self.position- 1,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -192,7 +170,7 @@ impl Lexer {
                         variant: TokenVariant::LBrace,
                         span: CodeSpan {
                             start: self.position - 2,
-                            end: self.position -1 ,
+                            end: self.position - 1,
                         },
                     });
                 }
@@ -220,6 +198,16 @@ impl Lexer {
                     self.advance();
                     return Ok(Token {
                         variant: TokenVariant::RBracket,
+                        span: CodeSpan {
+                            start: self.position - 2,
+                            end: self.position - 1,
+                        },
+                    });
+                }
+                '#' => {
+                    self.advance();
+                    return Ok(Token {
+                        variant: TokenVariant::Octothorpe,
                         span: CodeSpan {
                             start: self.position - 2,
                             end: self.position - 1,
@@ -281,39 +269,23 @@ impl Lexer {
             }
         }
 
-
         let ident_str = self.source[start..self.position - 1].to_string();
         Token {
             variant: match ident_str.as_str() {
-                "func" => TokenVariant::Func,
+                "fn" => TokenVariant::Fn,
+                "import" => TokenVariant::Import,
+                "as" => TokenVariant::As,
+                "host" => TokenVariant::Host,
                 "let" => TokenVariant::Let,
-                "mod" => TokenVariant::Mod,
-                "return" => TokenVariant::Return,
                 "if" => TokenVariant::If,
                 "else" => TokenVariant::Else,
                 "for" => TokenVariant::For,
-                "struct" => TokenVariant::Struct,
-                "interface" => TokenVariant::Interface,
-                "impl" => TokenVariant::Impl,
-                "enum" => TokenVariant::Enum,
                 "type" => TokenVariant::Type,
                 "in" => TokenVariant::In,
-                "ref" => TokenVariant::Ref,
-                "weak" => TokenVariant::Weak,
-                "match" => TokenVariant::Match,
-                "yield" => TokenVariant::Yield,
-                "break" => TokenVariant::Break,
-                "continue" => TokenVariant::Continue,
                 "assert" => TokenVariant::Assert,
-                "async" => TokenVariant::Async,
-                "await" => TokenVariant::Await,
-                "block" => TokenVariant::Block,
-                "actor" => TokenVariant::Actor,
-                "export" => TokenVariant::Export,
-                "extern" => TokenVariant::Extern,
-                "defer" => TokenVariant::Defer,
-                "true" => TokenVariant::BoolLit(true),
-                "false" => TokenVariant::BoolLit(false),
+                "pub" => TokenVariant::Pub,
+                "const" => TokenVariant::Const,
+                "nocrypt" => TokenVariant::Nocrypt,
                 _ => TokenVariant::Ident(ident_str),
             },
             span: CodeSpan {
@@ -326,13 +298,13 @@ impl Lexer {
     //todo: add hex and octal support
     pub fn consume_number(&mut self) -> Token {
         let start = self.position - 1;
-        let mut is_float = false;
+        let mut is_real = false;
 
         while let Some(c) = self.current_char {
             if c.is_digit(10) {
                 self.advance();
-            } else if c == '.' && !is_float {
-                is_float = true;
+            } else if c == '.' && !is_real {
+                is_real = true;
                 self.advance();
             } else {
                 break;
@@ -341,9 +313,9 @@ impl Lexer {
 
         let number_str = self.source[start..self.position - 1].to_string();
         Token {
-            variant: match is_float {
-            true => TokenVariant::FloatLit(number_str),
-            false => TokenVariant::IntLit(number_str),
+            variant: match is_real {
+                true => TokenVariant::RealLit(number_str),
+                false => TokenVariant::IntLit(number_str),
             },
             span: CodeSpan {
                 start,
@@ -385,60 +357,14 @@ impl Lexer {
             });
         }
 
-        Ok(Token{
-            variant: TokenVariant::StringLit(
-            self.source[start..self.position - 2].to_string(),
-        ),
-            span: CodeSpan {
-                start,
-                end: self.position - 1,
-            },
-        })
-    }
-
-    pub fn consume_char(&mut self) -> Result<Token, Diagnostic> {
-        self.advance(); // skip opening quote
-        let start = self.position; // start after opening quote
-        if let Some(c) = self.current_char {
-            if c != '\'' {
-                self.advance(); // skip character
-            }
-        }
-
-        if self.current_char.is_none() || self.current_char.unwrap() != '\'' {
-            return Err(Diagnostic {
-                primary: DiagnosticMsg {
-                    message: "Unterminated character literal".to_string(),
-                    span: CodeSpan {
-                        start,
-                        end: start + cmp::min(self.source.len() - start, 5),
-                    },
-                    file: self.file.clone(),
-                    err_type: DiagnosticMsgType::UnterminatedString,
-                },
-                notes: vec![],
-                hints: vec![
-                    "Add the missing \"'\" at the end of the character literal.".to_string(),
-                    "Check for missing escape characters.".to_string(),
-                ],
-            });
-        }
-
-        self.advance(); // skip closing quote
-        /*Ok(Token::CharLit(
-            self.source[start..self.position - 1].to_string(),
-        ))*/
         Ok(Token {
-            variant: TokenVariant::CharLit(
-                self.source[start..self.position - 2].to_string(), // Exclude the closing quote
-            ),
+            variant: TokenVariant::StringLit(self.source[start..self.position - 2].to_string()),
             span: CodeSpan {
                 start,
                 end: self.position - 1,
             },
         })
     }
-
 
     pub fn consume_operator(&mut self) -> Token {
         let start = self.position - 1;
@@ -484,8 +410,8 @@ impl Lexer {
         }
 
         let operator_str = self.source[start..self.position - 1].to_string();
-       Token{
-           variant: match operator_str.as_str() {
+        Token {
+            variant: match operator_str.as_str() {
                 "+" => TokenVariant::Plus,
                 "-" => TokenVariant::Minus,
                 "*" => TokenVariant::Star,
@@ -508,18 +434,18 @@ impl Lexer {
                 _ => {
                     unreachable!()
                 }
-           },
+            },
             span: CodeSpan {
                 start,
                 end: self.position - 1,
             },
-       }
+        }
     }
 
     pub fn consume_comment(&mut self) -> Token {
         self.advance(); // skip /
         self.advance(); // skip /
-        let start = self.position-1;
+        let start = self.position - 1;
 
         while let Some(c) = self.current_char {
             if c == '\n' {

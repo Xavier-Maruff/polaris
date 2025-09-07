@@ -66,7 +66,7 @@ pub async fn command(args: CompileArgs) {
         return;
     }
 
-    match compile_ctx.run_passes(None) {
+    match compile_ctx.run_passes() {
         Ok(_) => logger.step("Passes", "All passes completed successfully"),
         Err(_) => {
             logger.error("Failed to run passes");

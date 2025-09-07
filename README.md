@@ -45,40 +45,6 @@ There is are two major points of divergence from the Gleam type system: the firs
 Nocrypt tells the compiler to, by default, not encrypt the underlying value (though the runtime will also load an encrypted version if involved in arithmetic with a standard encrypted value).
 Use `nocrypt` for large (10-100x) performance benefits when not dealing with sensitive data - for example, routing a web request. For ultra-high security applications, the use of nocrypt can be disabled via the compiler flag `--no-nocrypt`.
 
-#### Kinds
-
-> [!NOTE]
-> Skip this section unless you're a type nerd, in 99% of cases you won't interact explicity with kinds
-
-Kinds allow Polaris to restrict type parameters without introducing subtyping, for example, in the definition of the `Fixed` decimal type:
-
-```gleam
-type Fixed(t: Scale) {
-  Fixed(t)
-}
-```
-
-The parameter `t` is of kind `Scale` - the compiler will error if you try to pass a regular type, as all standard types in Polaris are of kind `Type`. Type parameters are always restricted to a single kind, and this restriction is implicitly to the kind `Type`, unless declared otherwise:
-
-```gleam
-type Fixed(t) {
-  Fixed(t)
-}
-
-//is implicit shorthand for
-type Fixed(t: Type) {
-  Fixed(t)
-}
-```
-
-There are three intrinsic kinds in Polaris:
-
-```gleam
-kind Type  //everything that corresponds to data in the program
-kind Nat   //type-level natural numbers
-kind Scale //scale types for fixed point numbers
-```
-
 #### Intrinsics
 
 Intrinsic types in Polaris include:
@@ -94,7 +60,7 @@ I8, U8, U16, I32, U32, I64, U64
 //Approx. real numbers - for exact values use fixed
 Real
 //Fixed-point real numbers - scaled integers under the hood
-Fixed(t)
+Fixed1(t), Fixed2(t), Fixed4(t)
 //Boolean
 Bool
 
@@ -132,11 +98,11 @@ With corresponding literals:
 ```gleam
 let a: Int = 314
 let b: Real = 3.141
-let c: Fixed(Dec(2)) = 3.14
+let c: Fixed2(Int) = 3.14
 let d: Bool = True
 let e: Array(Int) = [1, 2, 3]
 let f: List(Int) = [1, 2, 3]
-let g: Map(String, Int) = {
+let g: Map(String, Int) = #{
   "key_1": 1,
   "key_2": 2
 }
@@ -146,7 +112,7 @@ let j: Char = "a"
 ```
 
 > [!NOTE]
-> Any implicit narrowings will result in a compiler error, and this includes literals - for example, assigning `3.141` to a binding of type `Fixed(Dec(2))` will cause the compiler to say, 'Hey, you're throwing away valuable data here whatsamatawityou' (the compiler is Italian-American).
+> Any implicit narrowings will result in a compiler error, and this includes literals - for example, assigning `3.141` to a binding of type `Fixed2(Int)` will cause the compiler to say, 'Hey, you're throwing away valuable data here whatsamatawityou' (the compiler is Italian-American).
 
 ### Bindings
 
@@ -296,3 +262,11 @@ let my_arr: Array(Int) = [1, 2, 3]
 //to mutate the underlying array rather than copy
 let my_arr = my_arr |> array.apply_at(0, add_1)
 ```
+
+### Planned enhancements
+
+#### Strict-mode side-channel resistance
+
+The strict-mode branching strategy could be susceptible to side-channel attacks via (1) timing differences between real I/O and dummy I/O, and (2) data size differences between a real I/O op and its dummy counterpart.
+Polaris tries to address this potential vulnerability via I/O profiles - harnesses can record timing and response size distributions per I/O operation for a given context during an explicit profiling stage in development, and then apply this to its dummy I/O operations during runtime in production.
+The goal of this is to make dummy I/O operations virtually statistically indisitnguishable from real I/O operations, reducing side-channel risk.
