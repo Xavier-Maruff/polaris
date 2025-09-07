@@ -3,13 +3,16 @@
 > [!CAUTION]
 > Polaris is a work in progress, and is not yet even capable of codegen. Watch this space for updates!
 
-Polaris is a high-security, interpreted, statically typed, primarily functional language for sensitive computation (excuse how many adjectives that was). All sensitive operations are performed homomorphically on encrypted data, meaning that a Polaris program can operate on sensitive data in untrusted environments without ever exposing plaintexts, even to the program itself - in fact, no Polaris program can ever deal with plaintext data (though there is nuance to this point, as will be explained later)
+Polaris is a high-security, bytecode interpreted, statically typed, primarily functional language for sensitive computation (what an insane amount of adjectives). All sensitive operations are performed under homomorphic encryption schemes, meaning that a Polaris program can operate on sensitive data in untrusted environments without ever exposing plaintexts, even to the program itself - in fact, no Polaris program can ever interact with plaintext sensitive data (though there is nuance to this point, as will be explained later)
 
 ## I/O in a homomorphic world
 
 You are no doubt thinking, "if everything everywhere all the time is encrypted, how can a Polaris program interact with the outside world?". The general approach that Polaris takes is to offload I/O operations onto a runtime harness. This harness can be execution-context specific, and defines where the cryptographic boundary lies - for example, the harness could live in a Trusted Execution Envrionment, or proxy calls to a trusted on-prem server, leaving the Polaris program itself to run securely in any context.
 
 ## A short guide to the Polaris language
+
+> [!NOTE]
+> This guide is also half a language design doc - a friendlier get-started guide is on the way.
 
 Polaris is heavily inspired by OCaml and Gleam, but with a few key differences required by the unique constraints of homomorphic encryption.
 
@@ -35,16 +38,55 @@ type Test {
 
 Like in Gleam, all type names are capitalised, and lower case type identifiers are treated as type variables for parametric polymorphism (in the Result type above, `a` and `b` were type variables, that can be replaced with arbitrary concrete types at instantiation).
 
-There is one major point of divergence from the Gleam type system, that being the `nocrypt` modifier.
+There is are two major points of divergence from the Gleam type system: the first being the `nocrypt` modifier, and the second being kinds.
 
-This tells the compiler to, by default, not encrypt the underlying value (though the runtime will also load an encrypted version if involved in arithmetic with a standard encrypted value).
-Use `nocrypt` for large (10-100x) performance benefits when not dealing with sensitive data - for example, routing a web request.
+#### Nocrypt
+
+Nocrypt tells the compiler to, by default, not encrypt the underlying value (though the runtime will also load an encrypted version if involved in arithmetic with a standard encrypted value).
+Use `nocrypt` for large (10-100x) performance benefits when not dealing with sensitive data - for example, routing a web request. For ultra-high security applications, the use of nocrypt can be disabled via the compiler flag `--no-nocrypt`.
+
+#### Kinds
+
+> [!NOTE]
+> Skip this section unless you're a type nerd, in 99% of cases you won't interact explicity with kinds
+
+Kinds allow Polaris to restrict type parameters without introducing subtyping, for example, in the definition of the `Fixed` decimal type:
+
+```gleam
+type Fixed(t: Scale) {
+  Fixed(t)
+}
+```
+
+The parameter `t` is of kind `Scale` - the compiler will error if you try to pass a regular type, as all standard types in Polaris are of kind `Type`. Type parameters are always restricted to a single kind, and this restriction is implicitly to the kind `Type`, unless declared otherwise:
+
+```gleam
+type Fixed(t) {
+  Fixed(t)
+}
+
+//is implicit shorthand for
+type Fixed(t: Type) {
+  Fixed(t)
+}
+```
+
+There are three intrinsic kinds in Polaris:
+
+```gleam
+kind Type  //everything that corresponds to data in the program
+kind Nat   //type-level natural numbers
+kind Scale //scale types for fixed point numbers
+```
 
 #### Intrinsics
 
 Intrinsic types in Polaris include:
 
 ```gleam
+// Empty unit type
+Void
+
 // Default integer type - pretty narrow, but necessary
 Int = I16
 //Other integer widths - implemented as multi-limb U/I16 under the hood
@@ -52,7 +94,7 @@ I8, U8, U16, I32, U32, I64, U64
 //Approx. real numbers - for exact values use fixed
 Real
 //Fixed-point real numbers - scaled integers under the hood
-Fixed(exponent: nocrypt Int)
+Fixed(t)
 //Boolean
 Bool
 
@@ -75,14 +117,22 @@ Char
 //Intrinsic monadic types - support the bind operator
 Option(t)
 Result(a, b)
+
+
+//Also scale-kind types
+Dec(a)
+Bin(a)
+
+//And nat-kind types
+1, 2, 3, ... etc.
 ```
 
 With corresponding literals:
 
 ```gleam
-let a: Int = 34
-let b: Real = 3.4
-let c: Fixed(2) = 3.14
+let a: Int = 314
+let b: Real = 3.141
+let c: Fixed(Dec(2)) = 3.14
 let d: Bool = True
 let e: Array(Int) = [1, 2, 3]
 let f: List(Int) = [1, 2, 3]
@@ -95,9 +145,12 @@ let i: String = "my_string"
 let j: Char = "a"
 ```
 
+> [!NOTE]
+> Any implicit narrowings will result in a compiler error, and this includes literals - for example, assigning `3.141` to a binding of type `Fixed(Dec(2))` will cause the compiler to say, 'Hey, you're throwing away valuable data here whatsamatawityou' (the compiler is Italian-American).
+
 ### Bindings
 
-Polaris is an immutable language. You can declare bindings (like variables in mutable languages) like so:
+Polaris is an immutable language, as this allows for certain important FHE optimisations. You can declare bindings (like variables in mutable languages, but immutable) like so:
 
 ```gleam
 let my_binding = some_func()
@@ -105,9 +158,30 @@ let my_binding = some_func()
 let my_binding = my_binding |> other_func
 ```
 
-#### The other, monad-y kind of binding
+### Functions
 
-Polaris also has two intrinsic monadic types that come with a monad-bind operator '?': `Option(t)` and `Result(a, b)`. This is the same as Rust's early return operator, though expanded to option types:
+Functions in Polaris are declared using `fn`:
+
+```gleam
+fn my_func(a: Int) -> Int {
+  a + 12
+}
+```
+
+As discussed earlier, we can make a function generic by using an implicit type variable instead of a concrete type:
+
+```gleam
+fn my_func(a: Result(Int, t)) -> Result(Int, t) {
+ match a {
+   Ok(i) -> Ok(i + 12)
+   Error(m) -> Error(m)
+ }
+}
+```
+
+### Monad-y goodness
+
+Polaris has two intrinsic monadic types that come with a monad bind operator '?': `Option(t)` and `Result(a, b)`. This is the same as Rust's early return operator, though expanded to option types:
 
 ```gleam
 //will return None if arg == None, due to '?' monad binding
@@ -117,7 +191,7 @@ fn opt_example(arg: Option(String)) -> Option(String) {
   Some(t)
 }
 
-//The monad binding will early return the Error type, so we can change the Ok type
+//The monad binding will early return the Error type, so we are free to change the Ok type
 fn result_example(arg: Result(Int, String)) -> Result(String, String) {
   let t = arg? |> int.to_string
   Ok(t)
@@ -137,6 +211,88 @@ if x < y {
 
 We can of course homomorphically evaluate `sign(y - x)` to discover this ordering, but there's a problem - the outcome of this operation is also encrypted, so we can't know how to branch (not really a problem in the true sense, this is the whole point of HE!). Polaris takes four different approaches to solving this problem based on the context:
 
-1. If the branch condition is `nocrypt`, the problem disappears (nice), and we can just evaluate the branch in the standard way.
-2. If the branches are all pure, and the compiler doesn't detect complexity explosion, all branches are evaluated independently, and then the correct branch is selected after the fact via arithmetic predication. This is constant-time, so the overhead isn't that wild compared to the minimal overhead of just doing FHE at all.
-3. If the branches perform I/O, the branch condition is handed off to the harness, which decrypts that value and returns an opaque single-use 'branch token' that is cryptographically tied to that specific branch point. This token tells the runtime which branch to take, but is not accessible from within the program. This leaks `# branches` bits to the runtime (though not the language-level program, as the compiler will not let you bind to a `nocrypt` label anything that depends on the result of a secret branch condition).
+1. **Nocrypt condition**:
+   If the branch condition is `nocrypt`, the problem disappears (nice), and we can just evaluate the branch in the standard way.
+2. **Pure branches**:
+   If the branches are all pure, and the compiler doesn't detect complexity explosion (configurable via the predication cost budget flag `--predication-budget), all branches are evaluated independently, and then the correct branch is selected after the fact via arithmetic predication. This is constant-time, so the overhead isn't that wild compared to the minimal overhead of just doing FHE at all.
+3. **Effectful branches**:
+   If the branches perform I/O, the branch condition is handed off to the harness, which decrypts that value and returns a 'continuation id' that tells the runtime (not accessible via the program) what arm to take, and an 'arm ticket' that is sent alongside all requests to the harness from within that arm, and is used to verify internally to the harness that the correct selected branch has been taken. This leaks `log2(#arms)` bits to the **runtime** (though _not the language-level program_, as the compiler will not let you bind to a `nocrypt` label anything that depends on the result of a secret branch condition).
+4. **Strict mode**:
+   If the compiler flag `--strict-branch` is set, and the branches perform I/O, instead of the harness decrypting the condition and telling the runtime which branch to take, the harness tells the runtime to execute all branches and select the result via arithmetic predication, like strategy 2 - the difference this time is that the harness, knowing the correct branch, will dummy I/O operations on the other branches.
+
+#### If/Else
+
+```gleam
+let result = if some_condition {
+  Ok(3)
+} else {
+  Error("Condition failed")
+}
+```
+
+#### Match
+
+```gleam
+type MyNumericType {
+  Thing1(x: Fixed(2))
+  Thing2(x: Real)
+}
+
+let unwrapped = match some_value {
+  Thing1(x) -> x
+  Thing2(x) -> x |> real.
+}
+```
+
+#### For loop
+
+For loops in Polaris are similar in semantics to those in OCaml - they just expand to repeated evaluation of the body of the loop, and said body must be of type `Void`. Loops can also not be broken out of, so all iterations must be executed.
+
+```gleam
+for i in 1..<10 {
+  do_something(i)
+}
+```
+
+### Module system
+
+This is another facet of Polaris' design that is just fully ~~stolen~~ borrowed from Gleam. Polaris code is organised into packages, which are library or executable-level structures, and modules, which are granular within packages. Modules are imported by their filepath relative to the package source root, and otherwise relative import paths are not allowed.
+Packages are directories that have a `polaris.toml` file, in which you can configure compiler and package settings.
+
+#### Imports
+
+Imports are scoped to the module name by default:
+
+```gleam
+import core/io
+
+fn main() {
+  io.println("hello")
+}
+```
+
+Or can be relabelled using `as`:
+
+```gleam
+import core/io as something_funky
+
+fn main() {
+  something_funky.println("hello")
+}
+```
+
+### Memory management
+
+Due to the need for immutability for Polaris' FHE optimisation pipeline, memory management is handled by the runtime. This also keeps the language simpler, and helps maintain the level of abstraction necessary for the actual atomic types implementations to be so decoupled from their standard counterparts that the language user has in their head (for example, integers are not integers, but massive polynomials - we don't wan't the user to have to think about memory management of a single integer though, things would get too crazy).
+The compiler and runtime use a combination of GC, reference counting, and lifetime analysis to handle allocations and frees, as well as secretly mutating data behind the scenes when a move is detected. For example:
+
+```gleam
+fn add_1(val: Int) -> Int {
+  val + 1
+}
+
+let my_arr: Array(Int) = [1, 2, 3]
+//array.apply_at is nominally pure, but the compiler will optimise this
+//to mutate the underlying array rather than copy
+let my_arr = my_arr |> array.apply_at(0, add_1)
+```
