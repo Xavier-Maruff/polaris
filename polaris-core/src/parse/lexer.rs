@@ -281,11 +281,12 @@ impl Lexer {
                 "else" => TokenVariant::Else,
                 "for" => TokenVariant::For,
                 "type" => TokenVariant::Type,
-                "in" => TokenVariant::In,
+                "to" => TokenVariant::To,
                 "assert" => TokenVariant::Assert,
                 "pub" => TokenVariant::Pub,
                 "const" => TokenVariant::Const,
                 "nocrypt" => TokenVariant::Nocrypt,
+                "match" => TokenVariant::Match,
                 _ => TokenVariant::Ident(ident_str),
             },
             span: CodeSpan {

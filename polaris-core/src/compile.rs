@@ -1,3 +1,4 @@
+use crate::parse::parse;
 use crate::{diagnostic::Diagnostic, log};
 
 #[derive(Clone)]
@@ -22,10 +23,10 @@ impl CompileContext {
     }
 
     pub fn ingest_source(&mut self, file: String, source: String) -> Result<(), ()> {
-        match crate::parse::parse(file, source, self) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(()),
-        }
+        let ast = parse(file, source, self);
+        self.logger.debug(&format!("Parsed AST:\n{:#?}", ast));
+
+        Ok(())
     }
 
     pub fn run_passes(&mut self) -> Result<(), ()> {

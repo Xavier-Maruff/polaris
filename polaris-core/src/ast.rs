@@ -1,5 +1,9 @@
-use crate::{diagnostic::Diagnostic, parse::CodeSpan};
+use crate::{
+    diagnostic::Diagnostic,
+    parse::{CodeSpan, token::TokenVariant},
+};
 
+#[derive(Clone, Debug)]
 pub struct Node {
     pub kind: NodeKind,
     pub span: CodeSpan,
@@ -7,12 +11,14 @@ pub struct Node {
     pub warnings: Vec<Diagnostic>,
 }
 
+#[derive(Clone, Debug)]
 pub enum NodeKind {
     Program {
         children: Vec<Node>,
     },
     Import {
-        path_parts: Vec<String>,
+        package: String,
+        module: String,
         symbol: String,
     },
     TypeAlias {
@@ -36,54 +42,126 @@ pub enum NodeKind {
         symbol: String,
         type_vars: Vec<Node>,
     },
-    Fn {
+    FnType {
+        args: Vec<Node>,
+        return_type: Option<Box<Node>>,
+    },
+    TupleType {
+        elements: Vec<Node>,
+    },
+
+    FnDecl {
         public: bool,
         host: bool,
-        symbol: Option<String>,
-        //(name, type)
-        params: Vec<(String, Option<Node>, CodeSpan)>,
+        symbol: String,
         return_type: Option<Box<Node>>,
-        body: Option<Box<Node>>,
+        args: Vec<(Box<Node>, Option<Box<Node>>, CodeSpan)>,
+        expr: Option<Box<Node>>,
     },
     ConstDecl {
         public: bool,
-        symbol: String,
-        const_type: Box<Node>,
-        value: Box<Node>,
+        symbol: Box<Node>,
+        const_type: Option<Box<Node>>,
+        expr: Box<Node>,
     },
     Expr {
         expr: ExprKind,
     },
 }
 
+#[derive(Clone, Debug)]
+pub enum UnaryOp {
+    Negate,
+    Not,
+    BitNot,
+    MonadBind,
+}
+
+#[derive(Clone, Debug)]
+pub enum BinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulus,
+    Exponent,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanEquiv,
+    GreaterThan,
+    GreaterThanEquiv,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    //Assign,
+    Pipeline,
+}
+
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     IntLit(i64),
-    FloatLit(f64),
-    BoolLit(bool),
+    RealLit {
+        value: f64,
+        places: usize,
+    },
     ListLit(Vec<Node>),
     MapLit(Vec<(Node, Node)>),
     StringLit(String),
-    Binding(String),
+    TupleLit(Vec<Node>),
+    Symbol {
+        name: String,
+    },
+    LetBinding {
+        symbols: Box<Node>,
+        symbol_type: Option<Box<Node>>,
+        expr: Box<Node>,
+    },
+    FieldAccess {
+        expr: Box<Node>,
+        field: String,
+    },
+    UnaryOp {
+        op: UnaryOp,
+        expr: Box<Node>,
+    },
+    BinaryOp {
+        left: Box<Node>,
+        op: BinaryOp,
+        right: Box<Node>,
+    },
+    Match {
+        expr: Box<Node>,
+        arms: Vec<(Node, Node)>,
+    },
     FnCall {
         callee: Box<Node>,
         //optionally named
         args: Vec<(Option<String>, Node)>,
     },
-    ForLoop {
+    Closure {
+        args: Vec<(Box<Node>, Option<Box<Node>>, CodeSpan)>,
+        return_type: Option<Box<Node>>,
+        expr: Box<Node>,
+    },
+    For {
         binding: String,
         start: Box<Node>,
         end: Box<Node>,
         body: Box<Node>,
+    },
+    IndexAccess {
+        expr: Box<Node>,
+        index: Box<Node>,
     },
     IfElse {
         condition: Box<Node>,
         then_branch: Box<Node>,
         else_branch: Option<Box<Node>>,
     },
-    Match {
-        to_match: Box<Node>,
-        arms: Vec<(Node, Node)>,
-    },
+
     Block(Vec<Node>),
     //used to discard bindings and patterns
     Discard,
@@ -131,56 +209,64 @@ impl Node {
 
 impl NodeKind {
     pub fn collect_diagnostics(&self, errs: &mut Vec<Diagnostic>, collect_errors: bool) {
+        use NodeKind::*;
         match self {
-            NodeKind::Program { children } => {
+            Program { children } => {
                 for child in children {
                     child.collect_diagnostics(errs, collect_errors);
                 }
             }
-            NodeKind::Import { .. } => {}
-            NodeKind::TypeAlias { .. } => {}
-            NodeKind::TypeDecl { variants, .. } => {
+            Import { .. } => {}
+            TypeAlias { .. } => {}
+            TypeDecl { variants, .. } => {
                 for variant in variants {
                     variant.collect_diagnostics(errs, collect_errors);
                 }
             }
-            NodeKind::TypeConstructor { fields, .. } => {
+            TypeConstructor { fields, .. } => {
                 for (_, field_type, _) in fields {
                     field_type.collect_diagnostics(errs, collect_errors);
                 }
             }
-            NodeKind::Type { type_vars, .. } => {
+            Type { type_vars, .. } => {
                 for type_var in type_vars {
                     type_var.collect_diagnostics(errs, collect_errors);
                 }
             }
-            NodeKind::Fn {
-                params,
+            FnType {
+                args: params,
                 return_type,
-                body,
-                ..
             } => {
-                for (_, param_type, _) in params {
-                    if let Some(param_type) = param_type {
-                        param_type.collect_diagnostics(errs, collect_errors);
-                    }
+                for param in params {
+                    param.collect_diagnostics(errs, collect_errors);
                 }
-
                 if let Some(return_type) = return_type {
                     return_type.collect_diagnostics(errs, collect_errors);
                 }
+            }
 
-                if let Some(body) = body {
-                    body.collect_diagnostics(errs, collect_errors);
+            TupleType { elements } => {
+                for elem in elements {
+                    elem.collect_diagnostics(errs, collect_errors);
                 }
             }
-            NodeKind::ConstDecl {
-                const_type, value, ..
-            } => {
-                const_type.collect_diagnostics(errs, collect_errors);
-                value.collect_diagnostics(errs, collect_errors);
+
+            FnDecl { expr, .. } => {
+                if let Some(expr) = expr {
+                    expr.collect_diagnostics(errs, collect_errors);
+                }
             }
-            NodeKind::Expr { expr } => {
+
+            ConstDecl {
+                const_type, expr, ..
+            } => {
+                if let Some(const_type) = const_type {
+                    const_type.collect_diagnostics(errs, collect_errors);
+                }
+                expr.collect_diagnostics(errs, collect_errors);
+            }
+
+            Expr { expr } => {
                 expr.collect_diagnostics(errs, collect_errors);
             }
         }
@@ -189,37 +275,54 @@ impl NodeKind {
 
 impl ExprKind {
     pub fn collect_diagnostics(&self, errs: &mut Vec<Diagnostic>, collect_errors: bool) {
+        use ExprKind::*;
         match self {
-            ExprKind::IntLit(_) => {}
-            ExprKind::FloatLit(_) => {}
-            ExprKind::BoolLit(_) => {}
-            ExprKind::ListLit(elements) => {
+            IntLit(_) => {}
+            RealLit { .. } => {}
+            ListLit(elements) => {
                 for elem in elements {
                     elem.collect_diagnostics(errs, collect_errors);
                 }
             }
-            ExprKind::MapLit(pairs) => {
+            MapLit(pairs) => {
                 for (key, value) in pairs {
                     key.collect_diagnostics(errs, collect_errors);
                     value.collect_diagnostics(errs, collect_errors);
                 }
             }
-            ExprKind::StringLit(_) => {}
-            ExprKind::Binding(_) => {}
-            ExprKind::FnCall { callee, args } => {
+            StringLit(_) => {}
+            Symbol { .. } => {}
+            FieldAccess { expr, .. } => {
+                expr.collect_diagnostics(errs, collect_errors);
+            }
+            IndexAccess { expr, index } => {
+                expr.collect_diagnostics(errs, collect_errors);
+                index.collect_diagnostics(errs, collect_errors);
+            }
+            UnaryOp { expr, .. } => {
+                expr.collect_diagnostics(errs, collect_errors);
+            }
+            BinaryOp { left, right, .. } => {
+                left.collect_diagnostics(errs, collect_errors);
+                right.collect_diagnostics(errs, collect_errors);
+            }
+            FnCall { callee, args } => {
                 callee.collect_diagnostics(errs, collect_errors);
                 for (_, arg) in args {
                     arg.collect_diagnostics(errs, collect_errors);
                 }
             }
-            ExprKind::ForLoop {
+            LetBinding { expr, .. } => {
+                expr.collect_diagnostics(errs, collect_errors);
+            }
+            For {
                 start, end, body, ..
             } => {
                 start.collect_diagnostics(errs, collect_errors);
                 end.collect_diagnostics(errs, collect_errors);
                 body.collect_diagnostics(errs, collect_errors);
             }
-            ExprKind::IfElse {
+            IfElse {
                 condition,
                 then_branch,
                 else_branch,
@@ -230,19 +333,74 @@ impl ExprKind {
                     else_branch.collect_diagnostics(errs, collect_errors);
                 }
             }
-            ExprKind::Match { to_match, arms } => {
-                to_match.collect_diagnostics(errs, collect_errors);
+            Match { expr, arms } => {
+                expr.collect_diagnostics(errs, collect_errors);
                 for (pattern, arm_body) in arms {
                     pattern.collect_diagnostics(errs, collect_errors);
                     arm_body.collect_diagnostics(errs, collect_errors);
                 }
             }
-            ExprKind::Block(statements) => {
+            Block(statements) => {
                 for stmt in statements {
                     stmt.collect_diagnostics(errs, collect_errors);
                 }
             }
-            ExprKind::Discard => {}
+            Discard => {}
+            TupleLit(elements) => {
+                for elem in elements {
+                    elem.collect_diagnostics(errs, collect_errors);
+                }
+            }
+            Closure {
+                args: params,
+                return_type,
+                expr,
+            } => {
+                for (_, param_type, _) in params {
+                    if let Some(param_type) = param_type {
+                        param_type.collect_diagnostics(errs, collect_errors);
+                    }
+                }
+                if let Some(return_type) = return_type {
+                    return_type.collect_diagnostics(errs, collect_errors);
+                }
+                expr.collect_diagnostics(errs, collect_errors);
+            }
         }
+    }
+}
+
+pub fn get_unary_op(tok: TokenVariant) -> Option<UnaryOp> {
+    use TokenVariant::*;
+    match tok {
+        Minus => Some(UnaryOp::Negate),
+        Not => Some(UnaryOp::Not),
+        BitNot => Some(UnaryOp::BitNot),
+        _ => None,
+    }
+}
+
+pub fn get_binary_op(tok: TokenVariant) -> Option<BinaryOp> {
+    use TokenVariant::*;
+    match tok {
+        Plus => Some(BinaryOp::Add),
+        Minus => Some(BinaryOp::Subtract),
+        Star => Some(BinaryOp::Multiply),
+        Slash => Some(BinaryOp::Divide),
+        Percent => Some(BinaryOp::Modulus),
+        Equiv => Some(BinaryOp::Equal),
+        NotEquiv => Some(BinaryOp::NotEqual),
+        LessThan => Some(BinaryOp::LessThan),
+        LessThanEquiv => Some(BinaryOp::LessThanEquiv),
+        GreaterThan => Some(BinaryOp::GreaterThan),
+        GreaterThanEquiv => Some(BinaryOp::GreaterThanEquiv),
+        And => Some(BinaryOp::And),
+        Or => Some(BinaryOp::Or),
+        BitAnd => Some(BinaryOp::BitAnd),
+        BitOr => Some(BinaryOp::BitOr),
+        BitXor => Some(BinaryOp::BitXor),
+        //Assign => Some(BinaryOp::Assign),
+        Pipeline => Some(BinaryOp::Pipeline),
+        _ => None,
     }
 }

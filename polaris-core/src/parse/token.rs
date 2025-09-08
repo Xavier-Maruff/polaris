@@ -28,6 +28,7 @@ pub enum TokenVariant {
     Or,
     Not,
     Assign,
+    Pipeline,
 
     //delimiters
     Comma,
@@ -51,7 +52,6 @@ pub enum TokenVariant {
     If,
     Else,
     For,
-    In,
     Import,
     As,
     Assert,
@@ -59,6 +59,8 @@ pub enum TokenVariant {
     Pub,
     Const,
     Nocrypt,
+    To,
+    Match,
 
     //comment (token, multiline)
     Comment((String, bool)),
@@ -75,123 +77,97 @@ pub struct Token {
 }
 
 impl TokenVariant {
-    pub fn precedence(&self) -> u8 {
+    pub fn prefix_bind_power(&self) -> Option<u8> {
+        use TokenVariant::*;
         match self {
-            TokenVariant::Assign => 1,
-            TokenVariant::Or => 2,
-            TokenVariant::And => 3,
-            TokenVariant::BitOr => 4,
-            TokenVariant::BitXor => 5,
-            TokenVariant::BitAnd => 6,
-            TokenVariant::Equiv | TokenVariant::NotEquiv => 7,
-            TokenVariant::LessThan
-            | TokenVariant::LessThanEquiv
-            | TokenVariant::GreaterThan
-            | TokenVariant::GreaterThanEquiv => 8,
-            TokenVariant::Plus | TokenVariant::Minus => 9,
-            TokenVariant::Star | TokenVariant::Slash | TokenVariant::Percent => 10,
-            TokenVariant::Not | TokenVariant::BitNot => 11,
-            TokenVariant::LParen
-            | TokenVariant::RParen
-            | TokenVariant::LBracket
-            | TokenVariant::RBracket
-            | TokenVariant::LBrace
-            | TokenVariant::RBrace
-            | TokenVariant::Dot
-            | TokenVariant::Comma
-            | TokenVariant::Colon
-            | TokenVariant::Arrow
-            | TokenVariant::QuestionMark
-            | TokenVariant::Octothorpe
-            | TokenVariant::Ellipsis => 12,
-            _ => 0,
+            Plus | Minus => Some(6),
+            Star | Slash | Percent => Some(7),
+            BitNot | Not => Some(8),
+            _ => None,
         }
     }
 
-    pub fn is_operator(&self) -> bool {
-        matches!(
-            self,
-            TokenVariant::Plus
-                | TokenVariant::Minus
-                | TokenVariant::Star
-                | TokenVariant::Slash
-                | TokenVariant::Percent
-                | TokenVariant::Equiv
-                | TokenVariant::NotEquiv
-                | TokenVariant::LessThan
-                | TokenVariant::LessThanEquiv
-                | TokenVariant::GreaterThan
-                | TokenVariant::GreaterThanEquiv
-                | TokenVariant::BitAnd
-                | TokenVariant::BitOr
-                | TokenVariant::BitXor
-                | TokenVariant::BitNot
-                | TokenVariant::And
-                | TokenVariant::Or
-                | TokenVariant::Not
-        )
+    pub fn infix_bind_power(&self) -> Option<(u8, u8)> {
+        use TokenVariant::*;
+        match self {
+            Plus | Minus => Some((1, 2)),
+            Star | Slash | Percent => Some((3, 4)),
+            Equiv | NotEquiv | LessThan | LessThanEquiv | GreaterThan | GreaterThanEquiv => {
+                Some((0, 1))
+            }
+            BitAnd => Some((5, 6)),
+            BitXor => Some((7, 8)),
+            BitOr => Some((9, 10)),
+            And => Some((11, 12)),
+            Or => Some((13, 14)),
+            Pipeline => Some((17, 18)),
+            _ => None,
+        }
     }
 }
 
 impl std::fmt::Display for TokenVariant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TokenVariant::*;
         match self {
-            TokenVariant::Ident(s) => write!(f, "{}", s),
-            TokenVariant::IntLit(s) => write!(f, "{}", s),
-            TokenVariant::RealLit(s) => write!(f, "{}", s),
-            TokenVariant::StringLit(s) => write!(f, "\"{}\"", s),
-            TokenVariant::Plus => write!(f, "+"),
-            TokenVariant::Minus => write!(f, "-"),
-            TokenVariant::Star => write!(f, "*"),
-            TokenVariant::Slash => write!(f, "/"),
-            TokenVariant::Percent => write!(f, "%"),
-            TokenVariant::Octothorpe => write!(f, "#"),
-            TokenVariant::Equiv => write!(f, "=="),
-            TokenVariant::NotEquiv => write!(f, "!="),
-            TokenVariant::LessThan => write!(f, "<"),
-            TokenVariant::LessThanEquiv => write!(f, "<="),
-            TokenVariant::GreaterThan => write!(f, ">"),
-            TokenVariant::GreaterThanEquiv => write!(f, ">="),
-            TokenVariant::BitAnd => write!(f, "&"),
-            TokenVariant::BitOr => write!(f, "|"),
-            TokenVariant::BitXor => write!(f, "^"),
-            TokenVariant::BitNot => write!(f, "~"),
-            TokenVariant::And => write!(f, "&&"),
-            TokenVariant::Or => write!(f, "||"),
-            TokenVariant::Not => write!(f, "!"),
-            TokenVariant::Assign => write!(f, "="),
-            TokenVariant::Comma => write!(f, ","),
-            TokenVariant::Colon => write!(f, ":"),
-            TokenVariant::Dot => write!(f, "."),
-            TokenVariant::LParen => write!(f, "("),
-            TokenVariant::RParen => write!(f, ")"),
-            TokenVariant::LBracket => write!(f, "["),
-            TokenVariant::RBracket => write!(f, "]"),
-            TokenVariant::LBrace => write!(f, "{{"),
-            TokenVariant::RBrace => write!(f, "}}"),
-            TokenVariant::Arrow => write!(f, "->"),
-            TokenVariant::QuestionMark => write!(f, "?"),
-            TokenVariant::Ellipsis => write!(f, "..."),
-            TokenVariant::Let => write!(f, "let"),
-            TokenVariant::Type => write!(f, "type"),
-            TokenVariant::Const => write!(f, "const"),
-            TokenVariant::If => write!(f, "if"),
-            TokenVariant::Else => write!(f, "else"),
-            TokenVariant::For => write!(f, "for"),
-            TokenVariant::In => write!(f, "in"),
-            TokenVariant::Fn => write!(f, "fn"),
-            TokenVariant::Import => write!(f, "import"),
-            TokenVariant::Pub => write!(f, "pub"),
-            TokenVariant::Host => write!(f, "host"),
-            TokenVariant::As => write!(f, "as"),
-            TokenVariant::Assert => write!(f, "assert"),
-            TokenVariant::Nocrypt => write!(f, "nocrypt"),
-            TokenVariant::Comment(s) => match s {
+            Ident(s) => write!(f, "{}", s),
+            IntLit(s) => write!(f, "{}", s),
+            RealLit(s) => write!(f, "{}", s),
+            StringLit(s) => write!(f, "\"{}\"", s),
+            Plus => write!(f, "+"),
+            Minus => write!(f, "-"),
+            Star => write!(f, "*"),
+            Slash => write!(f, "/"),
+            Percent => write!(f, "%"),
+            Octothorpe => write!(f, "#"),
+            Equiv => write!(f, "=="),
+            NotEquiv => write!(f, "!="),
+            LessThan => write!(f, "<"),
+            LessThanEquiv => write!(f, "<="),
+            GreaterThan => write!(f, ">"),
+            GreaterThanEquiv => write!(f, ">="),
+            BitAnd => write!(f, "&"),
+            BitOr => write!(f, "|"),
+            BitXor => write!(f, "^"),
+            BitNot => write!(f, "~"),
+            And => write!(f, "&&"),
+            Or => write!(f, "||"),
+            Not => write!(f, "!"),
+            Assign => write!(f, "="),
+            Pipeline => write!(f, "|>"),
+            Comma => write!(f, ","),
+            Colon => write!(f, ":"),
+            Dot => write!(f, "."),
+            LParen => write!(f, "("),
+            RParen => write!(f, ")"),
+            LBracket => write!(f, "["),
+            RBracket => write!(f, "]"),
+            LBrace => write!(f, "{{"),
+            RBrace => write!(f, "}}"),
+            Arrow => write!(f, "->"),
+            QuestionMark => write!(f, "?"),
+            Ellipsis => write!(f, "..."),
+            Let => write!(f, "let"),
+            Type => write!(f, "type"),
+            Const => write!(f, "const"),
+            If => write!(f, "if"),
+            Else => write!(f, "else"),
+            For => write!(f, "for"),
+            To => write!(f, "to"),
+            Fn => write!(f, "fn"),
+            Import => write!(f, "import"),
+            Pub => write!(f, "pub"),
+            Host => write!(f, "host"),
+            As => write!(f, "as"),
+            Match => write!(f, "match"),
+            Assert => write!(f, "assert"),
+            Nocrypt => write!(f, "nocrypt"),
+            Comment(s) => match s {
                 (text, true) => write!(f, "/*{}*/", text),
                 (text, false) => write!(f, "//{}", text),
             },
-            TokenVariant::EOF => Ok(()),
-            TokenVariant::Empty => Ok(()),
+            EOF => Ok(()),
+            Empty => Ok(()),
         }
     }
 }
