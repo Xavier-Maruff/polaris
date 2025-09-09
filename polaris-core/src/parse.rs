@@ -258,7 +258,7 @@ impl<'a> ParseContext<'a> {
         is_pub: bool,
     ) -> Result<(), ()> {
         let n = match self.curr_tok.variant {
-            TokenVariant::Host | TokenVariant::Fn => self.parse_func_decl(node, lexer, is_pub),
+            TokenVariant::Harness | TokenVariant::Fn => self.parse_func_decl(node, lexer, is_pub),
             TokenVariant::Type => self.parse_type_decl(node, lexer, is_pub),
             TokenVariant::Const => self.parse_const_decl(node, lexer, is_pub),
             //or directive - todo
@@ -861,6 +861,7 @@ impl<'a> ParseContext<'a> {
                         && matches!(self.next_tok.variant, TokenVariant::Colon);
 
                     while !matches!(self.curr_tok.variant, TokenVariant::RParen) {
+                        let start_span = self.curr_tok.span.start;
                         let name = if named_args {
                             let name = self.parse_ident(node, lexer, false)?;
                             wrap_err!(node, self.expect(lexer, TokenVariant::Colon));
@@ -869,8 +870,28 @@ impl<'a> ParseContext<'a> {
                             None
                         };
 
-                        let expr = self.parse_expr(node, lexer)?;
-                        args.push((name, expr));
+                        //allow name:,
+                        if named_args {
+                            if matches!(
+                                self.curr_tok.variant,
+                                TokenVariant::Comma | TokenVariant::RParen
+                            ) {
+                                wrap_err!(node, self.advance(lexer));
+                                args.push((
+                                    name.clone(),
+                                    Node::new(
+                                        NodeKind::Expr {
+                                            expr: ExprKind::Symbol {
+                                                name: name.unwrap(),
+                                            },
+                                        },
+                                        CodeSpan::new(start_span, self.prev_tok.span.end),
+                                    ),
+                                ));
+                            }
+                        } else {
+                            args.push((name, self.parse_expr(node, lexer)?));
+                        }
 
                         if matches!(self.curr_tok.variant, TokenVariant::Comma) {
                             wrap_err!(node, self.advance(lexer));
@@ -1068,7 +1089,7 @@ impl<'a> ParseContext<'a> {
         public: bool,
     ) -> Result<Node, ()> {
         let start_span = self.curr_tok.span.start;
-        let host = if matches!(self.curr_tok.variant, TokenVariant::Host) {
+        let harness = if matches!(self.curr_tok.variant, TokenVariant::Harness) {
             wrap_err!(node, self.advance(lexer));
             true
         } else {
@@ -1100,15 +1121,64 @@ impl<'a> ParseContext<'a> {
         };
 
         let expr = if matches!(self.curr_tok.variant, TokenVariant::LBrace) {
-            Some(Box::new(self.parse_block_expr(node, lexer)?))
+            let span = self.curr_tok.span;
+            let expr = self.parse_block_expr(node, lexer)?;
+
+            if harness {
+                wrap_err!(
+                    node,
+                    Err(Diagnostic {
+                        primary: DiagnosticMsg {
+                            message: "Harness function cannot have a body".to_string(),
+                            span,
+                            file: lexer.file.clone(),
+                            err_type: DiagnosticMsgType::UnexpectedToken,
+                        },
+                        notes: vec![],
+                        hints: vec![
+                            "Harness functions are implemented in the harness, and only declared in Polaris.".to_string(),
+                            format!(
+                                "Remove the body from 'harness fn {} {{ ... }}', or declare {} as a normal function without the 'harness' keyword: fn {} {{ ... }}",
+                                symbol, symbol, symbol
+                            )
+                        ],
+                    })
+                );
+                return Err(());
+            }
+
+            Some(Box::new(expr))
         } else {
             None
         };
 
+        if expr.is_none() && !harness {
+            wrap_err!(
+                node,
+                Err(Diagnostic {
+                    primary: DiagnosticMsg {
+                        message: "Function declaration must have a body".to_string(),
+                        span: CodeSpan {
+                            start: start_span,
+                            end: self.curr_tok.span.end,
+                        },
+                        file: lexer.file.clone(),
+                        err_type: DiagnosticMsgType::UnexpectedToken,
+                    },
+                    notes: vec![],
+                    hints: vec![format!(
+                        "Add a body to ' fn {} {{ ... }}', or declare {} as a harness function with the 'harness' keyword: harness fn {} {{ ... }}",
+                        symbol, symbol, symbol
+                    )],
+                })
+            );
+            return Err(());
+        }
+
         Ok(Node::new(
             NodeKind::FnDecl {
                 public,
-                host,
+                host: harness,
                 symbol,
                 return_type,
                 args,
@@ -1121,6 +1191,7 @@ impl<'a> ParseContext<'a> {
         ))
     }
 
+    // type MyType
     // type AliasType(a) = Result(a, String)
     // type SumType(a) {
     //   TypeCons(name: String, other: #(String, Int))
@@ -1131,7 +1202,7 @@ impl<'a> ParseContext<'a> {
         &mut self,
         node: &mut Node,
         lexer: &mut Lexer,
-        is_pub: bool,
+        public: bool,
     ) -> Result<Node, ()> {
         let start_span = self.curr_tok.span.start;
         wrap_err!(node, self.expect(lexer, TokenVariant::Type));
@@ -1153,33 +1224,20 @@ impl<'a> ParseContext<'a> {
 
         match &self.curr_tok.variant {
             TokenVariant::Assign => {
-                self.parse_type_alias(node, lexer, is_pub, start_span, symbol, type_vars)
+                self.parse_type_alias(node, lexer, public, start_span, symbol, type_vars)
             }
             TokenVariant::LBrace => {
-                self.parse_type_constructors(node, lexer, is_pub, start_span, symbol, type_vars)
+                self.parse_type_constructors(node, lexer, public, start_span, symbol, type_vars)
             }
-            _ => {
-                wrap_err!(
-                    node,
-                    Err(Diagnostic {
-                        primary: DiagnosticMsg {
-                            message: format!(
-                                "Expected '=' or '{{' after type name, found '{}'",
-                                self.curr_tok
-                            ),
-                            span: CodeSpan {
-                                start: self.curr_tok.span.start,
-                                end: self.curr_tok.span.end,
-                            },
-                            file: lexer.file.clone(),
-                            err_type: DiagnosticMsgType::UnexpectedToken,
-                        },
-                        notes: vec![],
-                        hints: vec!["Check your syntax.".to_string()],
-                    })
-                );
-                Err(())
-            }
+            _ => Ok(Node::new(
+                NodeKind::TypeDecl {
+                    public,
+                    symbol,
+                    type_vars,
+                    variants: vec![],
+                },
+                CodeSpan::new(start_span, self.prev_tok.span.end),
+            )),
         }
     }
 

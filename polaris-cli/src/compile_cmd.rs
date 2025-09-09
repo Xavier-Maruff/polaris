@@ -44,10 +44,7 @@ pub async fn command(args: CompileArgs) {
     let mut failed = false;
     for task in tasks {
         match task.await {
-            Err(_) => {
-                failed = true
-                //logger.error(&format!("Task failed: {}", e));
-            }
+            Err(_) => failed = true,
             Ok(ctx) => match ctx {
                 Ok(ctx) => {
                     compile_ctx.merge(ctx);

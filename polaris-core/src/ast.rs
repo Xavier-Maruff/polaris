@@ -178,7 +178,7 @@ impl Node {
     }
 
     pub fn all_errors(&self) -> Vec<Diagnostic> {
-        let mut errs = self.errors.clone();
+        let mut errs = vec![];
         self.collect_diagnostics(&mut errs, true);
         errs
     }

@@ -275,7 +275,7 @@ impl Lexer {
                 "fn" => TokenVariant::Fn,
                 "import" => TokenVariant::Import,
                 "as" => TokenVariant::As,
-                "host" => TokenVariant::Host,
+                "harness" => TokenVariant::Harness,
                 "let" => TokenVariant::Let,
                 "if" => TokenVariant::If,
                 "else" => TokenVariant::Else,

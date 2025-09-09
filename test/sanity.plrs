@@ -1,5 +1,6 @@
 import core/io
 
+type UnitType
 type MyResult(a) = Result(a, String)
 type MySumType {
     A(Int)
@@ -7,7 +8,7 @@ type MySumType {
     C
 }
 
-pub fn main() {
+pub harness fn main() {
     let z = x + -y
 
     let func = fn(a: Int, b: String) -> Bool {

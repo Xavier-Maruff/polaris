@@ -31,18 +31,23 @@ type Result(a, b) {
 type Test {
   Test(
     name: String,
-    func: fn() -> Result(None, String)
+    func: fn() -> Result(Void, String)
   )
 }
+
+//can be instantiated by
+let t = Test(name: "my_test", func: fn(){ Ok(Void) })
 ```
 
 Like in Gleam, all type names are capitalised, and lower case type identifiers are treated as type variables for parametric polymorphism (in the Result type above, `a` and `b` were type variables, that can be replaced with arbitrary concrete types at instantiation).
 
-There is are two major points of divergence from the Gleam type system: the first being the `nocrypt` modifier, and the second being kinds.
-
 #### Nocrypt
 
-Nocrypt tells the compiler to, by default, not encrypt the underlying value (though the runtime will also load an encrypted version if involved in arithmetic with a standard encrypted value).
+```gleam
+let a: nocrypt Int = 12
+```
+
+Nocrypt is a type modifier that tells the compiler to, by default, not encrypt the underlying value (though the runtime will also load an encrypted version if involved in arithmetic with a standard encrypted value).
 Use `nocrypt` for large (10-100x) performance benefits when not dealing with sensitive data - for example, routing a web request. For ultra-high security applications, the use of nocrypt can be disabled via the compiler flag `--no-nocrypt`.
 
 #### Intrinsics
@@ -84,13 +89,8 @@ Char
 Option(t)
 Result(a, b)
 
-
-//Also scale-kind types
-Dec(a)
-Bin(a)
-
-//And nat-kind types
-1, 2, 3, ... etc.
+//function types are written as
+fn(Arg1Type, Arg2Type, ...) -> ReturnType
 ```
 
 With corresponding literals:
@@ -109,6 +109,8 @@ let g: Map(String, Int) = #{
 let h: #(Int, Int) = #(1, 2)
 let i: String = "my_string"
 let j: Char = "a"
+//closure literal
+let k: fn(Int) -> Int = fn(a) { a + 1 }
 ```
 
 > [!NOTE]
@@ -132,6 +134,7 @@ Functions in Polaris are declared using `fn`:
 fn my_func(a: Int) -> Int {
   a + 12
 }
+
 ```
 
 As discussed earlier, we can make a function generic by using an implicit type variable instead of a concrete type:
@@ -144,6 +147,16 @@ fn my_func(a: Result(Int, t)) -> Result(Int, t) {
  }
 }
 ```
+
+Functions can be declared to exist in the encrytped runtime context or in the harness host context. To declare a function that lives on the harness:
+
+```gleam
+harness fn my_func(a: Int) -> Result()
+```
+
+Harness functions must return either `Void` or `Result(a, b)`, as any call to the harness is implicitly effectful - we are either just going to dump an effect to the harness and not care about what happens later, or need some data back after I/O and/or decryption in the harness, both of which could fail.
+
+Otherwise extern functions as of yet cannot be declared due to the unique layout and encoding of data in the Polaris runtime.
 
 ### Monad-y goodness
 
@@ -200,7 +213,7 @@ let result = if some_condition {
 
 ```gleam
 type MyNumericType {
-  Thing1(x: Fixed(2))
+  Thing1(x: Fixed2(Int))
   Thing2(x: Real)
 }
 
