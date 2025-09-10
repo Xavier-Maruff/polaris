@@ -6,6 +6,7 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::{intrinsic_symbols, intrinsic_type_symbols},
     module::ModuleContext,
+    parse::CodeSpan,
 };
 
 pub type SymbolId = usize;
@@ -23,6 +24,7 @@ struct SymbolPassContext {
     current_file: String,
     errors: Vec<Diagnostic>,
     warnings: Vec<Diagnostic>,
+    symbol_decl_locs: HashMap<SymbolId, (String, CodeSpan)>,
     //module name -> (imported module -> (module symbol id, [imported symbols]))
     module_imports: HashMap<String, HashMap<String, (SymbolId, HashSet<String>)>>,
     module_type_imports: HashMap<String, HashMap<String, (SymbolId, HashSet<String>)>>,
@@ -46,6 +48,7 @@ impl SymbolPassContext {
             current_file: String::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
+            symbol_decl_locs: HashMap::new(),
             module_exports: HashMap::new(),
             module_imports: HashMap::new(),
             module_type_exports: HashMap::new(),
@@ -91,7 +94,38 @@ impl SymbolPassContext {
         self.anonymous_scope_depth.last_mut().map(|d| *d += 1);
     }
 
-    fn declare_symbol(&mut self, name: String, type_: bool) -> SymbolId {
+    fn declare_symbol(
+        &mut self,
+        span: CodeSpan,
+        name: String,
+        type_: bool,
+        error_on_redeclare: bool,
+    ) -> SymbolId {
+        if error_on_redeclare && let Some(id) = self.find_in_scope(&name, type_) {
+            let prior_decl_loc = self
+                .symbol_decl_locs
+                .get(&id)
+                .cloned()
+                .unwrap_or((self.current_file.clone(), span));
+
+            self.errors.push(Diagnostic {
+                primary: DiagnosticMsg {
+                    message: format!("Duplicate declaration of symbol '{}'", name),
+                    file: self.current_file.clone(),
+                    span,
+                    err_type: DiagnosticMsgType::MultipleDeclarations,
+                },
+                notes: vec![DiagnosticMsg {
+                    message: format!("Previous declaration of '{}' here", name),
+                    file: prior_decl_loc.0.clone(),
+                    span: prior_decl_loc.1,
+                    err_type: DiagnosticMsgType::MultipleDeclarations,
+                }],
+                hints: vec![],
+            });
+            return id;
+        }
+
         let id = self.symbol_idx;
         self.symbol_idx += 1;
 
@@ -104,6 +138,9 @@ impl SymbolPassContext {
         if let Some(scope) = scope_stack.last_mut() {
             scope.insert(name, id);
         }
+
+        self.symbol_decl_locs
+            .insert(id, (self.current_file.clone(), span));
 
         id
     }
@@ -138,6 +175,8 @@ impl SymbolPassContext {
                 );
 
                 self.resolve_scoped_symbols(module_ctx.name.as_str(), &mut module_ctx.ast, true);
+
+                self.pop_scope();
             }
         }
     }
@@ -184,7 +223,7 @@ impl SymbolPassContext {
                     {
                         symbol_id.clone()
                     } else {
-                        self.declare_symbol(name.clone(), false)
+                        self.declare_symbol(symbol_node.span, name.clone(), false, false)
                     };
 
                     symbol_node.symbol_id = Some(symbol_id);
@@ -289,20 +328,23 @@ impl SymbolPassContext {
                         .map(|c| c.is_lowercase())
                         .unwrap_or(false)
                     {
-                        let type_id = self.declare_symbol(symbol.clone(), true);
+                        let type_id = self.declare_symbol(node.span, symbol.clone(), true, false);
                         node.symbol_id = Some(type_id);
                         return;
                     }
 
                     self.errors.push(Diagnostic {
                         primary: DiagnosticMsg {
-                            message: format!("Undeclared type '{}'", symbol),
+                            message: format!("Undeclared type '{}'", symbol,),
                             file: self.current_file.clone(),
                             span: node.span,
                             err_type: DiagnosticMsgType::UndeclaredSymbol,
                         },
                         notes: vec![],
-                        hints: vec![],
+                        hints: vec![format!(
+                            "If this is a parametric type variable, use lowercase (e.g. '{}')",
+                            symbol.to_lowercase()
+                        )],
                     });
                 }
             }
@@ -635,7 +677,7 @@ impl SymbolPassContext {
                 top_level_types,
                 ..
             } => {
-                let symbol_id = self.declare_symbol(symbol.clone(), false);
+                let symbol_id = self.declare_symbol(node.span, symbol.clone(), false, true);
                 node.symbol_id = Some(symbol_id);
 
                 //register the import
@@ -652,7 +694,7 @@ impl SymbolPassContext {
 
                 //register directly imported types
                 for top_level_type in top_level_types {
-                    let _ = self.declare_symbol(top_level_type.clone(), true);
+                    let _ = self.declare_symbol(node.span, top_level_type.clone(), true, true);
                     let imported_types = self
                         .module_type_imports
                         .entry(module_name.to_string())
@@ -665,7 +707,7 @@ impl SymbolPassContext {
 
                 //register directly imported symbols
                 for top_level_symbol in top_level {
-                    let _ = self.declare_symbol(top_level_symbol.clone(), false);
+                    let _ = self.declare_symbol(node.span, top_level_symbol.clone(), false, true);
                     let imported_symbols = self
                         .module_imports
                         .entry(module_name.to_string())
@@ -678,7 +720,7 @@ impl SymbolPassContext {
             }
 
             FnDecl { symbol, public, .. } => {
-                let symbol_id = self.declare_symbol(symbol.clone(), false);
+                let symbol_id = self.declare_symbol(node.span, symbol.clone(), false, true);
                 node.symbol_id = Some(symbol_id);
                 if *public {
                     self.module_exports
@@ -702,7 +744,7 @@ impl SymbolPassContext {
             }
 
             TypeAlias { symbol, public, .. } => {
-                let symbol_id = self.declare_symbol(symbol.clone(), true);
+                let symbol_id = self.declare_symbol(node.span, symbol.clone(), true, true);
                 node.symbol_id = Some(symbol_id);
                 if *public {
                     self.module_type_exports
@@ -719,7 +761,7 @@ impl SymbolPassContext {
                 ..
             } => {
                 //declare type
-                let symbol_id = self.declare_symbol(symbol.clone(), true);
+                let symbol_id = self.declare_symbol(node.span, symbol.clone(), true, true);
                 node.symbol_id = Some(symbol_id);
                 if *public {
                     self.module_type_exports
@@ -734,7 +776,8 @@ impl SymbolPassContext {
                         match &mut variant.kind {
                             NodeKind::TypeConstructor { symbol, .. } => {
                                 //type constructors are not types, treated as normal funcs
-                                let symbol_id = self.declare_symbol(symbol.clone(), false);
+                                let symbol_id =
+                                    self.declare_symbol(variant.span, symbol.clone(), false, true);
                                 variant.symbol_id = Some(symbol_id);
                                 if *public {
                                     self.module_exports
