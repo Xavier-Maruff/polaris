@@ -9,35 +9,9 @@ pub struct Cli {
 
 #[derive(Args)]
 pub struct BuildArgs {
-    #[arg(short, long)]
-    pub release: bool,
-    #[arg(short, long)]
-    pub target: Option<String>,
-    #[arg(short, long)]
-    pub opt: Option<i8>,
-    #[arg(short, long, default_value_t = 1)]
-    pub verbosity: u8,
-}
-
-#[derive(Args)]
-pub struct CompileArgs {
-    pub files: Vec<String>,
-    #[arg(short, long)]
-    pub release: bool,
-    #[arg(short, long)]
-    pub target: Option<String>,
-    #[arg(short, long)]
-    pub opt: Option<i8>,
-    #[arg(short, long, default_value_t = 1)]
-    pub verbosity: u8,
-    #[arg(short, long)]
-    pub werror: bool,
-}
-
-#[derive(Args)]
-pub struct TestArgs {
-    #[arg(short, long)]
-    pub tests: Option<Vec<String>>,
+    pub directory: Option<String>,
+    #[arg(short, long, default_value = "dev")]
+    pub profile: String,
     #[arg(short, long, default_value_t = 1)]
     pub verbosity: u8,
 }
@@ -57,7 +31,5 @@ pub struct NewArgs {
 #[derive(Subcommand)]
 pub enum Commands {
     Build(BuildArgs),
-    Compile(CompileArgs),
-    Test(TestArgs),
     New(NewArgs),
 }

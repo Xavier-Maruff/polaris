@@ -14,3 +14,5 @@ crossbeam-channel = "0.5.15"
 anyhow = "1.0.98"
 tokio = { version = "1.47.1", features = ["rt", "macros", "rt-multi-thread"] }
 rayon = "1.10.0"
+toml = "0.9.5"
+serde = { version = "1.0.219", features = ["derive"] }

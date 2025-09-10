@@ -1,0 +1,7 @@
+package = "sanity"
+version = "0.1.0"
+
+path = "src"
+
+[dependencies]
+other = { path = "packages/other" }

@@ -1,0 +1,9 @@
+
+pub type TestInt = Int
+
+pub const #(first_const, second_const) = #(1, 2)
+
+pub fn run_test(a: TestInt) -> TestInt {
+    let y = 10
+    a + y
+}

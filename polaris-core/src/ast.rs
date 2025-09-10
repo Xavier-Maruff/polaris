@@ -9,6 +9,7 @@ pub struct Node {
     pub span: CodeSpan,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
+    pub symbol_id: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -20,6 +21,8 @@ pub enum NodeKind {
         package: String,
         module: String,
         symbol: String,
+        top_level_types: Vec<String>,
+        top_level: Vec<String>,
     },
     TypeAlias {
         public: bool,
@@ -172,6 +175,7 @@ impl Node {
         Self {
             kind,
             span,
+            symbol_id: None,
             errors: vec![],
             warnings: vec![],
         }

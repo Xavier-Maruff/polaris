@@ -223,6 +223,43 @@ impl<'a> ParseContext<'a> {
 
         let package = paths[0].clone();
         let module = paths[paths.len() - 1].clone();
+
+        //.{ symbol, type other}
+        let (top_level, top_level_types) = if matches!(
+            (&self.curr_tok.variant, &self.next_tok.variant),
+            (TokenVariant::Dot, TokenVariant::LBrace)
+        ) {
+            wrap_err!(node, self.advance(lexer));
+            wrap_err!(node, self.advance(lexer));
+
+            let mut top_level_types = vec![];
+            let mut top_level = vec![];
+
+            while !matches!(self.curr_tok.variant, TokenVariant::RBrace) {
+                let target = if matches!(self.curr_tok.variant, TokenVariant::Type) {
+                    wrap_err!(node, self.advance(lexer));
+                    &mut top_level_types
+                } else {
+                    &mut top_level
+                };
+
+                let ident = self.parse_ident(node, lexer, false)?;
+                target.push(ident);
+
+                if matches!(self.curr_tok.variant, TokenVariant::Comma) {
+                    wrap_err!(node, self.advance(lexer));
+                } else {
+                    break;
+                }
+            }
+
+            wrap_err!(node, self.expect(lexer, TokenVariant::RBrace));
+
+            (top_level, top_level_types)
+        } else {
+            (vec![], vec![])
+        };
+
         let symbol = if matches!(self.curr_tok.variant, TokenVariant::As) {
             wrap_err!(node, self.advance(lexer));
             self.parse_ident(node, lexer, false)?
@@ -235,6 +272,8 @@ impl<'a> ParseContext<'a> {
                 package,
                 module,
                 symbol,
+                top_level,
+                top_level_types,
             },
             CodeSpan {
                 start: self.prev_tok.span.start,
@@ -304,15 +343,11 @@ impl<'a> ParseContext<'a> {
         let mut arms = vec![];
         while !matches!(self.curr_tok.variant, TokenVariant::RBrace) {
             let pattern = self.parse_expr(node, lexer)?;
+
             wrap_err!(node, self.expect(lexer, TokenVariant::Arrow));
             let body = self.parse_expr(node, lexer)?;
-            arms.push((pattern, body));
 
-            if matches!(self.curr_tok.variant, TokenVariant::Comma) {
-                wrap_err!(node, self.advance(lexer));
-            } else {
-                break;
-            }
+            arms.push((pattern, body));
         }
 
         wrap_err!(node, self.expect(lexer, TokenVariant::RBrace));

@@ -1,4 +1,4 @@
-import core/io
+import other/test.{first_const, run_test, type TestInt}
 
 type UnitType
 type MyResult(a) = Result(a, String)
@@ -8,8 +8,10 @@ type MySumType {
     C
 }
 
-pub harness fn main() {
-    let z = x + -y
+const x: #(Int, String) =  #(5, "Hello")
+
+pub fn main() {
+    let z = run_test(5)
 
     let func = fn(a: Int, b: String) -> Bool {
         if a > 0 {
@@ -23,12 +25,9 @@ pub harness fn main() {
 
 
     let #(ret, _) = match True {
-        True -> #(io.println("It's true!"), 0),
-        False -> #(io.println("It's false!"), 1),
+        True -> #(io.println("It's true!"), 0)
+        False -> #(io.println("It's false!"), 1)
     }
 
     ret
 }
-
-
-const x: #(Int, String) =  #(5, "Hello")
