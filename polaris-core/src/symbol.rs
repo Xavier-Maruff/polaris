@@ -34,6 +34,10 @@ struct SymbolPassContext {
     scope_stack: Vec<HashMap<String, SymbolId>>,
     type_scope_stack: Vec<HashMap<String, SymbolId>>,
     symbol_idx: SymbolId,
+    //anonymous scopes are additional scopes that are bound to the current scope,
+    //and popped in groups with the current scope rather than individually
+    //this allows for bindings to redeclare symbols in the same nominal scope
+    anonymous_scope_depth: Vec<usize>,
 }
 
 impl SymbolPassContext {
@@ -50,6 +54,7 @@ impl SymbolPassContext {
             scope_stack: Vec::new(),
             type_scope_stack: Vec::new(),
             symbol_idx: 0,
+            anonymous_scope_depth: Vec::new(),
         }
     }
 
@@ -63,11 +68,27 @@ impl SymbolPassContext {
     fn push_scope(&mut self) {
         self.scope_stack.push(HashMap::new());
         self.type_scope_stack.push(HashMap::new());
+        self.anonymous_scope_depth.push(0);
     }
 
     fn pop_scope(&mut self) {
+        //anonymous scopes are added when declaring let bindings
+        //to allow for redeclarations in the same scope
+        let anonymous_depth = self.anonymous_scope_depth.last().unwrap_or(&0).clone() as u64;
+        for _ in 0..anonymous_depth {
+            self.scope_stack.pop();
+            self.type_scope_stack.pop();
+        }
+        self.anonymous_scope_depth.pop();
+
         self.scope_stack.pop();
         self.type_scope_stack.pop();
+    }
+
+    fn push_anonymous_scope(&mut self) {
+        self.scope_stack.push(HashMap::new());
+        self.type_scope_stack.push(HashMap::new());
+        self.anonymous_scope_depth.last_mut().map(|d| *d += 1);
     }
 
     fn declare_symbol(&mut self, name: String, type_: bool) -> SymbolId {
@@ -83,6 +104,7 @@ impl SymbolPassContext {
         if let Some(scope) = scope_stack.last_mut() {
             scope.insert(name, id);
         }
+
         id
     }
 
@@ -114,6 +136,8 @@ impl SymbolPassContext {
                     module_ctx.name.as_str(),
                     &mut module_ctx.ast,
                 );
+
+                self.resolve_scoped_symbols(module_ctx.name.as_str(), &mut module_ctx.ast, true);
             }
         }
     }
@@ -122,39 +146,79 @@ impl SymbolPassContext {
         &mut self,
         symbol_node: &mut Node,
         in_match: bool,
-    ) -> Result<Vec<(String, SymbolId)>, ()> {
+        mirror_symbols: &Option<HashMap<String, SymbolId>>,
+    ) -> Result<HashMap<String, SymbolId>, ()> {
         if let NodeKind::Expr { expr } = &mut symbol_node.kind {
             use ExprKind::*;
             match expr {
+                Discard => Ok(HashMap::new()),
                 Symbol { name, .. } => {
-                    let symbol_id = self.declare_symbol(name.clone(), false);
+                    //if capitalised, is a type constructor, don't declare, instead link to type constructor symbol
+                    if name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    {
+                        symbol_node.symbol_id = self.find_in_scope(name, false);
+                        if symbol_node.symbol_id.is_none() {
+                            self.errors.push(Diagnostic {
+                                primary: DiagnosticMsg {
+                                    message: format!("Undeclared type constructor '{}'", name),
+                                    file: self.current_file.clone(),
+                                    span: symbol_node.span,
+                                    err_type: DiagnosticMsgType::UndeclaredSymbol,
+                                },
+                                notes: vec![],
+                                hints: vec![],
+                            });
+                            return Err(());
+                        }
+                        return Ok(HashMap::new());
+                    }
+
+                    //check if symbol needs to be mirror prior declaration
+                    //only happens in match patterns
+                    let symbol_id = if let Some(symbol_id) =
+                        mirror_symbols.as_ref().and_then(|s| s.get(name))
+                    {
+                        symbol_id.clone()
+                    } else {
+                        self.declare_symbol(name.clone(), false)
+                    };
+
                     symbol_node.symbol_id = Some(symbol_id);
-                    Ok(vec![(name.clone(), symbol_id)])
+                    Ok(HashMap::from([(name.clone(), symbol_id)]))
                 }
                 TupleLit(elements) => {
-                    let mut symbol_ids = vec![];
+                    let mut symbol_ids = HashMap::new();
                     for elem in elements {
-                        symbol_ids.extend(self.declare_binding(elem, in_match)?);
+                        symbol_ids.extend(self.declare_binding(elem, in_match, mirror_symbols)?);
                     }
 
                     Ok(symbol_ids)
                 }
                 ListLit(elements) => {
-                    let mut symbol_ids = vec![];
+                    let mut symbol_ids = HashMap::new();
                     for elem in elements {
-                        symbol_ids.extend(self.declare_binding(elem, in_match)?);
+                        symbol_ids.extend(self.declare_binding(elem, in_match, mirror_symbols)?);
                     }
 
                     Ok(symbol_ids)
                 }
                 FnCall { args, .. } if in_match => {
-                    let mut symbol_ids = vec![];
+                    let mut symbol_ids = HashMap::new();
                     for arg in args {
-                        symbol_ids.extend(self.declare_binding(&mut arg.1, in_match)?);
+                        symbol_ids.extend(self.declare_binding(
+                            &mut arg.1,
+                            in_match,
+                            mirror_symbols,
+                        )?);
                     }
 
                     Ok(symbol_ids)
                 }
+                //todo: add binary op destructuring patterns
                 _ => {
                     self.errors.push(Diagnostic {
                         primary: DiagnosticMsg {
@@ -184,22 +248,55 @@ impl SymbolPassContext {
         }
     }
 
-    fn resolve_scoped_symbols(&mut self, module_name: &str, node: &mut Node) {
-        use ExprKind::*;
+    fn resolve_scoped_symbols(&mut self, module_name: &str, node: &mut Node, top_level: bool) {
         use NodeKind::*;
         match &mut node.kind {
-            Expr { expr } => match expr {
-                Symbol { name, .. } => {
-                    let symbol_id = self.find_in_scope(name, false);
-                    if let Some(id) = symbol_id {
-                        node.symbol_id = Some(id);
+            Program { children, .. } => {
+                for child in children {
+                    self.resolve_scoped_symbols(module_name, child, true);
+                }
+            }
+            TypeAlias { actual, .. } => {
+                self.resolve_scoped_symbols(module_name, actual, false);
+            }
+            TypeDecl { variants, .. } => {
+                for variant in variants {
+                    self.resolve_scoped_symbols(module_name, variant, false);
+                }
+            }
+            TypeConstructor { fields, .. } => {
+                for (_, ty, _) in fields {
+                    self.resolve_scoped_symbols(module_name, ty, true);
+                }
+            }
+
+            Type {
+                symbol, type_vars, ..
+            } => {
+                //resolve type vars
+                for ty in type_vars {
+                    self.resolve_scoped_symbols(module_name, ty, true);
+                }
+
+                //resolve type symbol
+                if let Some(type_id) = self.find_in_scope(symbol, true) {
+                    node.symbol_id = Some(type_id);
+                } else {
+                    //if lowercase, it's a parametric type var, implicitly declare on first use
+                    if symbol
+                        .chars()
+                        .next()
+                        .map(|c| c.is_lowercase())
+                        .unwrap_or(false)
+                    {
+                        let type_id = self.declare_symbol(symbol.clone(), true);
+                        node.symbol_id = Some(type_id);
                         return;
                     }
 
-                    //can't be a module, they're all field accessed
                     self.errors.push(Diagnostic {
                         primary: DiagnosticMsg {
-                            message: format!("Undeclared symbol '{}'", name),
+                            message: format!("Undeclared type '{}'", symbol),
                             file: self.current_file.clone(),
                             span: node.span,
                             err_type: DiagnosticMsgType::UndeclaredSymbol,
@@ -208,61 +305,313 @@ impl SymbolPassContext {
                         hints: vec![],
                     });
                 }
+            }
 
-                FieldAccess { expr, field } => {
-                    //only resolve symbols on the base expr
-                    if let Expr {
-                        expr: Symbol { name },
-                    } = &mut expr.kind
+            FnType {
+                args, return_type, ..
+            } => {
+                for arg in args {
+                    self.resolve_scoped_symbols(module_name, arg, true);
+                }
+                if let Some(return_type) = return_type {
+                    self.resolve_scoped_symbols(module_name, return_type, true);
+                }
+            }
+
+            TupleType { elements } => {
+                for elem in elements {
+                    self.resolve_scoped_symbols(module_name, elem, true);
+                }
+            }
+
+            FnDecl {
+                expr,
+                return_type,
+                args,
+                ..
+            } => {
+                self.push_scope();
+                for arg in args {
+                    if let Ok(_) = self.declare_binding(&mut arg.0, false, &None) {
+                        if let Some(ty) = &mut arg.1 {
+                            self.resolve_scoped_symbols(module_name, ty, false);
+                        }
+                    }
+                }
+                if return_type.is_some() {
+                    self.resolve_scoped_symbols(module_name, return_type.as_mut().unwrap(), false);
+                }
+                if expr.is_some() {
+                    self.resolve_scoped_symbols(module_name, expr.as_mut().unwrap(), false);
+                }
+                self.pop_scope();
+            }
+            ConstDecl {
+                expr,
+                symbol,
+                const_type,
+                ..
+            } => {
+                if !top_level {
+                    let _ = self.declare_binding(symbol, false, &None);
+                }
+                if let Some(ty) = const_type {
+                    self.resolve_scoped_symbols(module_name, ty, false);
+                }
+                self.resolve_scoped_symbols(module_name, expr, false);
+            }
+            Expr { .. } => self.resolve_expr(module_name, node),
+            Import { .. } => {}
+        }
+    }
+
+    fn resolve_expr(&mut self, module_name: &str, node: &mut Node) {
+        use ExprKind::*;
+        use NodeKind::*;
+
+        let expr = match &mut node.kind {
+            NodeKind::Expr { expr } => expr,
+            _ => return,
+        };
+
+        match expr {
+            IntLit { .. } | StringLit { .. } | RealLit { .. } | Discard => {}
+            LetBinding { symbols, expr, .. } => {
+                self.resolve_scoped_symbols(module_name, expr, false);
+                self.push_anonymous_scope();
+                let _ = self.declare_binding(symbols, false, &None);
+            }
+            Symbol { name, .. } => {
+                let symbol_id = self.find_in_scope(name, false);
+                if let Some(id) = symbol_id {
+                    node.symbol_id = Some(id);
+                    return;
+                }
+
+                //can't be a module, they're all field accessed
+                self.errors.push(Diagnostic {
+                    primary: DiagnosticMsg {
+                        message: format!("Undeclared symbol '{}'", name),
+                        file: self.current_file.clone(),
+                        span: node.span,
+                        err_type: DiagnosticMsgType::UndeclaredSymbol,
+                    },
+                    notes: vec![],
+                    hints: vec![],
+                });
+            }
+
+            FieldAccess { expr, field } => {
+                //only resolve symbols on the base expr
+                if let Expr {
+                    expr: Symbol { name },
+                } = &mut expr.kind
+                {
+                    //if imported module alias, resolve module and register imported symbol (i.e. field)
+                    if let Some(imported_module) = self
+                        .module_aliases
+                        .get(module_name)
+                        .and_then(|a| a.get(name))
                     {
-                        //if imported module alias, resolve module and register imported symbol (i.e. field)
-                        if let Some(imported_module) = self
-                            .module_aliases
-                            .get(module_name)
-                            .and_then(|a| a.get(name))
+                        let module_imports = match self
+                            .module_imports
+                            .get_mut(module_name)
+                            .and_then(|a| a.get_mut(imported_module))
                         {
-                            let module_imports = match self
-                                .module_imports
-                                .get_mut(module_name)
-                                .and_then(|a| a.get_mut(imported_module))
-                            {
-                                Some(a) => a,
-                                None => {
+                            Some(a) => a,
+                            None => {
+                                self.errors.push(Diagnostic {
+                                    primary: DiagnosticMsg {
+                                        message: format!(
+                                            "Module '{}' not imported",
+                                            imported_module
+                                        ),
+                                        file: self.current_file.clone(),
+                                        span: node.span,
+                                        err_type: DiagnosticMsgType::ModuleNotFound,
+                                    },
+                                    notes: vec![],
+                                    hints: vec![],
+                                });
+                                return;
+                            }
+                        };
+
+                        //link to module symbol
+                        expr.symbol_id = Some(module_imports.0);
+                        //register imported symbol
+                        module_imports.1.insert(field.clone());
+                    } else {
+                        //not imported, try resolve as normal symbol
+                        self.resolve_scoped_symbols(module_name, expr, false);
+                    }
+                } else {
+                    //not the base expr, resolve one level deeper
+                    self.resolve_scoped_symbols(module_name, expr, false);
+                }
+            }
+
+            ListLit(elements) | TupleLit(elements) => {
+                for elem in elements {
+                    self.resolve_scoped_symbols(module_name, elem, false);
+                }
+            }
+
+            MapLit(pairs) => {
+                for (key, value) in pairs {
+                    self.resolve_scoped_symbols(module_name, key, false);
+                    self.resolve_scoped_symbols(module_name, value, false);
+                }
+            }
+
+            BinaryOp { left, right, .. } => {
+                self.resolve_scoped_symbols(module_name, left, false);
+                self.resolve_scoped_symbols(module_name, right, false);
+            }
+
+            UnaryOp { expr, .. } => {
+                self.resolve_scoped_symbols(module_name, expr, false);
+            }
+
+            FnCall { callee, args } => {
+                self.resolve_scoped_symbols(module_name, callee, false);
+                for arg in args {
+                    self.resolve_scoped_symbols(module_name, &mut arg.1, false);
+                }
+            }
+
+            Match { expr, arms } => {
+                self.resolve_scoped_symbols(module_name, expr, false);
+                for arm in arms {
+                    self.push_scope();
+                    let mut mirrored_symbols = None;
+                    // if let Ok(_) = self.declare_binding(&mut arm.0, true) {
+                    //     self.resolve_scoped_symbols(module_name, &mut arm.1);
+                    // }
+
+                    for pattern in &mut arm.0 {
+                        if let Ok(symbols) = self.declare_binding(pattern, true, &mirrored_symbols)
+                        {
+                            if mirrored_symbols.is_none() {
+                                mirrored_symbols = Some(symbols);
+                            } else {
+                                //assert all symbols match previous symbols - all conditions must declare the same symbols
+                                if mirrored_symbols.as_ref().unwrap().len() != symbols.len() {
                                     self.errors.push(Diagnostic {
                                         primary: DiagnosticMsg {
-                                            message: format!(
-                                                "Module '{}' not imported",
-                                                imported_module
-                                            ),
+                                            message:
+                                                "Mismatched symbol count in match arm patterns"
+                                                    .to_string(),
                                             file: self.current_file.clone(),
-                                            span: node.span,
-                                            err_type: DiagnosticMsgType::ModuleNotFound,
+                                            span: pattern.span,
+                                            err_type: DiagnosticMsgType::MismatchedPattern,
                                         },
                                         notes: vec![],
                                         hints: vec![],
                                     });
-                                    return;
+                                    continue;
                                 }
-                            };
 
-                            //link to module symbol
-                            expr.symbol_id = Some(module_imports.0);
-                            //register imported symbol
-                            module_imports.1.insert(field.clone());
-                        } else {
-                            //not imported, try resolve as normal symbol
-                            self.resolve_scoped_symbols(module_name, expr);
+                                for (name, id) in mirrored_symbols.as_ref().unwrap() {
+                                    if let Some(other_id) = symbols.get(name) {
+                                        if id != other_id {
+                                            self.errors.push(Diagnostic {
+                                                primary: DiagnosticMsg {
+                                                    message: format!("Mismatched symbol '{}' in match arm patterns", name),
+                                                    file: self.current_file.clone(),
+                                                    span: pattern.span,
+                                                    err_type: DiagnosticMsgType::MismatchedPattern,
+                                                },
+                                                notes: vec![],
+                                                hints: vec![],
+                                            });
+                                        }
+                                    } else {
+                                        self.errors.push(Diagnostic {
+                                            primary: DiagnosticMsg {
+                                                message: format!(
+                                                    "Mismatched symbol '{}' in match arm patterns",
+                                                    name
+                                                ),
+                                                file: self.current_file.clone(),
+                                                span: pattern.span,
+                                                err_type: DiagnosticMsgType::MismatchedPattern,
+                                            },
+                                            notes: vec![],
+                                            hints: vec![],
+                                        });
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        //not the base expr, resolve one level deeper
-                        self.resolve_scoped_symbols(module_name, expr);
+                    }
+                    self.pop_scope();
+                }
+            }
+
+            Closure {
+                args,
+                return_type,
+                expr,
+            } => {
+                self.push_scope();
+                for arg in args {
+                    if let Ok(_) = self.declare_binding(&mut arg.0, false, &None) {
+                        if let Some(ty) = &mut arg.1 {
+                            self.resolve_scoped_symbols(module_name, ty, false);
+                        }
                     }
                 }
+                if let Some(ret_ty) = return_type {
+                    self.resolve_scoped_symbols(module_name, ret_ty, false);
+                }
+                self.resolve_scoped_symbols(module_name, expr, false);
+                self.pop_scope();
+            }
 
-                _ => {}
-            },
-            _ => {}
+            For {
+                binding,
+                start,
+                end,
+                body,
+            } => {
+                self.push_scope();
+                let _ = self.declare_binding(binding, false, &None);
+
+                self.resolve_scoped_symbols(module_name, start, false);
+                self.resolve_scoped_symbols(module_name, end, false);
+                self.resolve_scoped_symbols(module_name, body, false);
+
+                self.pop_scope();
+            }
+
+            IndexAccess { expr, index } => {
+                self.resolve_scoped_symbols(module_name, expr, false);
+                self.resolve_scoped_symbols(module_name, index, false);
+            }
+
+            IfElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.resolve_scoped_symbols(module_name, condition, false);
+                self.resolve_scoped_symbols(module_name, then_branch, false);
+                if let Some(else_branch) = else_branch {
+                    self.resolve_scoped_symbols(module_name, else_branch, false);
+                }
+            }
+
+            Block(statements) => {
+                self.push_scope();
+                for stmt in statements {
+                    self.resolve_scoped_symbols(module_name, stmt, false);
+                }
+                self.pop_scope();
+            }
         }
+
+        return;
     }
 
     fn resolve_top_level_module_symbols(
@@ -340,7 +689,7 @@ impl SymbolPassContext {
             }
 
             ConstDecl { symbol, public, .. } => {
-                if let Ok(symbol_ids) = self.declare_binding(symbol, false) {
+                if let Ok(symbol_ids) = self.declare_binding(symbol, false, &None) {
                     if *public {
                         for (symbol_name, symbol_id) in &symbol_ids {
                             self.module_exports
@@ -349,6 +698,17 @@ impl SymbolPassContext {
                                 .insert(symbol_name.clone(), *symbol_id);
                         }
                     }
+                }
+            }
+
+            TypeAlias { symbol, public, .. } => {
+                let symbol_id = self.declare_symbol(symbol.clone(), true);
+                node.symbol_id = Some(symbol_id);
+                if *public {
+                    self.module_type_exports
+                        .entry(module_name.to_string())
+                        .or_insert_with(HashMap::new)
+                        .insert(symbol.clone(), symbol_id);
                 }
             }
 

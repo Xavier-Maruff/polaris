@@ -69,6 +69,7 @@ pub enum DiagnosticMsgType {
     InvalidFunctionCall,
     RecursiveTypeDefinition,
     InvalidBindingPattern,
+    MismatchedPattern,
     Unimplemented,
 }
 
@@ -104,6 +105,7 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         UndeclaredFunction => "EN0024",
         InvalidFunctionCall => "ET0025",
         RecursiveTypeDefinition => "ET0026",
+        MismatchedPattern => "ET0027",
         Unimplemented => "EC0027", // todo
     }
 }

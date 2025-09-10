@@ -26,6 +26,7 @@ pub enum NodeKind {
     },
     TypeAlias {
         public: bool,
+        symbol: String,
         alias: Box<Node>,
         actual: Box<Node>,
     },
@@ -137,7 +138,7 @@ pub enum ExprKind {
     },
     Match {
         expr: Box<Node>,
-        arms: Vec<(Node, Node)>,
+        arms: Vec<(Vec<Node>, Node)>,
     },
     FnCall {
         callee: Box<Node>,
@@ -150,7 +151,7 @@ pub enum ExprKind {
         expr: Box<Node>,
     },
     For {
-        binding: String,
+        binding: Box<Node>,
         start: Box<Node>,
         end: Box<Node>,
         body: Box<Node>,
@@ -320,10 +321,15 @@ impl ExprKind {
                 expr.collect_diagnostics(errs, collect_errors);
             }
             For {
-                start, end, body, ..
+                start,
+                end,
+                body,
+                binding,
+                ..
             } => {
                 start.collect_diagnostics(errs, collect_errors);
                 end.collect_diagnostics(errs, collect_errors);
+                binding.collect_diagnostics(errs, collect_errors);
                 body.collect_diagnostics(errs, collect_errors);
             }
             IfElse {
@@ -339,8 +345,10 @@ impl ExprKind {
             }
             Match { expr, arms } => {
                 expr.collect_diagnostics(errs, collect_errors);
-                for (pattern, arm_body) in arms {
-                    pattern.collect_diagnostics(errs, collect_errors);
+                for (patterns, arm_body) in arms {
+                    for pattern in patterns {
+                        pattern.collect_diagnostics(errs, collect_errors);
+                    }
                     arm_body.collect_diagnostics(errs, collect_errors);
                 }
             }

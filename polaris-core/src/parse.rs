@@ -342,12 +342,16 @@ impl<'a> ParseContext<'a> {
 
         let mut arms = vec![];
         while !matches!(self.curr_tok.variant, TokenVariant::RBrace) {
-            let pattern = self.parse_expr(node, lexer)?;
+            let mut patterns = vec![self.parse_expr(node, lexer)?];
+            while matches!(self.curr_tok.variant, TokenVariant::BitOr) {
+                wrap_err!(node, self.advance(lexer));
+                patterns.push(self.parse_expr(node, lexer)?);
+            }
 
             wrap_err!(node, self.expect(lexer, TokenVariant::Arrow));
             let body = self.parse_expr(node, lexer)?;
 
-            arms.push((pattern, body));
+            arms.push((patterns, body));
         }
 
         wrap_err!(node, self.expect(lexer, TokenVariant::RBrace));
@@ -605,7 +609,7 @@ impl<'a> ParseContext<'a> {
         let start_span = self.curr_tok.span.start;
 
         wrap_err!(node, self.expect(lexer, TokenVariant::For));
-        let binding = self.parse_ident(node, lexer, false)?;
+        let binding = Box::new(self.parse_expr(node, lexer)?);
         wrap_err!(node, self.expect(lexer, TokenVariant::Assign));
 
         let start = Box::new(self.parse_expr(node, lexer)?);
@@ -1387,6 +1391,7 @@ impl<'a> ParseContext<'a> {
             NodeKind::TypeAlias {
                 public: is_pub,
                 actual,
+                symbol: symbol.clone(),
                 alias: Box::new(Node::new(
                     NodeKind::Type {
                         nocrypt: false,
