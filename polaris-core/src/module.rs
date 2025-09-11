@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use petgraph::{
-    algo::{condensation, kosaraju_scc, toposort},
+    algo::{condensation, toposort},
     graph::DiGraph,
 };
 
@@ -10,7 +10,6 @@ use crate::{
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     log::Logger,
-    parse::CodeSpan,
     symbol::{SymbolContext, SymbolId},
 };
 
@@ -33,7 +32,7 @@ pub fn dependency_pass(compile_ctx: &mut CompileContext) -> Result<(), ()> {
 
 struct DependencyContext<'a> {
     errors: &'a mut Vec<Diagnostic>,
-    warnings: &'a mut Vec<Diagnostic>,
+    _warnings: &'a mut Vec<Diagnostic>,
     modules: HashMap<ModuleId, &'a mut ModuleContext>,
     symbols: &'a SymbolContext,
     sccs: Vec<Vec<ModuleId>>,
@@ -51,7 +50,7 @@ impl<'a> DependencyContext<'a> {
         }
         Self {
             errors: &mut compile_ctx.errors,
-            warnings: &mut compile_ctx.warnings,
+            _warnings: &mut compile_ctx.warnings,
             modules,
             sccs: Vec::new(),
             symbols: &compile_ctx.symbols,
@@ -377,14 +376,26 @@ impl<'a> DependencyContext<'a> {
             }
 
             Symbol { name, .. } => {
-                if let Some(symbol_id) = node.symbol_id
-                    && let Some(sub) = subs.get(&symbol_id).and_then(|m| m.get(name))
-                {
-                    logger.debug(&format!(
-                        "Substituting expr symbol '{}' (id {}) with imported symbol id {}",
-                        name, symbol_id, sub
-                    ));
-                    node.symbol_id = Some(*sub);
+                if let Some(symbol_id) = node.symbol_id {
+                    if let Some(sub) = subs.get(&symbol_id).and_then(|m| m.get(name)) {
+                        logger.debug(&format!(
+                            "Substituting expr symbol '{}' (id {}) with imported symbol id {}",
+                            name, symbol_id, sub
+                        ));
+                        node.symbol_id = Some(*sub);
+                    } else {
+                        //should probably replace node with an error node?
+                        errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: format!("Module does not export a member {}", name),
+                                err_type: DiagnosticMsgType::UndefinedVariable,
+                                span: node.span.clone(),
+                                file: current_file.clone(),
+                            },
+                            hints: vec![],
+                            notes: vec![],
+                        });
+                    }
                 }
             }
 
@@ -412,24 +423,13 @@ impl<'a> DependencyContext<'a> {
             FieldAccess { expr, field } => {
                 //if base expr is a symbol, the field might need to be substituted
                 if let NodeKind::Expr {
-                    expr: ExprKind::Symbol { .. },
+                    expr: ExprKind::Symbol { name, .. },
                 } = &expr.kind
                     && let Some(symbol_id) = expr.symbol_id
                     && subs.contains_key(&symbol_id)
                 {
                     //if field in sub map, replace field access with symbol node
                     if let Some(sub) = subs.get(&symbol_id).and_then(|m| m.get(field)) {
-                        logger.debug(&format!(
-                            "Substituting field access '{}.{}' with imported symbol id {}",
-                            match &expr.kind {
-                                NodeKind::Expr {
-                                    expr: ExprKind::Symbol { name },
-                                } => name,
-                                _ => unreachable!(),
-                            },
-                            field,
-                            sub
-                        ));
                         node.kind = NodeKind::Expr {
                             expr: ExprKind::Symbol {
                                 name: sub.to_string(),
@@ -439,7 +439,10 @@ impl<'a> DependencyContext<'a> {
                     } else {
                         errors.push(Diagnostic {
                             primary: DiagnosticMsg {
-                                message: format!("Symbol '{}' not found in module import.", field),
+                                message: format!(
+                                    "Module {} does not export a member {}",
+                                    name, field
+                                ),
                                 err_type: DiagnosticMsgType::UndefinedVariable,
                                 span: node.span.clone(),
                                 file: current_file.clone(),

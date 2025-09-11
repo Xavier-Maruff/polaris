@@ -29,6 +29,10 @@ pub struct SymbolContext {
     pub type_imports: ImportedSymbolMap,
     pub exports: ExportedSymbolMap,
     pub type_exports: ExportedSymbolMap,
+    pub intrinsic_symbols: HashMap<String, SymbolId>,
+    pub intrinsic_types: HashMap<String, SymbolId>,
+    //constructor symbol id -> type symbol id
+    pub type_constructors: HashMap<SymbolId, SymbolId>,
     pub symbol_idx: usize,
 }
 
@@ -188,8 +192,10 @@ impl SymbolPassContext {
     }
 
     fn resolve_symbols(&mut self, ctx: &mut CompileContext) {
-        self.scope_stack = vec![intrinsic_symbols(&mut self.symbols.symbol_idx)];
-        self.type_scope_stack = vec![intrinsic_type_symbols(&mut self.symbols.symbol_idx)];
+        self.symbols.intrinsic_symbols = intrinsic_symbols(&mut self.symbols.symbol_idx);
+        self.symbols.intrinsic_types = intrinsic_type_symbols(&mut self.symbols.symbol_idx);
+        self.scope_stack = vec![self.symbols.intrinsic_symbols.clone()];
+        self.type_scope_stack = vec![self.symbols.intrinsic_types.clone()];
 
         for (package_name, modules) in &mut ctx.packages {
             for (_, module_ctx) in modules {
@@ -852,20 +858,23 @@ impl SymbolPassContext {
                         match &mut variant.kind {
                             NodeKind::TypeConstructor { symbol, .. } => {
                                 //type constructors are not types, treated as normal funcs
-                                let symbol_id = self.declare_symbol(
+                                let variant_id = self.declare_symbol(
                                     variant.span,
                                     symbol.clone(),
                                     false,
                                     true,
                                     None,
                                 );
-                                variant.symbol_id = Some(symbol_id);
+                                variant.symbol_id = Some(variant_id);
+                                //register type constructor
+                                self.symbols.type_constructors.insert(variant_id, symbol_id);
+                                //register export
                                 if *public {
                                     self.symbols
                                         .exports
                                         .entry(module_name.to_string())
                                         .or_insert_with(HashMap::new)
-                                        .insert(symbol.clone(), symbol_id);
+                                        .insert(symbol.clone(), variant_id);
                                 }
                             }
                             _ => unreachable!(),
