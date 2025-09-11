@@ -1,35 +1,12 @@
-import other/test.{first_const, run_test, type TestInt}
+import other/test.{run_test} as other
+import other/second.{run_second_func}
 
-type UnitType
-type MyResult(a) = Result(a, String)
-type MySumType {
-    A(Int)
-    B(s: String, m: Bool)
-    C
+pub fn cyclic() -> Int {
+    5
 }
 
-const x: #(Int, String) =  #(5, "Hello")
-
-
-pub fn main() {
-    let z = run_test(5)
-
-    let func = fn(a: Int, b: String) -> Bool {
-        if a > 0 {
-            True
-        } else {
-            False
-        }
-    }
-
-    let t: nocrypt Int = 10
-
-
-    let #(ret, _) = match True {
-        True -> #(io.println("It's true!"), 0)
-        False -> #(io.println("It's false!"), 1)
-    }
-
-
-    ret
+fn main() {
+    run_test()
+    run_second_func()
+    other.run_test()
 }

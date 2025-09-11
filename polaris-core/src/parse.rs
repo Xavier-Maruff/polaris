@@ -133,7 +133,7 @@ impl<'a> ParseContext<'a> {
 
     fn parse_module(&mut self, lexer: &mut Lexer) -> Node {
         let mut node = Node::new(
-            NodeKind::Program { children: vec![] },
+            NodeKind::Module { children: vec![] },
             CodeSpan { start: 0, end: 0 },
         );
 
@@ -269,8 +269,8 @@ impl<'a> ParseContext<'a> {
 
         let import_node = Node::new(
             NodeKind::Import {
-                package,
-                module,
+                package: package.clone(),
+                module: package + "/" + module.as_str(),
                 symbol,
                 top_level,
                 top_level_types,
@@ -281,7 +281,7 @@ impl<'a> ParseContext<'a> {
             },
         );
 
-        if let NodeKind::Program { children } = &mut node.kind {
+        if let NodeKind::Module { children } = &mut node.kind {
             children.push(import_node);
         } else {
             unreachable!();
@@ -322,7 +322,7 @@ impl<'a> ParseContext<'a> {
             }
         };
 
-        if let NodeKind::Program { children } = &mut node.kind {
+        if let NodeKind::Module { children } = &mut node.kind {
             if let Ok(n) = n {
                 children.push(n);
             }
@@ -1375,6 +1375,7 @@ impl<'a> ParseContext<'a> {
             .map(|s| {
                 Node::new(
                     NodeKind::Type {
+                        parent_module: None,
                         nocrypt: false,
                         symbol: s.clone(),
                         type_vars: vec![],
@@ -1394,6 +1395,7 @@ impl<'a> ParseContext<'a> {
                 symbol: symbol.clone(),
                 alias: Box::new(Node::new(
                     NodeKind::Type {
+                        parent_module: None,
                         nocrypt: false,
                         symbol,
                         type_vars,
@@ -1475,6 +1477,34 @@ impl<'a> ParseContext<'a> {
                 let start_span = self.curr_tok.span.start;
                 wrap_err!(node, self.advance(lexer));
 
+                let (ident, parent_module) = if matches!(self.curr_tok.variant, TokenVariant::Dot) {
+                    wrap_err!(node, self.advance(lexer));
+                    if let TokenVariant::Ident(true_ident) = self.curr_tok.variant.clone() {
+                        //qualified
+                        (true_ident, Some(ident))
+                    } else {
+                        node.add_error(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: format!(
+                                    "Expected identifier after '.', found '{}'",
+                                    self.curr_tok
+                                ),
+                                span: CodeSpan {
+                                    start: self.curr_tok.span.start,
+                                    end: self.curr_tok.span.end,
+                                },
+                                file: lexer.file.clone(),
+                                err_type: DiagnosticMsgType::UnexpectedToken,
+                            },
+                            notes: vec![],
+                            hints: vec!["Check your syntax.".to_string()],
+                        });
+                        return Err(());
+                    }
+                } else {
+                    (ident, None)
+                };
+
                 let mut type_params = vec![];
                 if matches!(&self.curr_tok.variant, TokenVariant::LParen) {
                     wrap_err!(node, self.advance(lexer));
@@ -1494,6 +1524,7 @@ impl<'a> ParseContext<'a> {
                 Ok(Node::new(
                     NodeKind::Type {
                         nocrypt,
+                        parent_module,
                         symbol: ident,
                         type_vars: type_params,
                     },

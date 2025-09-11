@@ -6,3 +6,4 @@ pub mod log;
 pub mod module;
 pub mod parse;
 pub mod symbol;
+pub mod types;

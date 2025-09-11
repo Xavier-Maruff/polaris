@@ -1,6 +1,7 @@
 use crate::{
     diagnostic::Diagnostic,
     parse::{CodeSpan, token::TokenVariant},
+    symbol::SymbolId,
 };
 
 #[derive(Clone, Debug)]
@@ -9,12 +10,12 @@ pub struct Node {
     pub span: CodeSpan,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
-    pub symbol_id: Option<usize>,
+    pub symbol_id: Option<SymbolId>,
 }
 
 #[derive(Clone, Debug)]
 pub enum NodeKind {
-    Program {
+    Module {
         children: Vec<Node>,
     },
     Import {
@@ -43,6 +44,7 @@ pub enum NodeKind {
     },
     Type {
         nocrypt: bool,
+        parent_module: Option<String>,
         symbol: String,
         type_vars: Vec<Node>,
     },
@@ -216,7 +218,7 @@ impl NodeKind {
     pub fn collect_diagnostics(&self, errs: &mut Vec<Diagnostic>, collect_errors: bool) {
         use NodeKind::*;
         match self {
-            Program { children } => {
+            Module { children } => {
                 for child in children {
                     child.collect_diagnostics(errs, collect_errors);
                 }

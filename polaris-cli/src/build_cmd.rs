@@ -27,7 +27,22 @@ pub async fn command(args: BuildArgs) {
         }
     };
 
-    let mut compile_ctx = CompileContext::new(logger.clone());
+    let profile = config.profile.get(args.profile.as_str());
+    if profile.is_none() {
+        logger.error(&format!("Profile '{}' not found in config", args.profile));
+        logger.quit();
+        hdl.join().expect("Failed to join log thread");
+        return;
+    }
+    let profile = profile.unwrap();
+
+    let compile_config = polaris_core::compile::CompileConfig {
+        warnings_as_errors: profile.warnings_as_errors,
+        optimise: profile.optimise.clone().unwrap_or("none".to_string()),
+        out_dir: profile.out_dir.clone().unwrap_or("build".to_string()),
+    };
+
+    let mut compile_ctx = CompileContext::new(logger.clone(), compile_config);
     let mut failed = false;
 
     let mut packages = vec![(
@@ -74,7 +89,7 @@ pub async fn command(args: BuildArgs) {
     }
 
     let (warnings, errors) = compile_ctx.get_diagnostics();
-    let comp_failed = !errors.is_empty() || (config.warnings_as_errors && !warnings.is_empty());
+    let comp_failed = !errors.is_empty() || (profile.warnings_as_errors && !warnings.is_empty());
     let comp_warned = !warnings.is_empty();
 
     for warning in warnings {

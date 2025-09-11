@@ -1,4 +1,3 @@
-
 pub type TestInt = Int
 
 pub const #(first_const, second_const) = #(1, 2)
