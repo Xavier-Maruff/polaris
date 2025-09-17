@@ -1,7 +1,10 @@
 //might reimplement this as just polaris code in the core lib in the future?
 //this isn't super robust
 
-use crate::symbol::SymbolId;
+use crate::{
+    symbol::{SymbolContext, SymbolId},
+    types::{Scheme, Ty, TypeEnv, TypeVar, fresh_type_var_id},
+};
 use std::collections::HashMap;
 
 macro_rules! define_intrinsic_types {
@@ -58,6 +61,8 @@ define_intrinsic_symbols! {
     FALSE => "False",
     SOME => "Some",
     NONE => "None",
+    OK => "Ok",
+    ERR => "Err",
     ASSERT => "assert",
     PANIC => "panic",
 }
@@ -80,4 +85,115 @@ pub fn intrinsic_type_symbols(symbol_idx: &mut usize) -> HashMap<String, SymbolI
 pub fn intrinsic_symbols(symbol_idx: &mut usize) -> HashMap<String, SymbolId> {
     let intrinsics = [INTRINSIC_SYMBOLS, &[VOID]].concat();
     create_symbol_map!(intrinsics, symbol_idx)
+}
+
+pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut TypeVar) -> TypeEnv {
+    let mut type_env = TypeEnv::new();
+    let mut type_var_map = HashMap::new();
+
+    macro_rules! decl_concrete {
+        //intrinsic type
+        ($type_name:ident) => {
+            type_env.insert(
+                symbols.intrinsic_types[$type_name].clone(),
+                Scheme {
+                    bound_vars: vec![],
+                    body: Ty::Concrete(symbols.intrinsic_types[$type_name].clone()),
+                },
+            );
+        };
+    }
+
+    ///fugly macro but the resultant dsl is actually pretty nice
+    macro_rules! decl_ctor {
+        //no-arg constructor - not a function, just a value of the type
+        ($type_name:ident ( $($params:ident),* ), $constructor:ident) => {
+            $(
+                let $params = fresh_type_var_id(counter);
+                type_var_map.insert(stringify!($params), Ty::Var($params));
+            )*
+
+            let res_type = Ty::Ctor(
+                symbols.intrinsic_types[stringify!($type_name)].clone(),
+                vec![ $( type_var_map[stringify!($params)].clone() ),*]
+            );
+
+
+            type_env.insert(
+                symbols.intrinsic_symbols[$constructor].clone(),
+                Scheme {
+                    bound_vars: vec![$( $params ),*],
+                    body: res_type,
+                },
+            );
+        };
+
+        //arg constructor
+        ($type_name:ident ( $($params:ident),* ), $constructor:ident ( $($arg_params:ident),* )) => {{
+            type_var_map.clear();
+
+            //param -> fresh type var
+            $(
+                let $params = fresh_type_var_id(counter);
+                type_var_map.insert(stringify!($params), Ty::Var($params));
+            )*
+
+            //Type (a, b, c, ...)
+            let res_type = Ty::Ctor(
+                symbols.intrinsic_types[stringify!($type_name)].clone(),
+                vec![ $( type_var_map[stringify!($params)].clone() ),*]
+            );
+
+
+            //arg1 --> arg2 -> arg3 -> ... -> Type
+            let mut curried = res_type;
+            $(
+                let arg_type = type_var_map[stringify!($arg_params)].clone();
+                curried = Ty::Fn(Box::new(arg_type), Box::new(curried));
+            )*
+
+            //[a, b, c, ...]
+            let bound = vec![ $( $params ),* ];
+
+            type_env.insert(
+              symbols.intrinsic_symbols[stringify!($constructor)].clone(),
+              Scheme {
+                  bound_vars: bound,
+                  body: curried,
+              },
+            );
+        }};
+    }
+
+    decl_concrete!(VOID);
+    decl_ctor!(VOID(), VOID);
+
+    decl_concrete!(INT);
+    decl_concrete!(I8);
+    decl_concrete!(U8);
+    decl_concrete!(I16);
+    decl_concrete!(U16);
+    decl_concrete!(I32);
+    decl_concrete!(U32);
+    decl_concrete!(I64);
+    decl_concrete!(U64);
+    decl_concrete!(REAL);
+    decl_concrete!(FIXED1);
+    decl_concrete!(FIXED2);
+    decl_concrete!(FIXED4);
+
+    decl_concrete!(BOOL);
+    decl_ctor!(BOOL(), TRUE);
+    decl_ctor!(BOOL(), FALSE);
+
+    decl_concrete!(STRING);
+    decl_concrete!(CHAR);
+
+    decl_ctor!(OPTION(t), SOME(t));
+    decl_ctor!(OPTION(t), NONE);
+
+    decl_ctor!(RESULT(t, e), OK(t));
+    decl_ctor!(RESULT(t, e), ERR(e));
+
+    type_env
 }

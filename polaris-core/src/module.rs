@@ -22,6 +22,12 @@ pub struct ModuleContext {
     pub ast: Node,
 }
 
+#[derive(Debug, Default)]
+pub struct DepGraphContext {
+    pub sccs: Vec<Vec<ModuleId>>,
+    pub modules: HashMap<ModuleId, ModuleContext>,
+}
+
 pub fn dependency_pass(compile_ctx: &mut CompileContext) -> Result<(), ()> {
     let mut dep_ctx = DependencyContext::new(compile_ctx);
     dep_ctx.build_condensation_graph();
@@ -33,40 +39,31 @@ pub fn dependency_pass(compile_ctx: &mut CompileContext) -> Result<(), ()> {
 struct DependencyContext<'a> {
     errors: &'a mut Vec<Diagnostic>,
     _warnings: &'a mut Vec<Diagnostic>,
-    modules: HashMap<ModuleId, &'a mut ModuleContext>,
     symbols: &'a SymbolContext,
-    sccs: Vec<Vec<ModuleId>>,
+    deps: &'a mut DepGraphContext,
     logger: Logger,
 }
 
 impl<'a> DependencyContext<'a> {
     fn new(compile_ctx: &'a mut CompileContext) -> Self {
-        let mut modules = HashMap::new();
-        //convenience flattening
-        for (_, pkg_modules) in compile_ctx.packages.iter_mut() {
-            for (mod_name, mod_ctx) in pkg_modules.iter_mut() {
-                modules.insert(mod_name.clone(), mod_ctx);
-            }
-        }
         Self {
             errors: &mut compile_ctx.errors,
             _warnings: &mut compile_ctx.warnings,
-            modules,
-            sccs: Vec::new(),
             symbols: &compile_ctx.symbols,
             logger: compile_ctx.logger.clone(),
+            deps: &mut compile_ctx.dependencies,
         }
     }
 
     fn finalise(self) {
-        //noop bc i'm just mutably borrowing everything this time
+        //noop because everything is done in place
     }
 
     //not the most efficient implementation, building sub maps for each module separately
     fn link_module_deps(&mut self) {
-        for scc in self.sccs.iter() {
+        for scc in self.deps.sccs.iter() {
             for module_id in scc.iter() {
-                let module = self.modules.get_mut(module_id).unwrap();
+                let module = self.deps.modules.get_mut(module_id).unwrap();
                 let ast = &mut module.ast;
 
                 let imports = self
@@ -663,7 +660,7 @@ impl<'a> DependencyContext<'a> {
         let mut node_indices = HashMap::new();
 
         //register all modules as nodes
-        for module in self.modules.keys() {
+        for module in self.deps.modules.keys() {
             node_indices
                 .entry(module)
                 .or_insert_with(|| import_graph.add_node(module.clone()));
@@ -711,9 +708,9 @@ impl<'a> DependencyContext<'a> {
         for node_idx in order {
             let scc = &sccs[node_idx];
             let scc_modules = scc.iter().cloned().collect::<Vec<ModuleId>>();
-            self.sccs.push(scc_modules);
+            self.deps.sccs.push(scc_modules);
         }
 
-        self.sccs.reverse();
+        self.deps.sccs.reverse();
     }
 }

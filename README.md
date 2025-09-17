@@ -27,7 +27,7 @@ type Result(a, b) {
   Error(b)
 }
 
-//Test is a product type
+//Test is a record, which is sugar for a product type
 type Test {
   Test(
     name: String,
@@ -41,14 +41,17 @@ let t = Test(name: "my_test", func: fn(){ Ok(Void) })
 
 Like in Gleam, all type names are capitalised, and lower case type identifiers are treated as type variables for parametric polymorphism (in the Result type above, `a` and `b` were type variables, that can be replaced with arbitrary concrete types at instantiation).
 
+> [!NOTE]
+> In order to maintain security in Polaris' approach to [control flow under homomorphic encryption](#the-branching-problem), Polaris isomorphises all sum type variants to the same underlying representation, though at the language-level this is not exposed. Keep this in mind when designing types that will be used in performance critical code - it is a good idea to minimise the difference between sum type variants (a good heuristic is asking 'independent of ordering and labelling, how many changes must I make to each of these variants so that they all wrap the same types', and designing your types to minimise that value).
+
 #### Nocrypt
 
 ```gleam
 let a: nocrypt Int = 12
 ```
 
-Nocrypt is a type modifier that tells the compiler to, by default, not encrypt the underlying value (though the runtime will also load an encrypted version if involved in arithmetic with a standard encrypted value).
-Use `nocrypt` for large (10-100x) performance benefits when not dealing with sensitive data - for example, routing a web request. For ultra-high security applications, the use of nocrypt can be disabled via the compiler flag `--no-nocrypt`.
+Nocrypt is a type modifier that tells the compiler to, by default, not encrypt the underlying value (though the runtime can also load an encrypted version from the harness if involved in arithmetic with a standard encrypted value - note however that the compiler will error if a nocrypt `Real` is used in an encrypted context, due to a vulnerability in the underlying CKKS scheme used to implement real arithmetic).
+Use `nocrypt` for large (multiple orders of magnitude) performance benefits when not dealing with sensitive data - for example, routing a web request. For ultra-high security applications, the use of nocrypt can be disabled via the compiler flag `--no-nocrypt`.
 
 #### Intrinsics
 
@@ -114,11 +117,11 @@ let k: fn(Int) -> Int = fn(a) { a + 1 }
 ```
 
 > [!NOTE]
-> Any implicit narrowings will result in a compiler error, and this includes literals - for example, assigning `3.141` to a binding of type `Fixed2(Int)` will cause the compiler to say, 'Hey, you're throwing away valuable data here whatsamatawityou' (the compiler is Italian-American).
+> Any implicit numeric conversions or narrowings will result in a compiler error, and this includes literals. This is because type coercion is expensive under homomorphic encryption, and involves switching schemes in most cases. To convert a value to a different numeric type, use the relevant intrinsic conversion function, e.g. `int.to_real`, `fixed2.to_int`, etc.
 
 ### Bindings
 
-Polaris is an immutable language, as this allows for certain important FHE optimisations. You can declare bindings (like variables in mutable languages, but immutable) like so:
+Polaris is an immutable language, as this allows for certain important FHE optimisations. You can declare bindings like so:
 
 ```gleam
 let my_binding = some_func()
@@ -188,6 +191,8 @@ if x < y {
 }
 ```
 
+#### The branching problem
+
 We can of course homomorphically evaluate `sign(y - x)` to discover this ordering, but there's a problem - the outcome of this operation is also encrypted, so we can't know how to branch (not really a problem in the true sense, this is the whole point of HE!). Polaris takes four different approaches to solving this problem based on the context:
 
 1. **Nocrypt condition**:
@@ -195,9 +200,9 @@ We can of course homomorphically evaluate `sign(y - x)` to discover this orderin
 2. **Pure branches**:
    If the branches are all pure, and the compiler doesn't detect complexity explosion (configurable via the predication cost budget flag `--predication-budget), all branches are evaluated independently, and then the correct branch is selected after the fact via arithmetic predication. This is constant-time, so the overhead isn't that wild compared to the minimal overhead of just doing FHE at all.
 3. **Effectful branches**:
-   If the branches perform I/O, the branch condition is handed off to the harness, which decrypts that value and returns a 'continuation id' that tells the runtime (not accessible via the program) what arm to take, and an 'arm ticket' that is sent alongside all requests to the harness from within that arm, and is used to verify internally to the harness that the correct selected branch has been taken. This leaks `log2(#arms)` bits to the **runtime** (though _not the language-level program_, as the compiler will not let you bind to a `nocrypt` label anything that depends on the result of a secret branch condition).
+   If the branches perform I/O, or are heuristically detected to involve intense computation, the branch condition is handed off to the harness, which decrypts the value and returns a continuation token to the runtime, which then executes the correct branch associated with that token. The mapping from condition outcome to branch token is only available to the harness, as part of the harness contract generated at compile time, meaning this doesn't leak any information (outside of potential side-channels, which will be addressed at some point before v1.0) about the condition outcome to the untrusted runtime. Additionally, no knowledge about which branch was executed can be propagated outside the branch at the language level, as the compiler forbids binding nocrypt values to anything that depends on secret branch conditions.
 4. **Strict mode**:
-   If the compiler flag `--strict-branch` is set, and the branches perform I/O, instead of the harness decrypting the condition and telling the runtime which branch to take, the harness tells the runtime to execute all branches and select the result via arithmetic predication, like strategy 2 - the difference this time is that the harness, knowing the correct branch, will dummy I/O operations on the other branches.
+   If the compiler flag `--strict-branch` is set, and the branches perform I/O, instead of the harness decrypting the condition and returning a continuation token, the harness tells the runtime to execute all branches and select the result via arithmetic predication, like strategy 2 - the difference this time is that the harness, knowing the correct branch, will dummy I/O operations on the other branches.
 
 #### If/Else
 
@@ -218,8 +223,8 @@ type MyNumericType {
 }
 
 let unwrapped = match some_value {
-  Thing1(x) -> x
-  Thing2(x) -> x |> real.
+  Thing1(x) -> x |> fixed2.to_real
+  Thing2(x) -> x
 }
 ```
 
@@ -228,7 +233,7 @@ let unwrapped = match some_value {
 For loops in Polaris are similar in semantics to those in OCaml - they just expand to repeated evaluation of the body of the loop, and said body must be of type `Void`. Loops can also not be broken out of, so all iterations must be executed.
 
 ```gleam
-for i in 1..<10 {
+for i in 1 to 10 {
   do_something(i)
 }
 ```
@@ -276,9 +281,88 @@ let my_arr: Array(Int) = [1, 2, 3]
 let my_arr = my_arr |> array.apply_at(0, add_1)
 ```
 
-### Planned enhancements
+## PMIR and PLIR
 
-#### Strict-mode side-channel resistance
+Polaris has two block-argument SSA-based intermediate representations: PMIR, the mid-level IR, and PLIR, the low-level IR, before codegen to the bytecode interpreted by the Polaris runtime. PMIR abstracts FHE schemes and operations and retains the value semantics of the source alongside branch conditions, while PLIR involves explicit FHE schemes, accelerator intrinsics, mapping from value semantics to buffer semantics, and branch anonymisation.
+
+### PMIR
+
+The following are some examples of PMIR codegen from Polaris source, mostly for internal reference at the moment (these are not good docs).
+
+```gleam
+
+const some_const = 12
+const other_const = "hello"
+const clear_const: nocrypt Int = 42
+
+harness fn log_something(arg: String) -> Result(Void, String)
+
+fn some_pure_func(arg: Int) {
+  arg + some_const
+}
+
+fn main() {
+  let val = some_pure_func(some_const)
+  log_something(other_const)
+
+  if val > some_const {
+    log_something("val is big")
+  } else {
+    log_something("val is small")
+  }
+}
+
+```
+
+```llvm
+harness_contract {
+  const_manifest {
+    ; encrypted constants to be stripped and injected by the harness
+    %some_const: enc.int16 = 12
+    %other_const: enc.str = "hello"
+    %$anon$0: enc.str = "val is big"
+    %$anon$1: enc.str = "val is small"
+
+    ; nocrypt constant
+    %clear_const: nc.int16 = 42
+  }
+
+  fn_manifest {
+    log_something(arg: enc.str): enc.result(nc.void, enc.str)
+  }
+}
+
+fn some_pure_func(arg: enc.int16): enc.int16 {
+  %arg0: enc.int16 = call fhe.add_int16(arg, %clear_const)
+  ret %arg0
+}
+
+fn main(): Void {
+  %0: enc.int16 = call some_pure_func(%some_const)
+  call harness.log_something(%other_const)
+
+  %1: enc.bool = call fhe.gt_int16(%0, %some_const)
+  %2: branch_id = call harness.decide_branch(%1,
+    [enc.bool.true: ^branch_1, enc.bool.false: ^branch_2]
+  )
+
+  ^branch_1():
+  call harness.log_something(%$anon$0)
+  br ^end()
+
+  ^branch_2():
+  call harness.log_something(%$anon$1)
+  br ^end()
+
+  ^end():
+  ret nc.void.void
+}
+
+```
+
+## Planned enhancements
+
+### Strict-mode side-channel resistance
 
 The strict-mode branching strategy could be susceptible to side-channel attacks via (1) timing differences between real I/O and dummy I/O, and (2) data size differences between a real I/O op and its dummy counterpart.
 Polaris tries to address this potential vulnerability via I/O profiles - harnesses can record timing and response size distributions per I/O operation for a given context during an explicit profiling stage in development, and then apply this to its dummy I/O operations during runtime in production.

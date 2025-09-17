@@ -4,8 +4,8 @@ use crate::{
     ast::{ExprKind, Node, NodeKind},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
-    intrinsics::{INT, REAL, STRING},
-    module::ModuleContext,
+    intrinsics::{INT, REAL, STRING, create_intrinsic_type_env},
+    module::{DepGraphContext, ModuleContext},
     symbol::{SymbolContext, SymbolId},
 };
 
@@ -23,42 +23,37 @@ struct TypecheckContext<'a> {
     errors: &'a mut Vec<Diagnostic>,
     warnings: &'a mut Vec<Diagnostic>,
     symbols: &'a mut SymbolContext,
-    all_modules: Vec<&'a mut ModuleContext>,
+    deps: &'a mut DepGraphContext,
     current_file: String,
     undetermined_symbol_counter: usize,
 }
 
-type TypeVar = usize;
+pub type TypeVar = usize;
 
 #[derive(Clone, Debug, PartialEq)]
-enum Ty {
+pub enum Ty {
     Var(TypeVar),
     Concrete(SymbolId),
+    //ty1 -> ty2
     Fn(Box<Ty>, Box<Ty>),
     Tuple(Vec<Ty>),
-    App(SymbolId, Vec<Ty>),
+    //f(ty1, ty2, ...)
+    Ctor(SymbolId, Vec<Ty>),
 }
 
 #[derive(Clone, Debug)]
-struct Scheme {
-    bound_vars: Vec<TypeVar>,
-    body: Ty,
+pub struct Scheme {
+    pub bound_vars: Vec<TypeVar>,
+    pub body: Ty,
 }
 
 #[derive(Clone, Debug)]
 struct Substitution(HashMap<TypeVar, Ty>);
 
-type TypeEnv = HashMap<SymbolId, Scheme>;
+pub type TypeEnv = HashMap<SymbolId, Scheme>;
 
 impl<'a> TypecheckContext<'a> {
     fn new(ctx: &'a mut CompileContext) -> Self {
-        let mut all_modules = Vec::new();
-        for modules in ctx.packages.values_mut() {
-            for module in modules.values_mut() {
-                all_modules.push(module);
-            }
-        }
-
         let undetermined_symbol_counter = ctx.symbols.symbol_idx.clone();
 
         Self {
@@ -66,15 +61,35 @@ impl<'a> TypecheckContext<'a> {
             type_env: HashMap::new(),
             type_var_counter: 0,
             errors: &mut ctx.errors,
+            deps: &mut ctx.dependencies,
             warnings: &mut ctx.warnings,
-            all_modules,
             current_file: String::new(),
             undetermined_symbol_counter,
         }
     }
 
     pub fn typecheck(&mut self) -> Result<(), ()> {
+        self.initialise_type_env();
         Ok(())
+    }
+
+    fn algo_w(&mut self, env: &TypeEnv, node: &mut Node) -> Result<(Substitution, Ty), ()> {
+        Err(())
+    }
+
+    fn algo_w_expr(&mut self, env: &TypeEnv, node: &mut Node) -> Result<(Substitution, Ty), ()> {
+        let expr = match &mut node.kind {
+            NodeKind::Expr { expr } => expr,
+            _ => unreachable!(),
+        };
+
+        Err(())
+    }
+
+    fn initialise_type_env(&mut self) {
+        //add intrinsics
+        self.type_env = create_intrinsic_type_env(self.symbols, &mut self.type_var_counter);
+        //walk ast, find type decls and add to type env
     }
 
     fn fresh_type_var(&mut self) -> Ty {
@@ -98,68 +113,12 @@ impl<'a> TypecheckContext<'a> {
         }
     }
 
-    fn w_expr(&mut self, node: &mut Node) -> Result<(Substitution, Ty), ()> {
-        use ExprKind::*;
-        let e = match &mut node.kind {
-            NodeKind::Expr { expr } => expr,
-            _ => unreachable!(),
-        };
-
-        match e {
-            Symbol { name } => {
-                let sc = self
-                    .type_env
-                    .get(node.symbol_id.as_ref().unwrap())
-                    .unwrap()
-                    .clone();
-
-                Ok((
-                    Substitution::new(),
-                    sc.instantiate(&mut self.type_var_counter),
-                ))
-            }
-
-            IntLit(_) => Ok((
-                Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types.get(INT).unwrap().clone()),
-            )),
-            RealLit { .. } => Ok((
-                Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types.get(REAL).unwrap().clone()),
-            )),
-            StringLit(_) => Ok((
-                Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types.get(STRING).unwrap().clone()),
-            )),
-            TupleLit(elems) => {
-                let mut s = Substitution::new();
-                let mut types = Vec::new();
-                for elem in elems {
-                    let (s2, t) = self.w_expr(elem)?;
-                    s = s.compose(&s2);
-                    types.push(s.apply(&t));
-                }
-                Ok((s, Ty::Tuple(types)))
-            }
-
-            _ => {
-                self.errors.push(Diagnostic::new(DiagnosticMsg {
-                    message: "Typechecking for this expression is not yet implemented".to_string(),
-                    span: node.span,
-                    file: self.current_file.clone(),
-                    err_type: DiagnosticMsgType::UnsupportedFeature,
-                }));
-                Err(())
-            }
-        }
-    }
-
     fn occurs(&mut self, a: TypeVar, t: &Ty) -> bool {
         use Ty::*;
         match t {
             Var(b) => a == *b,
             Fn(arg, ret) => self.occurs(a, arg) || self.occurs(a, ret),
-            App(_, args) | Tuple(args) => args.iter().any(|arg| self.occurs(a, arg)),
+            Ctor(_, args) | Tuple(args) => args.iter().any(|arg| self.occurs(a, arg)),
             Concrete(_) => false,
         }
     }
@@ -207,9 +166,7 @@ impl<'a> TypecheckContext<'a> {
                 Ok(s)
             }
 
-            (App(name1, args1), App(name2, args2))
-                if name1 == name2 && args1.len() == args2.len() =>
-            {
+            (Ctor(id1, args1), Ctor(id2, args2)) if id1 == id2 && args1.len() == args2.len() => {
                 let mut s = Substitution::new();
                 for (arg1, arg2) in args1.iter().zip(args2.iter()) {
                     let s2 = self.unify(&s.apply(arg1), &s.apply(arg2))?;
@@ -244,7 +201,7 @@ impl Ty {
                 }
                 set
             }
-            App(_, args) => {
+            Ctor(_, args) => {
                 let mut set = HashSet::new();
                 for arg in args {
                     set.extend(arg.free_type_vars());
@@ -281,7 +238,7 @@ impl Scheme {
         subst.apply(&self.body)
     }
 
-    fn generalize(env: &TypeEnv, t: &Ty) -> Scheme {
+    fn generalise(env: &TypeEnv, t: &Ty) -> Scheme {
         let env_vars = Ty::free_type_vars_in_env(env);
         let type_vars = t.free_type_vars();
         let bound_vars: Vec<_> = type_vars.difference(&env_vars).cloned().collect();
@@ -323,9 +280,9 @@ impl Substitution {
                 let new_types = types.iter().map(|ty| self.apply(ty)).collect();
                 Tuple(new_types)
             }
-            App(name, args) => {
+            Ctor(name, args) => {
                 let new_args = args.iter().map(|arg| self.apply(arg)).collect();
-                App(*name, new_args)
+                Ctor(*name, new_args)
             }
             Concrete(_) => t.clone(),
         }
@@ -354,8 +311,12 @@ impl Substitution {
     }
 }
 
-fn fresh_type_var(counter: &mut TypeVar) -> Ty {
+pub fn fresh_type_var_id(counter: &mut TypeVar) -> TypeVar {
     let var = *counter;
     *counter += 1;
-    Ty::Var(var)
+    var
+}
+
+pub fn fresh_type_var(counter: &mut TypeVar) -> Ty {
+    Ty::Var(fresh_type_var_id(counter))
 }

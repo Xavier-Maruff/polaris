@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::module::{ModuleContext, dependency_pass};
+use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
 use crate::parse::parse;
 use crate::symbol::{SymbolContext, symbol_pass};
 use crate::types::typecheck_pass;
@@ -15,12 +15,12 @@ pub struct CompileConfig {
     pub out_dir: String,
 }
 
-#[derive(Clone)]
 pub struct CompileContext {
     pub logger: log::Logger,
     pub config: CompileConfig,
-    //package name -> module name -> module context
-    pub packages: HashMap<String, HashMap<String, ModuleContext>>,
+    //package name -> contained modules
+    pub packages: HashMap<String, Vec<ModuleId>>,
+    pub dependencies: DepGraphContext,
     pub symbols: SymbolContext,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
@@ -43,6 +43,7 @@ impl CompileContext {
             logger,
             config,
             packages: HashMap::new(),
+            dependencies: DepGraphContext::default(),
             symbols: SymbolContext::default(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -69,10 +70,12 @@ impl CompileContext {
             file,
             ast,
         };
+
+        self.dependencies.modules.insert(module.clone(), module_ctx);
         self.packages
             .entry(package)
-            .or_insert_with(HashMap::new)
-            .insert(module, module_ctx);
+            .or_insert_with(Vec::new)
+            .push(module)
     }
 
     pub fn run_passes(&mut self) -> Result<(), ()> {

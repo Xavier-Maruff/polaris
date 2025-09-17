@@ -198,7 +198,12 @@ impl SymbolPassContext {
         self.type_scope_stack = vec![self.symbols.intrinsic_types.clone()];
 
         for (package_name, modules) in &mut ctx.packages {
-            for (_, module_ctx) in modules {
+            for module in modules {
+                let module_ctx = ctx
+                    .dependencies
+                    .modules
+                    .get_mut(module)
+                    .expect("Internal error: module not found in dependencies");
                 self.current_file = module_ctx.file.clone();
                 self.push_scope();
 
