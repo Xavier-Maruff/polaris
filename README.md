@@ -283,13 +283,14 @@ let my_arr = my_arr |> array.apply_at(0, add_1)
 
 ## PMIR and PLIR
 
-Polaris has two block-argument SSA-based intermediate representations: PMIR, the mid-level IR, and PLIR, the low-level IR, before codegen to the bytecode interpreted by the Polaris runtime. PMIR abstracts FHE schemes and operations and retains the value semantics of the source alongside branch conditions, while PLIR involves explicit FHE schemes, accelerator intrinsics, mapping from value semantics to buffer semantics, and branch anonymisation.
+Polaris has two block-argument SSA-based intermediate representations: PMIR, the mid-level IR, and PLIR, the low-level IR, before codegen to the bytecode interpreted by the Polaris runtime. PMIR abstracts FHE schemes and operations and retains the value semantics of the source alongside branch conditions, applying language-level optimisations like tail-calls, while PLIR involves explicit FHE schemes, accelerator intrinsics, mapping from value semantics to buffer semantics, and branch anonymisation.
 
 ### PMIR
 
 The following are some examples of PMIR codegen from Polaris source, mostly for internal reference at the moment (these are not good docs).
 
 ```gleam
+import core/array
 
 const some_const = 12
 const other_const = "hello"
@@ -300,6 +301,24 @@ harness fn log_something(arg: String) -> Result(Void, String)
 fn some_pure_func(arg: Int) {
   arg + some_const
 }
+
+//use intrinsic array.reduce which maps directly to a VM op
+fn sum_array_opt(arr: Array(Int)) -> Int {
+  arr |> array.reduce(fn(a, b) { a + b }, 0)
+}
+
+//manual tail recursive sum
+fn sum_array_rec(arr: Array(Int)) -> Int {
+  arr |> sum_array_internal(0)
+}
+
+fn sum_array_internal(arr: Array(Int), acc: Int) -> Int {
+  match arr {
+    [] -> acc
+    [first, ...rest] -> rest |> sum_array_internal(acc + first)
+  }
+}
+
 
 fn main() {
   let val = some_pure_func(some_const)
@@ -316,42 +335,85 @@ fn main() {
 
 ```llvm
 harness_contract {
+  ; constants that must be injected by the harness
   const_manifest {
-    ; encrypted constants to be stripped and injected by the harness
     %some_const: enc.int16 = 12
     %other_const: enc.str = "hello"
-    %$anon$0: enc.str = "val is big"
-    %$anon$1: enc.str = "val is small"
-
-    ; nocrypt constant
+    %$0: enc.str = "val is big"
+    %$1: enc.str = "val is small"
+    %$2: enc.int16 = 0
     %clear_const: nc.int16 = 42
   }
 
+  ; functions that must be implemented by the harness
   fn_manifest {
     log_something(arg: enc.str): enc.result(nc.void, enc.str)
   }
 }
 
 fn some_pure_func(arg: enc.int16): enc.int16 {
-  %arg0: enc.int16 = call fhe.add_int16(arg, %clear_const)
+  ^entry():
+  %arg0: enc.int16 = fhe.add_int16 arg %some_const
   ret %arg0
 }
 
-fn main(): Void {
+fn sum_array(arr: enc.array(enc.int16)): enc.int16 {
+  ^entry():
+  %0: enc.int16 = array.reduce arr $lambda_0 %$2
+  ret %0
+}
+
+fn $lambda_0(a: enc.int16, b: enc.int16): enc.int16 {
+  ^entry():
+  %0: enc.int16 = fhe.add_int16 a b
+  ret %0
+}
+
+fn sum_array_rec(arr: enc.array(enc.int16)): enc.int16 {
+  ^entry():
+  %0: enc.int16 = sum_array_internal arr %$2
+  ret %0
+}
+
+; tail-call optimised
+fn sum_array_internal(arr: enc.array(enc.int16), acc: enc.int16): enc.int16 {
+  br ^entry(arr, acc)
+
+  ^entry(%arr, %acc):
+  %0: enc.bool = array.is_empty %arr
+  %1: branch_id = harness.decide_branch %0 {enc.bool.true: ^branch_1, enc.bool.false: ^branch_2}
+
+  br %1
+
+  ^branch_1():
+  ret acc
+
+  ^branch_2():
+  ; access takes a nocrypt index
+  %2: enc.int64 = array.access %arr 0
+  %3: nc.int64 = array.length %arr
+  %4: nc.int64 = nc.int64.sub %3 1
+  %5: enc.array(enc.int16) = array.slice %arr 1 %4
+  %6: enc.int16 = fhe.add_int16 %acc %2
+  br ^entry(%5, %6)
+}
+
+fn main(): nc.void {
+  ^entry():
   %0: enc.int16 = call some_pure_func(%some_const)
   call harness.log_something(%other_const)
 
-  %1: enc.bool = call fhe.gt_int16(%0, %some_const)
-  %2: branch_id = call harness.decide_branch(%1,
-    [enc.bool.true: ^branch_1, enc.bool.false: ^branch_2]
-  )
+  %1: enc.bool = fhe.gt_int16 %0 %some_const
+  %2: branch_id = harness.decide_branch %1 {enc.bool.true: ^branch_1, enc.bool.false: ^branch_2}
+
+  br %2
 
   ^branch_1():
-  call harness.log_something(%$anon$0)
+  call harness.log_something(%$0)
   br ^end()
 
   ^branch_2():
-  call harness.log_something(%$anon$1)
+  call harness.log_something(%$1)
   br ^end()
 
   ^end():
