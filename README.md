@@ -380,10 +380,11 @@ fn sum_array_internal(arr: enc.array(enc.int16), acc: enc.int16): enc.int16 {
   br ^entry(arr, acc)
 
   ^entry(%arr, %acc):
-  %0: enc.bool = array.is_empty %arr
-  %1: branch_id = harness.decide_branch %0 {enc.bool.true: ^branch_1, enc.bool.false: ^branch_2}
-
+  ; array metadata is nocrypt in the current design
+  %0: nc.bool = array.is_empty %arr
+  %1: branch_id = nc.decide_branch %0 {nc.bool.true: ^branch_1, nc.bool.false: ^branch_2}
   br %1
+
 
   ^branch_1():
   ret acc
