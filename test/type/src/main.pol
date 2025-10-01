@@ -1,0 +1,5 @@
+
+pub fn test_typecheck(a: String, b: Real) -> Int {
+    let x = a + b
+    x * 2
+}

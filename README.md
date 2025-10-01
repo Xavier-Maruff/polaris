@@ -285,9 +285,9 @@ let my_arr = my_arr |> array.apply_at(0, add_1)
 
 Polaris has two block-argument SSA-based intermediate representations: PMIR, the mid-level IR, and PLIR, the low-level IR, before codegen to the bytecode interpreted by the Polaris runtime. PMIR abstracts FHE schemes and operations and retains the value semantics of the source alongside branch conditions, applying language-level optimisations like tail-calls, while PLIR involves explicit FHE schemes, accelerator intrinsics, mapping from value semantics to buffer semantics, and branch anonymisation.
 
-### PMIR
+### Examples
 
-The following are some examples of PMIR codegen from Polaris source, mostly for internal reference at the moment (these are not good docs).
+The following are some examples of PMIR/PLIR codegen from Polaris source, mostly for internal reference at the moment (these are not good docs).
 
 ```gleam
 import core/array
@@ -334,6 +334,8 @@ fn main() {
 ```
 
 ```llvm
+module hello_world
+
 harness_contract {
   ; constants that must be injected by the harness
   const_manifest {
@@ -353,7 +355,7 @@ harness_contract {
 
 fn some_pure_func(arg: enc.int16): enc.int16 {
   ^entry():
-  %arg0: enc.int16 = fhe.add_int16 arg %some_const
+  %arg0: enc.int16 = enc.add_int16 arg %some_const
   ret %arg0
 }
 
@@ -365,7 +367,7 @@ fn sum_array(arr: enc.array(enc.int16)): enc.int16 {
 
 fn $lambda_0(a: enc.int16, b: enc.int16): enc.int16 {
   ^entry():
-  %0: enc.int16 = fhe.add_int16 a b
+  %0: enc.int16 = enc.add_int16 a b
   ret %0
 }
 
@@ -395,7 +397,7 @@ fn sum_array_internal(arr: enc.array(enc.int16), acc: enc.int16): enc.int16 {
   %3: nc.int64 = array.length %arr
   %4: nc.int64 = nc.int64.sub %3 1
   %5: enc.array(enc.int16) = array.slice %arr 1 %4
-  %6: enc.int16 = fhe.add_int16 %acc %2
+  %6: enc.int16 = enc.add_int16 %acc %2
   br ^entry(%5, %6)
 }
 
@@ -404,8 +406,9 @@ fn main(): nc.void {
   %0: enc.int16 = call some_pure_func(%some_const)
   call harness.log_something(%other_const)
 
-  %1: enc.bool = fhe.gt_int16 %0 %some_const
-  %2: branch_id = harness.decide_branch %1 {enc.bool.true: ^branch_1, enc.bool.false: ^branch_2}
+  %1: enc.bool = enc.gt_int16 %0 %some_const
+  ; decide_branch [decision id] [condition] {variant: branch_label, ...}
+  %2: branch_id = harness.decide_branch $main_1 %1 {enc.bool.true: ^branch_1, enc.bool.false: ^branch_2}
 
   br %2
 

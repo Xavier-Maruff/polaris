@@ -114,7 +114,7 @@ pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut Type
             )*
 
             let res_type = Ty::Ctor(
-                symbols.intrinsic_types[stringify!($type_name)].clone(),
+                symbols.intrinsic_types[$type_name].clone(),
                 vec![ $( type_var_map[stringify!($params)].clone() ),*]
             );
 
@@ -140,7 +140,7 @@ pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut Type
 
             //Type (a, b, c, ...)
             let res_type = Ty::Ctor(
-                symbols.intrinsic_types[stringify!($type_name)].clone(),
+                symbols.intrinsic_types[$type_name].clone(),
                 vec![ $( type_var_map[stringify!($params)].clone() ),*]
             );
 
@@ -156,7 +156,7 @@ pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut Type
             let bound = vec![ $( $params ),* ];
 
             type_env.insert(
-              symbols.intrinsic_symbols[stringify!($constructor)].clone(),
+              symbols.intrinsic_symbols[$constructor].clone(),
               Scheme {
                   bound_vars: bound,
                   body: curried,

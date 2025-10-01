@@ -1,7 +1,7 @@
 use crate::{
     diagnostic::Diagnostic,
     parse::{CodeSpan, token::TokenVariant},
-    symbol::SymbolId,
+    symbol::{SymbolContext, SymbolId},
 };
 
 #[derive(Clone, Debug)]
@@ -212,9 +212,90 @@ impl Node {
     pub fn add_warning(&mut self, warn: Diagnostic) {
         self.warnings.push(warn);
     }
+
+    pub fn render(&self, symbols: &SymbolContext) -> String {
+        self.kind.render(symbols, self.symbol_id)
+    }
 }
 
 impl NodeKind {
+    pub fn render(&self, symbols: &SymbolContext, symbol_id: Option<SymbolId>) -> String {
+        use NodeKind::*;
+        match self {
+            Module { .. } => "module".to_string(),
+            Import { symbol, .. } => format!("import {}", symbol),
+            TypeAlias { actual, alias, .. } => format!(
+                "type {} = {}",
+                alias.render(symbols),
+                actual.render(symbols)
+            ),
+            TypeDecl {
+                symbol,
+                type_vars,
+                variants,
+                ..
+            } => format!(
+                "type {}({}) {{\n{}\n}}",
+                symbol,
+                type_vars.join(", "),
+                variants
+                    .iter()
+                    .map(|v| format!("  {}", v.render(symbols)))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            ),
+            TypeConstructor { symbol, .. } => format!("constructor {}", symbol),
+            Type {
+                nocrypt,
+                parent_module,
+                symbol,
+                type_vars,
+                ..
+            } => {
+                let mut s = String::new();
+                if *nocrypt {
+                    s.push_str("nocrypt ");
+                }
+
+                if let Some(parent) = parent_module {
+                    s.push_str(&format!("{}.", parent));
+                }
+                s.push_str(symbol);
+                if !type_vars.is_empty() {
+                    let vars: Vec<String> = type_vars.iter().map(|tv| tv.render(symbols)).collect();
+                    s.push_str(&format!("({})", vars.join(", ")));
+                }
+                s
+            }
+            FnType { args, return_type } => {
+                let arg_strs: Vec<String> = args.iter().map(|arg| arg.render(symbols)).collect();
+                let ret_str = if let Some(ret) = return_type {
+                    format!(" -> {}", ret.render(symbols))
+                } else {
+                    "".to_string()
+                };
+                format!("({}){}", arg_strs.join(", "), ret_str)
+            }
+            TupleType { elements } => {
+                let elem_strs: Vec<String> =
+                    elements.iter().map(|elem| elem.render(symbols)).collect();
+                format!("({})", elem_strs.join(", "))
+            }
+            FnDecl { symbol, host, .. } => {
+                let host = if *host { "harness " } else { "" };
+
+                if let Some(id) = symbol_id {
+                    if let Some(sym) = symbols.symbol_names.get(&id) {
+                        return format!("{}fn {}", host, sym);
+                    }
+                }
+                format!("{}fn {}", host, symbol)
+            }
+            ConstDecl { symbol, .. } => symbol.render(symbols),
+            Expr { expr } => expr.render(symbols),
+        }
+    }
+
     pub fn collect_diagnostics(&self, errs: &mut Vec<Diagnostic>, collect_errors: bool) {
         use NodeKind::*;
         match self {
@@ -281,6 +362,146 @@ impl NodeKind {
 }
 
 impl ExprKind {
+    pub fn render(&self, symbols: &SymbolContext) -> String {
+        use ExprKind::*;
+        match self {
+            IntLit(value) => value.to_string(),
+            RealLit { value, .. } => value.to_string(),
+            ListLit(elements) => {
+                let elem_strs: Vec<String> = elements.iter().map(|e| e.render(symbols)).collect();
+                format!("[{}]", elem_strs.join(", "))
+            }
+            MapLit(pairs) => {
+                let pair_strs: Vec<String> = pairs
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k.render(symbols), v.render(symbols)))
+                    .collect();
+                format!("{{{}}}", pair_strs.join(", "))
+            }
+            StringLit(value) => format!("\"{}\"", value),
+            Symbol { name } => name.clone(),
+            FieldAccess { expr, field } => format!("{}.{}", expr.render(symbols), field),
+            IndexAccess { expr, index } => {
+                format!("{}[{}]", expr.render(symbols), index.render(symbols))
+            }
+            UnaryOp { op, expr } => format!("({}{})", op, expr.render(symbols)),
+            BinaryOp { left, op, right } => {
+                format!(
+                    "({} {} {})",
+                    left.render(symbols),
+                    op,
+                    right.render(symbols)
+                )
+            }
+            FnCall { callee, args } => {
+                let arg_strs: Vec<String> =
+                    args.iter().map(|(_, arg)| arg.render(symbols)).collect();
+                format!("{}({})", callee.render(symbols), arg_strs.join(", "))
+            }
+            LetBinding {
+                symbols: bound_symbols,
+                symbol_type,
+                expr,
+            } => {
+                let type_str = if let Some(t) = symbol_type {
+                    format!(": {}", t.render(symbols))
+                } else {
+                    "".to_string()
+                };
+                format!(
+                    "let {}{} = {}",
+                    bound_symbols.render(symbols),
+                    type_str,
+                    expr.render(symbols)
+                )
+            }
+            For {
+                binding,
+                start,
+                end,
+                body,
+            } => format!(
+                "for {} in {}..{} {{ {} }}",
+                binding.render(symbols),
+                start.render(symbols),
+                end.render(symbols),
+                body.render(symbols)
+            ),
+            IfElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let else_str = if let Some(else_branch) = else_branch {
+                    format!(" else {{ {} }}", else_branch.render(symbols))
+                } else {
+                    "".to_string()
+                };
+                format!(
+                    "if {} {{ {} }}{}",
+                    condition.render(symbols),
+                    then_branch.render(symbols),
+                    else_str
+                )
+            }
+            Match { expr, arms } => {
+                let arm_strs: Vec<String> = arms
+                    .iter()
+                    .map(|(patterns, arm_body)| {
+                        let pattern_strs: Vec<String> =
+                            patterns.iter().map(|p| p.render(symbols)).collect();
+                        format!(
+                            "{} => {}",
+                            pattern_strs.join(" | "),
+                            arm_body.render(symbols)
+                        )
+                    })
+                    .collect();
+                format!(
+                    "match {} {{ {} }}",
+                    expr.render(symbols),
+                    arm_strs.join(", ")
+                )
+            }
+            Block(statements) => {
+                let stmt_strs: Vec<String> = statements.iter().map(|s| s.render(symbols)).collect();
+                format!("{{ {} }}", stmt_strs.join("; "))
+            }
+            Discard => "_".to_string(),
+            TupleLit(elements) => {
+                let elem_strs: Vec<String> = elements.iter().map(|e| e.render(symbols)).collect();
+                format!("({})", elem_strs.join(", "))
+            }
+            Closure {
+                args: params,
+                return_type,
+                expr,
+            } => {
+                let param_strs: Vec<String> = params
+                    .iter()
+                    .map(|(param, param_type, _)| {
+                        if let Some(param_type) = param_type {
+                            format!("{}: {}", param.render(symbols), param_type.render(symbols))
+                        } else {
+                            param.render(symbols)
+                        }
+                    })
+                    .collect();
+                let ret_str = if let Some(ret) = return_type {
+                    format!(" -> {}", ret.render(symbols))
+                } else {
+                    "".to_string()
+                };
+                format!(
+                    "fn({}){} {{ {} }}",
+                    param_strs.join(", "),
+                    ret_str,
+                    expr.render(symbols)
+                )
+            }
+        }
+    }
+
     pub fn collect_diagnostics(&self, errs: &mut Vec<Diagnostic>, collect_errors: bool) {
         use ExprKind::*;
         match self {
@@ -416,5 +637,44 @@ pub fn get_binary_op(tok: TokenVariant) -> Option<BinaryOp> {
         //Assign => Some(BinaryOp::Assign),
         Pipeline => Some(BinaryOp::Pipeline),
         _ => None,
+    }
+}
+
+impl std::fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            UnaryOp::Negate => "-",
+            UnaryOp::Not => "!",
+            UnaryOp::BitNot => "~",
+            UnaryOp::MonadBind => ">>=",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            BinaryOp::Add => "+",
+            BinaryOp::Subtract => "-",
+            BinaryOp::Multiply => "*",
+            BinaryOp::Divide => "/",
+            BinaryOp::Modulus => "%",
+            BinaryOp::Exponent => "**",
+            BinaryOp::Equal => "==",
+            BinaryOp::NotEqual => "!=",
+            BinaryOp::LessThan => "<",
+            BinaryOp::LessThanEquiv => "<=",
+            BinaryOp::GreaterThan => ">",
+            BinaryOp::GreaterThanEquiv => ">=",
+            BinaryOp::And => "&&",
+            BinaryOp::Or => "||",
+            BinaryOp::BitAnd => "&",
+            BinaryOp::BitOr => "|",
+            BinaryOp::BitXor => "^",
+            //BinaryOp::Assign => "=",
+            BinaryOp::Pipeline => "|>",
+        };
+        write!(f, "{}", s)
     }
 }

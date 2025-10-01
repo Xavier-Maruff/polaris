@@ -34,6 +34,7 @@ pub struct SymbolContext {
     //constructor symbol id -> type symbol id
     pub type_constructors: HashMap<SymbolId, SymbolId>,
     pub symbol_idx: usize,
+    pub symbol_names: HashMap<SymbolId, String>,
 }
 
 struct SymbolPassContext {
@@ -168,11 +169,12 @@ impl SymbolPassContext {
         };
 
         if let Some(scope) = scope_stack.last_mut() {
-            scope.insert(name, id);
+            scope.insert(name.clone(), id);
         }
 
         self.symbol_decl_locs
             .insert(id, (self.current_file.clone(), span));
+        self.symbols.symbol_names.insert(id, name);
 
         id
     }

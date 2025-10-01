@@ -37,6 +37,14 @@ impl Diagnostic {
         self.primary.file = file;
         self
     }
+
+    pub fn set_primary_span(&mut self, span: CodeSpan) {
+        self.primary.span = span;
+    }
+
+    pub fn set_primary_message(&mut self, message: String) {
+        self.primary.message = message;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
