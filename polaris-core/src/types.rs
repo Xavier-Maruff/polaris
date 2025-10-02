@@ -33,6 +33,7 @@ pub type TypeVar = usize;
 pub struct TypeError {
     kind: TypeErrorKind,
     types: Vec<Ty>,
+    hints: Vec<String>,
 }
 
 pub enum TypeErrorKind {
@@ -49,6 +50,8 @@ pub enum Ty {
     Tuple(Vec<Ty>),
     //f(ty1, ty2, ...)
     Ctor(SymbolId, Vec<Ty>),
+    //nocrypt ty
+    Nocrypt(Box<Ty>),
 }
 
 #[derive(Clone, Debug)]
@@ -143,10 +146,10 @@ impl<'a> TypecheckContext<'a> {
                 if let Some(type_node) = const_type {
                     let declared_type = self.type_from_node(type_node)?;
                     let s2 = self.unify(&s1.apply(&t1), &declared_type);
-                    let s2 = self.push_err(
+                    let s2 = self.bind_err_ctx(
                         s2,
                         node.span,
-                        Some("Annotated type does not match inferred type".into()),
+                        Some(("Annotated type does not match inferred type".into(), vec![])),
                     )?;
                     let final_subst = s1.compose(&s2);
                     Ok((final_subst, s2.apply(&t1)))
@@ -193,10 +196,13 @@ impl<'a> TypecheckContext<'a> {
                     let final_return_type = if let Some(ret_type_node) = return_type {
                         let declared_ret_type = self.type_from_node(ret_type_node)?;
                         let s2 = self.unify(&s1.apply(&body_type), &declared_ret_type);
-                        let s2 = self.push_err(
+                        let s2 = self.bind_err_ctx(
                             s2,
                             node.span,
-                            Some("Annotated return type does not match inferred type".into()),
+                            Some((
+                                "Annotated return type does not match inferred type".into(),
+                                vec![],
+                            )),
                         )?;
 
                         let final_subst = s1.compose(&s2);
@@ -256,41 +262,63 @@ impl<'a> TypecheckContext<'a> {
         }
     }
 
-    fn push_err<T>(
+    fn bind_err_ctx<T>(
         &mut self,
         result: Result<T, TypeError>,
         span: CodeSpan,
-        msg: Option<String>,
+        msg: Option<(String, Vec<String>)>,
     ) -> Result<T, ()> {
         match result {
             Ok(v) => Ok(v),
             Err(e) => {
                 let rendered = e.types.iter().map(|t| t.render(self)).collect::<Vec<_>>();
-                let message = match msg {
-                    Some(mut m) => {
+
+                //this is wildly inefficient but only runs on errors so who really cares ig
+
+                let (message, hints) = match msg {
+                    Some((mut m, mut hints)) => {
                         for i in 0..rendered.len() {
-                            m = m.replace(&format!("${}", i + 1), &format!("{}", rendered[i]));
+                            let source_str = format!("${}", i + 1);
+                            let target_str = format!("{}", rendered[i]);
+                            m = m.replace(&source_str, &target_str);
+                            hints = hints
+                                .iter()
+                                .map(|h| h.replace(&source_str, &target_str))
+                                .collect();
                         }
-                        m
+                        hints.extend(e.hints);
+                        (m, hints)
                     }
                     None => match e.kind {
-                        TypeErrorKind::UnificationFail => format!(
-                            "Type mismatch: could not unify types: {}",
-                            rendered.join(", ")
+                        TypeErrorKind::UnificationFail => (
+                            format!(
+                                "Type mismatch: could not unify types: {}",
+                                rendered.join(", ")
+                            ),
+                            e.hints,
                         ),
-                        TypeErrorKind::InfiniteType => format!(
-                            "Infinite type detected involving types: {}",
-                            rendered.join(", "),
+                        TypeErrorKind::InfiniteType => (
+                            format!(
+                                "Infinite type detected involving types: {}",
+                                rendered.join(", "),
+                            ),
+                            e.hints,
                         ),
                     },
                 };
 
-                self.errors.push(Diagnostic::new(DiagnosticMsg {
+                let mut e = Diagnostic::new(DiagnosticMsg {
                     message,
                     span,
                     file: self.current_file.clone(),
                     err_type: DiagnosticMsgType::TypeMismatch,
-                }));
+                });
+
+                for hint in hints {
+                    e.add_hint(hint)
+                }
+
+                self.errors.push(e);
 
                 Err(())
             }
@@ -367,10 +395,10 @@ impl<'a> TypecheckContext<'a> {
                     for elem in elements.iter_mut().skip(1) {
                         let (s, t) = self.algo_w(&current_env, elem)?;
                         let s2 = self.unify(&subst.apply(&elem_type), &s.apply(&t));
-                        let s2 = self.push_err(
+                        let s2 = self.bind_err_ctx(
                             s2,
                             elem.span,
-                            Some("List element type mismatch".into()),
+                            Some(("List element type mismatch".into(), vec![])),
                         )?;
                         subst = subst.compose(&s).compose(&s2);
                         current_env = subst.apply_env(&current_env);
@@ -407,10 +435,13 @@ impl<'a> TypecheckContext<'a> {
                 }
 
                 let s_unify = self.unify(&subst.apply(&callee_type), &expected_fn_type);
-                let s_unify = self.push_err(
+                let s_unify = self.bind_err_ctx(
                     s_unify,
                     node.span,
-                    Some("Function argument types do not match function signature".into()),
+                    Some((
+                        "Function argument types do not match function signature".into(),
+                        vec![],
+                    )),
                 )?;
                 let final_subst = subst.compose(&s_unify);
 
@@ -427,16 +458,13 @@ impl<'a> TypecheckContext<'a> {
                 match op {
                     Add | Subtract | Multiply | Divide | Modulus | Exponent => {
                         let s4 = self.unify(&s3.apply(&t1), &s3.apply(&t2));
-                        let s4 = self.push_err(
+                        let s4 = self.bind_err_ctx(
                             s4,
                             node.span,
-                            Some(
-                                format!(
-                                    "Operands of arithmetic operations must be of the same type - instead, expression '{}' is of type $1, and expression '{}' is of type $2.",
-                                    left.render(self.symbols),
-                                    right.render(self.symbols)
-                                )
-                            ),
+                            Some((
+                                    "Operands of arithmetic operations must be of the same type - operands are of type $1 and $2.".into(),
+                                    vec![]
+                            )),
                         )?;
                         let final_subst = s3.compose(&s4);
                         Ok((final_subst, s4.apply(&s3.apply(&t1))))
@@ -444,12 +472,13 @@ impl<'a> TypecheckContext<'a> {
                     Equal | NotEqual | LessThan | LessThanEquiv | GreaterThan
                     | GreaterThanEquiv => {
                         let s4 = self.unify(&s3.apply(&t1), &s3.apply(&t2));
-                        let s4 = self.push_err(
+                        let s4 = self.bind_err_ctx(
                             s4,
                             node.span,
-                            Some(
-                                "Operands of comparison operations must be of the same type".into(),
-                            ),
+                            Some((
+                                "Operands of comparison operations must be of the same type - operands are of type $1 and $2".into(),
+                                vec![],
+                            )),
                         )?;
                         let final_subst = s3.compose(&s4);
                         Ok((final_subst, self.fresh_type_var()))
@@ -457,26 +486,32 @@ impl<'a> TypecheckContext<'a> {
                     And | Or => {
                         let bool_type = self.fresh_type_var();
                         let s4 = self.unify(&s3.apply(&t1), &bool_type);
-                        let s4 = self.push_err(
+                        let s4 = self.bind_err_ctx(
                             s4,
                             node.span,
-                            Some("Left operand of logical operation must be boolean".into()),
+                            Some((
+                                "Left operand of logical operation must be boolean".into(),
+                                vec![],
+                            )),
                         )?;
                         let s5 = self.unify(&s4.apply(&s3.apply(&t2)), &s4.apply(&bool_type));
-                        let s5 = self.push_err(
+                        let s5 = self.bind_err_ctx(
                             s5,
                             node.span,
-                            Some("Right operand of logical operation must be boolean".into()),
+                            Some((
+                                "Right operand of logical operation must be boolean".into(),
+                                vec![],
+                            )),
                         )?;
                         let final_subst = s3.compose(&s4).compose(&s5);
                         Ok((final_subst, s5.apply(&s4.apply(&bool_type))))
                     }
                     _ => {
                         let s4 = self.unify(&s3.apply(&t1), &s3.apply(&t2));
-                        let s4 = self.push_err(
+                        let s4 = self.bind_err_ctx(
                             s4,
                             node.span,
-                            Some("Operands must be of the same type".into()),
+                            Some(("Operands must be of the same type".into(), vec![])),
                         )?;
                         let final_subst = s3.compose(&s4);
                         Ok((final_subst, s4.apply(&s3.apply(&t1))))
@@ -499,10 +534,10 @@ impl<'a> TypecheckContext<'a> {
                 let final_type = if let Some(type_node) = symbol_type {
                     let declared_type = self.type_from_node(type_node)?;
                     let s2 = self.unify(&s1.apply(&t1), &declared_type);
-                    let s2 = self.push_err(
+                    let s2 = self.bind_err_ctx(
                         s2,
                         node.span,
-                        Some("Annotated type does not match inferred type".into()),
+                        Some(("Annotated type does not match inferred type".into(), vec![])),
                     )?;
                     let final_subst = s1.compose(&s2);
                     (final_subst, s2.apply(&t1))
@@ -528,10 +563,10 @@ impl<'a> TypecheckContext<'a> {
                 if let Some(else_expr) = else_branch {
                     let (s4, else_type) = self.algo_w(&env2, else_expr)?;
                     let s5 = self.unify(&s3.apply(&then_type), &s4.apply(&else_type));
-                    let s5 = self.push_err(
+                    let s5 = self.bind_err_ctx(
                         s5,
                         node.span,
-                        Some("Then and else branch types do not match".into()),
+                        Some(("Then and else branch types do not match".into(), vec![])),
                     )?;
                     let final_subst = s3.compose(&s4).compose(&s5);
                     Ok((final_subst, s5.apply(&s4.apply(&else_type))))
@@ -596,10 +631,13 @@ impl<'a> TypecheckContext<'a> {
                 let final_return_type = if let Some(ret_type_node) = return_type {
                     let declared_ret_type = self.type_from_node(ret_type_node)?;
                     let s2 = self.unify(&s1.apply(&body_type), &declared_ret_type);
-                    let s2 = self.push_err(
+                    let s2 = self.bind_err_ctx(
                         s2,
                         node.span,
-                        Some("Annotated return type does not match inferred type".into()),
+                        Some((
+                            "Annotated return type does not match inferred type".into(),
+                            vec![],
+                        )),
                     )?;
                     let final_subst = s1.compose(&s2);
                     (final_subst, s2.apply(&body_type))
@@ -632,8 +670,19 @@ impl<'a> TypecheckContext<'a> {
     fn type_from_node(&mut self, node: &Node) -> Result<Ty, ()> {
         match &node.kind {
             NodeKind::Type {
-                type_vars, symbol, ..
+                type_vars,
+                symbol,
+                nocrypt,
+                ..
             } => {
+                let ok = |a| {
+                    if *nocrypt {
+                        Ok(Ty::Nocrypt(Box::new(a)))
+                    } else {
+                        Ok(a)
+                    }
+                };
+
                 let symbol_id = if let Some(id) = node.symbol_id {
                     Some(id)
                 } else {
@@ -642,13 +691,13 @@ impl<'a> TypecheckContext<'a> {
 
                 if let Some(symbol_id) = symbol_id {
                     if type_vars.is_empty() {
-                        Ok(Ty::Concrete(symbol_id))
+                        ok(Ty::Concrete(symbol_id))
                     } else {
                         let mut args = Vec::new();
                         for type_var in type_vars {
                             args.push(self.type_from_node(type_var)?);
                         }
-                        Ok(Ty::Ctor(symbol_id, args))
+                        ok(Ty::Ctor(symbol_id, args))
                     }
                 } else {
                     self.errors.push(Diagnostic::new(DiagnosticMsg {
@@ -779,6 +828,7 @@ impl<'a> TypecheckContext<'a> {
             Fn(arg, ret) => self.occurs(a, arg) || self.occurs(a, ret),
             Ctor(_, args) | Tuple(args) => args.iter().any(|arg| self.occurs(a, arg)),
             Concrete(_) => false,
+            Nocrypt(t) => self.occurs(a, t),
         }
     }
 
@@ -793,6 +843,7 @@ impl<'a> TypecheckContext<'a> {
             return Err(TypeError {
                 kind: TypeErrorKind::InfiniteType,
                 types: vec![Ty::Var(a), t.clone()],
+                hints: vec![],
             });
         }
 
@@ -819,6 +870,13 @@ impl<'a> TypecheckContext<'a> {
                 Ok(s1.compose(&s2))
             }
 
+            (Nocrypt(a), Nocrypt(b)) => self.unify(a, b),
+            (Nocrypt(_), _) | (_, Nocrypt(_)) => Err(TypeError {
+                kind: TypeErrorKind::UnificationFail,
+                types: vec![t1.clone(), t2.clone()],
+                hints: vec!["Attempted to mix usage of encrypted and 'nocrypt' types - remove/add 'nocrypt' type modifiers to fix.".into()],
+            }),
+
             (Tuple(types1), Tuple(types2)) if types1.len() == types2.len() => {
                 let mut s = Substitution::new();
                 for (ty1, ty2) in types1.iter().zip(types2.iter()) {
@@ -840,6 +898,7 @@ impl<'a> TypecheckContext<'a> {
             _ => Err(TypeError {
                 kind: TypeErrorKind::UnificationFail,
                 types: vec![t1.clone(), t2.clone()],
+                hints: vec![],
             }),
         }
     }
@@ -874,6 +933,7 @@ impl Ty {
                 set
             }
             Concrete(_) => HashSet::new(),
+            Nocrypt(t) => t.free_type_vars(),
         }
     }
 
@@ -894,6 +954,8 @@ impl Ty {
     }
 
     fn render(&self, ctx: &TypecheckContext) -> String {
+        println!("rendering {:?}", self);
+
         use Ty::*;
         match self {
             Var(a) => format!("t{}", a),
@@ -908,30 +970,19 @@ impl Ty {
                 let elems: Vec<String> = types.iter().map(|ty| ty.render(ctx)).collect();
                 format!("({})", elems.join(", "))
             }
+            Nocrypt(t) => format!("nocrypt {}", t.render(ctx)),
             Ctor(id, args) => {
                 let args_str: Vec<String> = args.iter().map(|arg| arg.render(ctx)).collect();
-                if args_str.is_empty() {
-                    ctx.type_env
-                        .iter()
-                        .find(|(_, scheme)| {
-                            if let Ty::Concrete(scheme_id) = &scheme.body {
-                                scheme_id == id && scheme.bound_vars.is_empty()
-                            } else {
-                                false
-                            }
-                        })
-                        .map_or("<unknown>".to_string(), |(name, _)| name.to_string())
-                } else {
-                    format!(
-                        "{}<{}>",
-                        ctx.symbols
-                            .intrinsic_types
-                            .iter()
-                            .find(|(_, sym_id)| *sym_id == id)
-                            .map_or("<unknown>".to_string(), |(name, _)| name.clone()),
-                        args_str.join(", ")
-                    )
-                }
+
+                format!(
+                    "{}({})",
+                    ctx.symbols
+                        .symbol_names
+                        .get(id)
+                        .cloned()
+                        .unwrap_or("<unknown>".to_string()),
+                    args_str.join(", ")
+                )
             }
         }
     }
@@ -993,6 +1044,7 @@ impl Substitution {
                 Ctor(*name, new_args)
             }
             Concrete(_) => t.clone(),
+            Nocrypt(t) => Nocrypt(Box::new(self.apply(t))),
         }
     }
 

@@ -1,5 +1,13 @@
 
-pub fn test_typecheck(a: String, b: Real) -> Int {
-    let x = a + b
-    x * 2
+type Check(a) {
+   Ctor1(val: a)
+   Ctor2
+}
+
+
+pub fn test_typecheck(a: Check(String), b: Real) -> Real {
+   match a {
+      Ctor1(val) -> val + b
+      Ctor2 -> 2
+    }
 }
