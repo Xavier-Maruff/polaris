@@ -4,7 +4,7 @@ use crate::{
     ast::{ExprKind, Node, NodeKind},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
-    intrinsics::{INT, LIST, REAL, STRING, create_intrinsic_type_env},
+    intrinsics::{INT, LIST, REAL, STRING, VOID, create_intrinsic_type_env},
     module::DepGraphContext,
     parse::CodeSpan,
     symbol::{SymbolContext, SymbolId},
@@ -116,6 +116,23 @@ impl<'a> TypecheckContext<'a> {
             }
         }
 
+        // for (symbol_id, scheme) in &self.type_env {
+        //     if !self
+        //         .symbols
+        //         .intrinsic_types
+        //         .values()
+        //         .any(|&id| id == *symbol_id)
+        //         && !self
+        //             .symbols
+        //             .intrinsic_symbols
+        //             .values()
+        //             .any(|&id| id == *symbol_id)
+        //     {
+        //         let rendered = scheme.body.render(self);
+        //         println!("{}: {}", self.symbols.symbol_names[symbol_id], rendered)
+        //     }
+        // }
+
         Ok(())
     }
 
@@ -212,6 +229,14 @@ impl<'a> TypecheckContext<'a> {
                     };
 
                     let mut fn_type = final_return_type.1;
+
+                    if arg_types.len() == 0 {
+                        fn_type = Ty::Fn(
+                            Box::new(Ty::Concrete(self.symbols.intrinsic_types[VOID])),
+                            Box::new(fn_type),
+                        );
+                    }
+
                     for arg_type in arg_types.into_iter().rev() {
                         fn_type = Ty::Fn(
                             Box::new(final_return_type.0.apply(&arg_type)),
@@ -462,7 +487,7 @@ impl<'a> TypecheckContext<'a> {
                             s4,
                             node.span,
                             Some((
-                                    "Operands of arithmetic operations must be of the same type - operands are of type $1 and $2.".into(),
+                                    "Operands of arithmetic operations must be of the same type - tried to equate $1 and $2.".into(),
                                     vec![]
                             )),
                         )?;
@@ -476,7 +501,7 @@ impl<'a> TypecheckContext<'a> {
                             s4,
                             node.span,
                             Some((
-                                "Operands of comparison operations must be of the same type - operands are of type $1 and $2".into(),
+                                "Operands of comparison operations must be of the same type - tried to equate $1 and $2.".into(),
                                 vec![],
                             )),
                         )?;
@@ -524,6 +549,7 @@ impl<'a> TypecheckContext<'a> {
                 Ok((s, t))
             }
 
+            //todo: this is pretty iffy - not sure whether let bindings should be void of the type of the expr?
             ExprKind::LetBinding {
                 symbol_type,
                 expr: value_expr,
@@ -540,9 +566,14 @@ impl<'a> TypecheckContext<'a> {
                         Some(("Annotated type does not match inferred type".into(), vec![])),
                     )?;
                     let final_subst = s1.compose(&s2);
-                    (final_subst, s2.apply(&t1))
+                    //(final_subst, s2.apply(&t1))
+                    (
+                        final_subst,
+                        Ty::Concrete(self.symbols.intrinsic_types[VOID]),
+                    )
                 } else {
-                    (s1, t1)
+                    //(s1, t1)
+                    (s1, Ty::Concrete(self.symbols.intrinsic_types[VOID]))
                 };
 
                 Ok(final_type)
@@ -691,6 +722,12 @@ impl<'a> TypecheckContext<'a> {
 
                 if let Some(symbol_id) = symbol_id {
                     if type_vars.is_empty() {
+                        //starts lowercase, must be a type param
+                        if symbol.chars().next().map_or(false, |c| c.is_lowercase()) {
+                            //maybe lookup in env?
+                            return ok(self.fresh_type_var());
+                        }
+
                         ok(Ty::Concrete(symbol_id))
                     } else {
                         let mut args = Vec::new();
@@ -954,8 +991,6 @@ impl Ty {
     }
 
     fn render(&self, ctx: &TypecheckContext) -> String {
-        println!("rendering {:?}", self);
-
         use Ty::*;
         match self {
             Var(a) => format!("t{}", a),

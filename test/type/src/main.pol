@@ -5,9 +5,24 @@ type Check(a) {
 }
 
 
-pub fn test_typecheck(a: Check(String), b: Real) -> Real {
-   match a {
-      Ctor1(val) -> val + b
-      Ctor2 -> 2
-    }
+pub fn test_typecheck(a: Result(String, a), b: Result(y, a)) {
+   //obviously this is nonsensical, but it should typecheck
+   //until bodged subtypes for operators are implemented
+   a + b
+}
+
+pub fn test_typevar_union(a: Result(String, a), b: Int, c: a) -> a {
+   let s: Result(String, Int) = a
+   b + c
+}
+
+pub fn other(g: Result(String, a)) -> Result(String, a) {
+   let val: Result(String, Int) = Err(5)
+   val + g
+}
+
+
+pub fn custom_type() {
+   let x: Check(Int) = Ctor1(5)
+   let y: Check(String) = Ctor2
 }

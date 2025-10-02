@@ -196,6 +196,22 @@ impl SymbolPassContext {
     fn resolve_symbols(&mut self, ctx: &mut CompileContext) {
         self.symbols.intrinsic_symbols = intrinsic_symbols(&mut self.symbols.symbol_idx);
         self.symbols.intrinsic_types = intrinsic_type_symbols(&mut self.symbols.symbol_idx);
+
+        //add reverse lookup for error messages
+        //not super efficient but that is a provlem for the future
+        self.symbols.symbol_names.extend(
+            self.symbols
+                .intrinsic_symbols
+                .iter()
+                .map(|(k, v)| (*v, k.clone())),
+        );
+        self.symbols.symbol_names.extend(
+            self.symbols
+                .intrinsic_types
+                .iter()
+                .map(|(k, v)| (*v, k.clone())),
+        );
+
         self.scope_stack = vec![self.symbols.intrinsic_symbols.clone()];
         self.type_scope_stack = vec![self.symbols.intrinsic_types.clone()];
 
@@ -487,8 +503,16 @@ impl SymbolPassContext {
 
         match expr {
             IntLit { .. } | StringLit { .. } | RealLit { .. } | Discard => {}
-            LetBinding { symbols, expr, .. } => {
+            LetBinding {
+                symbols,
+                symbol_type,
+                expr,
+                ..
+            } => {
                 self.resolve_scoped_symbols(module_name, expr, false);
+                if let Some(symbol_type) = symbol_type {
+                    self.resolve_scoped_symbols(module_name, symbol_type, false);
+                }
                 self.push_anonymous_scope();
                 let _ = self.declare_binding(symbols, false, &None);
             }
