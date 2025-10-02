@@ -21,11 +21,10 @@ struct TypecheckContext<'a> {
     type_env: TypeEnv,
     type_var_counter: TypeVar,
     errors: &'a mut Vec<Diagnostic>,
-    warnings: &'a mut Vec<Diagnostic>,
+    // warnings: &'a mut Vec<Diagnostic>,
     symbols: &'a mut SymbolContext,
     deps: &'a mut DepGraphContext,
     current_file: String,
-    undetermined_symbol_counter: usize,
 }
 
 pub type TypeVar = usize;
@@ -67,17 +66,14 @@ pub type TypeEnv = HashMap<SymbolId, Scheme>;
 
 impl<'a> TypecheckContext<'a> {
     fn new(ctx: &'a mut CompileContext) -> Self {
-        let undetermined_symbol_counter = ctx.symbols.symbol_idx.clone();
-
         Self {
             symbols: &mut ctx.symbols,
             type_env: HashMap::new(),
             type_var_counter: 0,
             errors: &mut ctx.errors,
             deps: &mut ctx.dependencies,
-            warnings: &mut ctx.warnings,
+            // warnings: &mut ctx.warnings,
             current_file: String::new(),
-            undetermined_symbol_counter,
         }
     }
 
