@@ -1,4 +1,4 @@
-# <img width="30" height="30" alt="Polaris Logo" src="https://github.com/user-attachments/assets/b62872c0-521b-4d59-8407-c852d2af2a81" /> Polaris
+# <img width="30" height="30" alt="Polaris Logo" src="https://github.com/user-attachments/assets/5ab29a5f-3a68-4bbb-bfea-3eaaee8eba6b" /> Polaris
 
 > [!CAUTION]
 > Polaris is a work in progress, and is not yet even capable of codegen. Watch this space for updates!
