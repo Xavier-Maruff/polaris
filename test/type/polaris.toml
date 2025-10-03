@@ -1,4 +1,4 @@
-package = "sanity"
+package = "type"
 version = "0.1.0"
 
 path = "src"

@@ -25,6 +25,13 @@ struct TypecheckContext<'a> {
     symbols: &'a mut SymbolContext,
     deps: &'a mut DepGraphContext,
     current_file: String,
+    //todo: move to compile context
+    //should this map to node borrows instead of just symbold ids?
+    ///map new func id -> (original func id, instantiated type)
+    monomorphised_fns: HashMap<SymbolId, (SymbolId, Ty)>,
+    //this seems like a shit approach
+    ///reverse mapping (original func id, instantiated type) -> new func id
+    fn_instantiation_ids: HashMap<(SymbolId, Ty), SymbolId>,
 }
 
 pub type TypeVar = usize;
@@ -40,7 +47,7 @@ pub enum TypeErrorKind {
     InfiniteType,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash, Eq)]
 pub enum Ty {
     Var(TypeVar),
     Concrete(SymbolId),
@@ -74,6 +81,8 @@ impl<'a> TypecheckContext<'a> {
             deps: &mut ctx.dependencies,
             // warnings: &mut ctx.warnings,
             current_file: String::new(),
+            monomorphised_fns: HashMap::new(),
+            fn_instantiation_ids: HashMap::new(),
         }
     }
 
@@ -89,9 +98,28 @@ impl<'a> TypecheckContext<'a> {
                 };
 
                 self.current_file = file_name;
-                let type_env_clone = self.type_env.clone();
+                let mut type_env = self.type_env.clone();
 
-                match self.algo_w(&type_env_clone, &mut ast) {
+                //todo: top level pass for type decls/consts
+                //then second pass for functions
+
+                let (subst, _) = match self.algo_w_top_level(&mut type_env, &mut ast) {
+                    Ok(res) => res,
+                    Err(_) => {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: format!("Type checking failed for module {}", module_id),
+                            span: ast.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeMismatch,
+                        }));
+                        (Substitution::new(), self.fresh_type_var())
+                    }
+                };
+
+                let mut type_env = subst.apply_env(&type_env);
+                self.pad_below_env(&mut type_env);
+
+                match self.algo_w(&mut type_env, &mut ast) {
                     Ok((subst, _ty)) => {
                         self.type_env = subst.apply_env(&self.type_env);
                     }
@@ -112,27 +140,147 @@ impl<'a> TypecheckContext<'a> {
             }
         }
 
-        // for (symbol_id, scheme) in &self.type_env {
-        //     if !self
-        //         .symbols
-        //         .intrinsic_types
-        //         .values()
-        //         .any(|&id| id == *symbol_id)
-        //         && !self
-        //             .symbols
-        //             .intrinsic_symbols
-        //             .values()
-        //             .any(|&id| id == *symbol_id)
-        //     {
-        //         let rendered = scheme.body.render(self);
-        //         println!("{}: {}", self.symbols.symbol_names[symbol_id], rendered)
-        //     }
-        // }
+        self.debug_type_env("Final type env".into(), &self.type_env);
+        self.print_monomorphised_fns();
 
         Ok(())
     }
 
-    fn algo_w(&mut self, env: &TypeEnv, node: &mut Node) -> Result<(Substitution, Ty), ()> {
+    fn print_monomorphised_fns(&self) {
+        println!("\nMonomorphised functions:");
+        println!(
+            "\n| {:<32} | {:<32} | {:<96} |",
+            " Function ", " From ", " Type "
+        );
+        println!("|-{:-<32}-|-{:-<32}-|-{:-<96}-|", "", "", "");
+        let unknown = "<unknown>".into();
+        for (new_id, (orig_id, ty)) in &self.monomorphised_fns {
+            let orig_name = self.symbols.symbol_names.get(orig_id).unwrap_or(&unknown);
+            let new_name = self.symbols.symbol_names.get(new_id).unwrap_or(&unknown);
+            println!(
+                "| {:<32} | {:<32} | {:<96} |",
+                new_name,
+                orig_name,
+                ty.render(self)
+            );
+        }
+        println!("\n");
+    }
+
+    fn debug_type_env(&self, title: String, env: &TypeEnv) {
+        println!("{}", title);
+        println!("\n| {:<32} | {:<96} |", " Symbol ", " Type ");
+        println!("|-{:-<32}-|-{:-<96}-|", "", "");
+
+        for (symbol_id, scheme) in env {
+            if !self
+                .symbols
+                .intrinsic_types
+                .values()
+                .any(|&id| id == *symbol_id)
+                && !self
+                    .symbols
+                    .intrinsic_symbols
+                    .values()
+                    .any(|&id| id == *symbol_id)
+            {
+                let rendered = scheme.body.render(self);
+                println!(
+                    "| {:<32} | {:<96} |",
+                    self.symbols.symbol_names[symbol_id], rendered
+                );
+            }
+        }
+
+        println!("\n");
+    }
+
+    fn pad_below_env(&self, env: &mut TypeEnv) {
+        for (symbol_id, t) in &self.type_env {
+            if !env.contains_key(symbol_id) {
+                env.insert(
+                    *symbol_id,
+                    Scheme {
+                        bound_vars: vec![],
+                        body: t.body.clone(),
+                    },
+                );
+            }
+        }
+    }
+
+    fn algo_w_top_level(
+        &mut self,
+        env: &mut TypeEnv,
+        node: &mut Node,
+    ) -> Result<(Substitution, Ty), ()> {
+        match &mut node.kind {
+            NodeKind::Module { .. } => self.algo_w_module(env, node, true),
+            NodeKind::ConstDecl { .. } => self.algo_w_const_decl(env, node),
+
+            //todo
+            NodeKind::TypeDecl { .. } => Ok((
+                Substitution::new(),
+                Ty::Concrete(self.symbols.intrinsic_types[VOID]),
+            )),
+
+            //todo
+            NodeKind::TypeAlias { .. } => Ok((
+                Substitution::new(),
+                Ty::Concrete(self.symbols.intrinsic_types[VOID]),
+            )),
+
+            //not doing full algo_w for fn decls at top level, instead just getting generic types
+            NodeKind::FnDecl {
+                args, return_type, ..
+            } => {
+                let mut arg_types = Vec::new();
+
+                for (_, arg_type, _) in args {
+                    let arg_ty = if let Some(type_node) = arg_type {
+                        self.type_from_node(type_node)?
+                    } else {
+                        self.fresh_type_var()
+                    };
+                    arg_types.push(arg_ty.clone());
+                }
+
+                let ret_type = if let Some(ret) = return_type {
+                    self.type_from_node(ret)?
+                } else {
+                    self.fresh_type_var()
+                };
+
+                let mut fn_type = ret_type;
+
+                if arg_types.len() == 0 {
+                    fn_type = Ty::Fn(
+                        Box::new(Ty::Concrete(self.symbols.intrinsic_types[VOID])),
+                        Box::new(fn_type),
+                    );
+                }
+
+                for arg_type in arg_types.into_iter().rev() {
+                    fn_type = Ty::Fn(Box::new(arg_type), Box::new(fn_type));
+                }
+
+                //inefficient, should refactor
+                let mut env = env.clone();
+                self.add_declaration_to_env(node, &fn_type, &mut env);
+
+                Ok((Substitution::new(), fn_type))
+            }
+
+            _ => Ok((Substitution::new(), self.fresh_type_var())),
+        }
+    }
+
+    fn algo_w_module(
+        &mut self,
+        env: &mut TypeEnv,
+        node: &mut Node,
+        top_level: bool,
+    ) -> Result<(Substitution, Ty), ()> {
         match &mut node.kind {
             NodeKind::Module { children } => {
                 let mut subst = Substitution::new();
@@ -140,7 +288,15 @@ impl<'a> TypecheckContext<'a> {
                 let mut last_type = self.fresh_type_var();
 
                 for child in children {
-                    let (s, t) = self.algo_w(&current_env, child)?;
+                    if !top_level && !matches!(&child.kind, NodeKind::FnDecl { .. }) {
+                        continue;
+                    }
+
+                    let (s, t) = if top_level {
+                        self.algo_w_top_level(&mut current_env, child)?
+                    } else {
+                        self.algo_w(&mut current_env, child)?
+                    };
                     subst = subst.compose(&s);
                     current_env = subst.apply_env(&current_env);
                     last_type = subst.apply(&t);
@@ -150,7 +306,16 @@ impl<'a> TypecheckContext<'a> {
 
                 Ok((subst, last_type))
             }
-            NodeKind::Expr { .. } => self.algo_w_expr(env, node),
+            _ => self.algo_w(env, node),
+        }
+    }
+
+    fn algo_w_const_decl(
+        &mut self,
+        env: &mut TypeEnv,
+        node: &mut Node,
+    ) -> Result<(Substitution, Ty), ()> {
+        match &mut node.kind {
             NodeKind::ConstDecl {
                 const_type, expr, ..
             } => {
@@ -162,7 +327,15 @@ impl<'a> TypecheckContext<'a> {
                     let s2 = self.bind_err_ctx(
                         s2,
                         node.span,
-                        Some(("Annotated type does not match inferred type".into(), vec![])),
+                        Some((
+                            format!(
+                                "Annotated type {} does not match inferred type {}",
+                                declared_type.render(self),
+                                t1.render(self),
+                            )
+                            .into(),
+                            vec!["$1 does not match $2".into()],
+                        )),
                     )?;
                     let final_subst = s1.compose(&s2);
                     Ok((final_subst, s2.apply(&t1)))
@@ -170,12 +343,24 @@ impl<'a> TypecheckContext<'a> {
                     Ok((s1, t1))
                 }
             }
+            _ => self.algo_w(env, node),
+        }
+    }
+
+    fn algo_w(&mut self, env: &mut TypeEnv, node: &mut Node) -> Result<(Substitution, Ty), ()> {
+        match &mut node.kind {
+            NodeKind::Module { .. } => self.algo_w_module(env, node, false),
+            NodeKind::Expr { .. } => self.algo_w_expr(env, node),
+            NodeKind::ConstDecl { .. } => self.algo_w_const_decl(env, node),
             NodeKind::FnDecl {
                 args,
                 return_type,
                 expr,
+                symbol,
                 ..
             } => {
+                println!("\nType checking function declaration: {}", symbol);
+
                 if let Some(body) = expr {
                     let mut arg_types = Vec::new();
                     let mut new_env = env.clone();
@@ -204,7 +389,7 @@ impl<'a> TypecheckContext<'a> {
                         }
                     }
 
-                    let (s1, body_type) = self.algo_w(&new_env, body)?;
+                    let (s1, body_type) = self.algo_w(&mut new_env, body)?;
 
                     let final_return_type = if let Some(ret_type_node) = return_type {
                         let declared_ret_type = self.type_from_node(ret_type_node)?;
@@ -213,7 +398,12 @@ impl<'a> TypecheckContext<'a> {
                             s2,
                             node.span,
                             Some((
-                                "Annotated return type does not match inferred type".into(),
+                                format!(
+                                    "Annotated return type {} does not match inferred type {}",
+                                    declared_ret_type.render(self),
+                                    body_type.render(self),
+                                )
+                                .into(),
                                 vec![],
                             )),
                         )?;
@@ -239,6 +429,10 @@ impl<'a> TypecheckContext<'a> {
                             Box::new(fn_type),
                         );
                     }
+
+                    //actually just updating prior generic declaration
+                    //with new algo-w-provided type
+                    self.add_declaration_to_env(node, &fn_type, env);
 
                     Ok((final_return_type.0, fn_type))
                 } else {
@@ -346,7 +540,11 @@ impl<'a> TypecheckContext<'a> {
         }
     }
 
-    fn algo_w_expr(&mut self, env: &TypeEnv, node: &mut Node) -> Result<(Substitution, Ty), ()> {
+    fn algo_w_expr(
+        &mut self,
+        env: &mut TypeEnv,
+        node: &mut Node,
+    ) -> Result<(Substitution, Ty), ()> {
         let expr = match &mut node.kind {
             NodeKind::Expr { expr } => expr,
             _ => unreachable!(),
@@ -391,7 +589,7 @@ impl<'a> TypecheckContext<'a> {
                 let mut current_env = env.clone();
 
                 for elem in elements {
-                    let (s, t) = self.algo_w(&current_env, elem)?;
+                    let (s, t) = self.algo_w(&mut current_env, elem)?;
                     subst = subst.compose(&s);
                     current_env = subst.apply_env(&current_env);
                     types.push(subst.apply(&t));
@@ -414,7 +612,7 @@ impl<'a> TypecheckContext<'a> {
                     let mut elem_type = subst.apply(&t1);
 
                     for elem in elements.iter_mut().skip(1) {
-                        let (s, t) = self.algo_w(&current_env, elem)?;
+                        let (s, t) = self.algo_w(&mut current_env, elem)?;
                         let s2 = self.unify(&subst.apply(&elem_type), &s.apply(&t));
                         let s2 = self.bind_err_ctx(
                             s2,
@@ -442,7 +640,7 @@ impl<'a> TypecheckContext<'a> {
                 let mut arg_types = Vec::new();
 
                 for (_, arg) in args {
-                    let (s, t) = self.algo_w(&current_env, arg)?;
+                    let (s, t) = self.algo_w(&mut current_env, arg)?;
                     subst = subst.compose(&s);
                     current_env = subst.apply_env(&current_env);
                     arg_types.push(subst.apply(&t));
@@ -460,19 +658,36 @@ impl<'a> TypecheckContext<'a> {
                     s_unify,
                     node.span,
                     Some((
-                        "Function argument types do not match function signature".into(),
+                        format!("Function argument types do not match function signature - tried to equate $1 and {}", expected_fn_type.render(self)),
                         vec![],
                     )),
                 )?;
                 let final_subst = subst.compose(&s_unify);
+                let final_return_type = s_unify.apply(&return_type);
 
-                Ok((final_subst, s_unify.apply(&return_type)))
+                if final_return_type.free_type_vars().len() == 0
+                    && let Some(callee_id) = callee.symbol_id
+                {
+                    //monotype, check monormorphisation table
+                    if let Some(existing_id) = self
+                        .fn_instantiation_ids
+                        .get(&(callee_id, final_subst.apply(&callee_type).clone()))
+                    {
+                        node.symbol_id = Some(*existing_id);
+                    } else {
+                        let new_symbol_id = self
+                            .register_monomorphised_fn(callee, &final_subst.apply(&callee_type));
+                        node.symbol_id = Some(new_symbol_id);
+                    }
+                }
+
+                Ok((final_subst, final_return_type))
             }
 
             ExprKind::BinaryOp { left, op, right } => {
                 let (s1, t1) = self.algo_w(env, left)?;
-                let env1 = s1.apply_env(env);
-                let (s2, t2) = self.algo_w(&env1, right)?;
+                let mut env1 = s1.apply_env(env);
+                let (s2, t2) = self.algo_w(&mut env1, right)?;
                 let s3 = s1.compose(&s2);
 
                 use crate::ast::BinaryOp::*;
@@ -545,34 +760,50 @@ impl<'a> TypecheckContext<'a> {
                 Ok((s, t))
             }
 
-            //todo: this is pretty iffy - not sure whether let bindings should be void of the type of the expr?
             ExprKind::LetBinding {
                 symbol_type,
                 expr: value_expr,
+                symbols,
                 ..
             } => {
                 let (s1, t1) = self.algo_w(env, value_expr)?;
 
-                let final_type = if let Some(type_node) = symbol_type {
+                let result = if let Some(type_node) = symbol_type {
                     let declared_type = self.type_from_node(type_node)?;
                     let s2 = self.unify(&s1.apply(&t1), &declared_type);
                     let s2 = self.bind_err_ctx(
                         s2,
                         node.span,
-                        Some(("Annotated type does not match inferred type".into(), vec![])),
+                        Some((
+                            format!(
+                                "Annotated type {} does not match inferred type $1",
+                                declared_type.render(self)
+                            )
+                            .into(),
+                            vec![],
+                        )),
                     )?;
                     let final_subst = s1.compose(&s2);
-                    //(final_subst, s2.apply(&t1))
-                    (
-                        final_subst,
-                        Ty::Concrete(self.symbols.intrinsic_types[VOID]),
-                    )
+
+                    (final_subst, s2.apply(&t1))
+                    //(
+                    //final_subst,
+                    //Ty::Concrete(self.symbols.intrinsic_types[VOID]),
+                    //)
                 } else {
-                    //(s1, t1)
-                    (s1, Ty::Concrete(self.symbols.intrinsic_types[VOID]))
+                    (s1, t1)
+                    //(s1, Ty::Concrete(self.symbols.intrinsic_types[VOID]))
                 };
 
-                Ok(final_type)
+                let symbol_id = symbols
+                    .symbol_id
+                    .map(Ok)
+                    .unwrap_or(Err(()))
+                    .expect("Let binding without symbol id");
+
+                env.insert(symbol_id, Scheme::generalise(&env, &result.1));
+
+                Ok((result.0, Ty::Concrete(self.symbols.intrinsic_types[VOID])))
             }
 
             ExprKind::IfElse {
@@ -581,14 +812,14 @@ impl<'a> TypecheckContext<'a> {
                 else_branch,
             } => {
                 let (s1, _cond_type) = self.algo_w(env, condition)?;
-                let env1 = s1.apply_env(env);
+                let mut env1 = s1.apply_env(env);
 
-                let (s2, then_type) = self.algo_w(&env1, then_branch)?;
+                let (s2, then_type) = self.algo_w(&mut env1, then_branch)?;
                 let s3 = s1.compose(&s2);
-                let env2 = s3.apply_env(&env1);
+                let mut env2 = s3.apply_env(&env1);
 
                 if let Some(else_expr) = else_branch {
-                    let (s4, else_type) = self.algo_w(&env2, else_expr)?;
+                    let (s4, else_type) = self.algo_w(&mut env2, else_expr)?;
                     let s5 = self.unify(&s3.apply(&then_type), &s4.apply(&else_type));
                     let s5 = self.bind_err_ctx(
                         s5,
@@ -611,11 +842,14 @@ impl<'a> TypecheckContext<'a> {
                     let mut last_type = self.fresh_type_var();
 
                     for stmt in statements {
-                        let (s, t) = self.algo_w(&current_env, stmt)?;
+                        let (s, t) = self.algo_w(&mut current_env, stmt)?;
                         subst = subst.compose(&s);
                         current_env = subst.apply_env(&current_env);
                         last_type = subst.apply(&t);
                     }
+
+                    self.debug_type_env("Type env at end of block".into(), &current_env);
+                    println!("Type of block expression: {}", last_type.render(self));
 
                     Ok((subst, last_type))
                 }
@@ -653,7 +887,7 @@ impl<'a> TypecheckContext<'a> {
                     }
                 }
 
-                let (s1, body_type) = self.algo_w(&new_env, body)?;
+                let (s1, body_type) = self.algo_w(&mut new_env, body)?;
 
                 let final_return_type = if let Some(ret_type_node) = return_type {
                     let declared_ret_type = self.type_from_node(ret_type_node)?;
@@ -687,6 +921,42 @@ impl<'a> TypecheckContext<'a> {
 
             _ => Ok((Substitution::new(), self.fresh_type_var())),
         }
+    }
+
+    fn register_monomorphised_fn(&mut self, callee: &Node, callee_type: &Ty) -> SymbolId {
+        //check instantiation table for prior monomorphisation
+        if let Some(symbol_id) = callee.symbol_id {
+            if let Some(existing_id) = self
+                .fn_instantiation_ids
+                .get(&(symbol_id, callee_type.clone()))
+            {
+                return *existing_id;
+            }
+        }
+
+        let new_symbol_id = self.symbols.symbol_idx;
+        //todo: actually sort this out for real
+        //because wtf is going to happen for closures??
+        let symbol_id = callee.symbol_id.unwrap_or(0);
+        self.symbols.symbol_idx += 1;
+        self.symbols.symbol_names.insert(
+            new_symbol_id,
+            format!(
+                "{}${}",
+                self.symbols
+                    .symbol_names
+                    .get(&symbol_id)
+                    .unwrap_or(&"<unknown>".into()),
+                new_symbol_id
+            ),
+        );
+
+        self.monomorphised_fns
+            .insert(new_symbol_id, (symbol_id, callee_type.clone()));
+        self.fn_instantiation_ids
+            .insert((symbol_id, callee_type.clone()), new_symbol_id);
+
+        new_symbol_id
     }
 
     fn initialise_type_env(&mut self) {
@@ -812,9 +1082,13 @@ impl<'a> TypecheckContext<'a> {
             NodeKind::FnDecl { .. } => {
                 if let Some(symbol_id) = node.symbol_id {
                     let scheme = Scheme::generalise(env, ty);
-                    env.insert(symbol_id, scheme);
-                    self.type_env
-                        .insert(symbol_id, env.get(&symbol_id).unwrap().clone());
+                    //bound vars empty -> monotype, can just register directly
+                    if scheme.bound_vars.is_empty() {
+                        self.register_monomorphised_fn(node, ty);
+                        //monomorphisations of parametric functions will occur at call sites
+                    }
+                    env.insert(symbol_id, scheme.clone());
+                    self.type_env.insert(symbol_id, scheme);
                 }
             }
             _ => {}
@@ -919,6 +1193,19 @@ impl<'a> TypecheckContext<'a> {
                 Ok(s)
             }
 
+            (Tuple(types1), Tuple(types2)) => Err(TypeError {
+                kind: TypeErrorKind::UnificationFail,
+                types: vec![t1.clone(), t2.clone()],
+                hints: vec![format!("These tuples are of different lengths - {} and {}.", types1.len(), types2.len())],
+            }),
+
+            (Tuple(_), _) | (_, Tuple(_)) => Err(TypeError {
+                kind: TypeErrorKind::UnificationFail,
+                types: vec![t1.clone(), t2.clone()],
+                hints: vec!["One of these is a tuple, and the other is not.".into()],
+            }),
+
+            //todo: this might not be right - len check?
             (Ctor(id1, args1), Ctor(id2, args2)) if id1 == id2 && args1.len() == args2.len() => {
                 let mut s = Substitution::new();
                 for (arg1, arg2) in args1.iter().zip(args2.iter()) {

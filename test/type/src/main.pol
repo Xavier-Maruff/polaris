@@ -12,17 +12,28 @@ pub fn test_typecheck(a: Result(String, a), b: Result(y, a)) {
 }
 
 pub fn test_typevar_union(a: Result(String, a), b: Int, c: a) -> a {
-   let s: Result(String, Int) = a
+   let s: Result(String, a) = a
    b + c
 }
 
-pub fn other(g: Result(String, a)) -> Result(String, a) {
-   let val: Result(String, Int) = Err(5)
-   val + g
+
+pub fn ctors() {
+  let a = Some(10)
+  let b: Option(Int) = None
+  a + b
+}
+
+pub fn id(a: a) -> a {
+  a
 }
 
 
-pub fn custom_type() {
-   let x: Check(Int) = Ctor1(5)
-   let y: Check(String) = Ctor2
+pub fn should_be_int(a: Int) -> Int {
+  let b = id(a)
+  b
+}
+
+pub fn binding(a) {
+   let q = a
+   q
 }
