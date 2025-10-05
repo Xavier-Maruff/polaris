@@ -83,7 +83,7 @@ pub enum UnaryOp {
     MonadBind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     Add,
     Subtract,

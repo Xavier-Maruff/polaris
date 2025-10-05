@@ -729,6 +729,10 @@ impl<'a> ParseContext<'a> {
                     span,
                 ));
             }
+            Const => {
+                let n = self.parse_const_decl(node, lexer, false)?;
+                return Ok(n);
+            }
             LParen => {
                 let start_span = self.curr_tok.span.start;
                 wrap_err!(node, self.advance(lexer));

@@ -5,35 +5,15 @@ type Check(a) {
 }
 
 
-pub fn test_typecheck(a: Result(String, a), b: Result(y, a)) {
-   //obviously this is nonsensical, but it should typecheck
-   //until bodged subtypes for operators are implemented
-   a + b
+pub fn check_inference(arg) {
+    let b = Ok(12)
+    let c = Err(arg) == b
+    b
 }
 
-pub fn test_typevar_union(a: Result(String, a), b: Int, c: a) -> a {
-   let s: Result(String, a) = a
-   b + c
-}
-
-
-pub fn ctors() {
-  let a = Some(10)
-  let b: Option(Int) = None
-  a + b
-}
-
-pub fn id(a: a) -> a {
-  a
-}
-
-
-pub fn should_be_int(a: Int) -> Int {
-  let b = id(a)
-  b
-}
-
-pub fn binding(a) {
-   let q = a
-   q
+pub fn main() {
+    let b = "test"
+    let a: nocrypt String = b
+    check_inference(a)
+    check_inference("test")
 }

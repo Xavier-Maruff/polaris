@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ast::{ExprKind, Node, NodeKind},
+    ast::{BinaryOp, ExprKind, Node, NodeKind},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
-    intrinsics::{INT, LIST, REAL, STRING, VOID, create_intrinsic_type_env},
+    intrinsics::{
+        INT, LIST, REAL, STRING, VOID, create_intrinsic_binops, create_intrinsic_type_env,
+    },
     module::DepGraphContext,
     parse::CodeSpan,
     symbol::{SymbolContext, SymbolId},
@@ -25,6 +27,8 @@ struct TypecheckContext<'a> {
     symbols: &'a mut SymbolContext,
     deps: &'a mut DepGraphContext,
     current_file: String,
+    // op -> (lhs, rhs) -> result type
+    accepting_binops: HashMap<BinaryOp, HashMap<(Ty, Ty), Ty>>,
     //todo: move to compile context
     //should this map to node borrows instead of just symbold ids?
     ///map new func id -> (original func id, instantiated type)
@@ -36,19 +40,21 @@ struct TypecheckContext<'a> {
 
 pub type TypeVar = usize;
 
+#[derive(Debug)]
 pub struct TypeError {
     kind: TypeErrorKind,
     types: Vec<Ty>,
     hints: Vec<String>,
 }
 
+#[derive(Debug)]
 pub enum TypeErrorKind {
     UnificationFail,
     InfiniteType,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Eq)]
-pub enum Ty {
+pub enum TyKind {
     Var(TypeVar),
     Concrete(SymbolId),
     //ty1 -> ty2
@@ -58,6 +64,12 @@ pub enum Ty {
     Ctor(SymbolId, Vec<Ty>),
     //nocrypt ty
     Nocrypt(Box<Ty>),
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Eq)]
+pub struct Ty {
+    kind: TyKind,
+    literal: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +92,7 @@ impl<'a> TypecheckContext<'a> {
             errors: &mut ctx.errors,
             deps: &mut ctx.dependencies,
             // warnings: &mut ctx.warnings,
+            accepting_binops: HashMap::new(),
             current_file: String::new(),
             monomorphised_fns: HashMap::new(),
             fn_instantiation_ids: HashMap::new(),
@@ -221,13 +234,13 @@ impl<'a> TypecheckContext<'a> {
             //todo
             NodeKind::TypeDecl { .. } => Ok((
                 Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types[VOID]),
+                Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
             )),
 
             //todo
             NodeKind::TypeAlias { .. } => Ok((
                 Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types[VOID]),
+                Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
             )),
 
             //not doing full algo_w for fn decls at top level, instead just getting generic types
@@ -254,14 +267,16 @@ impl<'a> TypecheckContext<'a> {
                 let mut fn_type = ret_type;
 
                 if arg_types.len() == 0 {
-                    fn_type = Ty::Fn(
-                        Box::new(Ty::Concrete(self.symbols.intrinsic_types[VOID])),
+                    fn_type = Ty::new(TyKind::Fn(
+                        Box::new(Ty::new(TyKind::Concrete(
+                            self.symbols.intrinsic_types[VOID],
+                        ))),
                         Box::new(fn_type),
-                    );
+                    ));
                 }
 
                 for arg_type in arg_types.into_iter().rev() {
-                    fn_type = Ty::Fn(Box::new(arg_type), Box::new(fn_type));
+                    fn_type = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
                 }
 
                 //inefficient, should refactor
@@ -292,10 +307,13 @@ impl<'a> TypecheckContext<'a> {
                         continue;
                     }
 
-                    let (s, t) = if top_level {
-                        self.algo_w_top_level(&mut current_env, child)?
+                    let (s, t) = match if top_level {
+                        self.algo_w_top_level(&mut current_env, child)
                     } else {
-                        self.algo_w(&mut current_env, child)?
+                        self.algo_w(&mut current_env, child)
+                    } {
+                        Ok(res) => res,
+                        Err(_) => (Substitution::new(), self.fresh_type_var()),
                     };
                     subst = subst.compose(&s);
                     current_env = subst.apply_env(&current_env);
@@ -389,7 +407,13 @@ impl<'a> TypecheckContext<'a> {
                         }
                     }
 
-                    let (s1, body_type) = self.algo_w(&mut new_env, body)?;
+                    let (s1, body_type) = match self.algo_w(&mut new_env, body) {
+                        Ok(res) => res,
+                        Err(_) => {
+                            //fresh typevar to continue typecheck
+                            (Substitution::new(), self.fresh_type_var())
+                        }
+                    };
 
                     let final_return_type = if let Some(ret_type_node) = return_type {
                         let declared_ret_type = self.type_from_node(ret_type_node)?;
@@ -399,7 +423,7 @@ impl<'a> TypecheckContext<'a> {
                             node.span,
                             Some((
                                 format!(
-                                    "Annotated return type {} does not match inferred type {}",
+                                    "Annotated return type '{}' does not match inferred type '{}'",
                                     declared_ret_type.render(self),
                                     body_type.render(self),
                                 )
@@ -417,17 +441,19 @@ impl<'a> TypecheckContext<'a> {
                     let mut fn_type = final_return_type.1;
 
                     if arg_types.len() == 0 {
-                        fn_type = Ty::Fn(
-                            Box::new(Ty::Concrete(self.symbols.intrinsic_types[VOID])),
+                        fn_type = Ty::new(TyKind::Fn(
+                            Box::new(Ty::new(TyKind::Concrete(
+                                self.symbols.intrinsic_types[VOID],
+                            ))),
                             Box::new(fn_type),
-                        );
+                        ));
                     }
 
                     for arg_type in arg_types.into_iter().rev() {
-                        fn_type = Ty::Fn(
+                        fn_type = Ty::new(TyKind::Fn(
                             Box::new(final_return_type.0.apply(&arg_type)),
                             Box::new(fn_type),
-                        );
+                        ));
                     }
 
                     //actually just updating prior generic declaration
@@ -467,7 +493,7 @@ impl<'a> TypecheckContext<'a> {
 
                     let mut fn_type = return_ty;
                     for arg_type in arg_types.into_iter().rev() {
-                        fn_type = Ty::Fn(Box::new(arg_type), Box::new(fn_type));
+                        fn_type = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
                     }
 
                     Ok((Substitution::new(), fn_type))
@@ -553,15 +579,15 @@ impl<'a> TypecheckContext<'a> {
         match expr {
             ExprKind::IntLit(_) => Ok((
                 Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types[INT]),
+                Ty::new_literal(TyKind::Concrete(self.symbols.intrinsic_types[INT])),
             )),
             ExprKind::RealLit { .. } => Ok((
                 Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types[REAL]),
+                Ty::new_literal(TyKind::Concrete(self.symbols.intrinsic_types[REAL])),
             )),
             ExprKind::StringLit(_) => Ok((
                 Substitution::new(),
-                Ty::Concrete(self.symbols.intrinsic_types[STRING]),
+                Ty::new_literal(TyKind::Concrete(self.symbols.intrinsic_types[STRING])),
             )),
 
             ExprKind::Symbol { name } => {
@@ -588,14 +614,22 @@ impl<'a> TypecheckContext<'a> {
                 let mut types = Vec::new();
                 let mut current_env = env.clone();
 
+                let mut is_literal = true;
                 for elem in elements {
                     let (s, t) = self.algo_w(&mut current_env, elem)?;
                     subst = subst.compose(&s);
                     current_env = subst.apply_env(&current_env);
-                    types.push(subst.apply(&t));
+                    let t = subst.apply(&t);
+                    is_literal = is_literal && t.literal;
+                    types.push(t);
                 }
 
-                Ok((subst, Ty::Tuple(types)))
+                let ty = Ty {
+                    kind: TyKind::Tuple(types.clone()),
+                    literal: is_literal,
+                };
+
+                Ok((subst, ty))
             }
 
             ExprKind::ListLit(elements) => {
@@ -603,7 +637,10 @@ impl<'a> TypecheckContext<'a> {
                     let elem_type = self.fresh_type_var();
                     Ok((
                         Substitution::new(),
-                        Ty::Ctor(self.symbols.intrinsic_types[LIST], vec![elem_type]),
+                        Ty::new_literal(TyKind::Ctor(
+                            self.symbols.intrinsic_types[LIST],
+                            vec![elem_type],
+                        )),
                     ))
                 } else {
                     let (s1, t1) = self.algo_w(env, &mut elements[0])?;
@@ -611,6 +648,7 @@ impl<'a> TypecheckContext<'a> {
                     let mut current_env = subst.apply_env(env);
                     let mut elem_type = subst.apply(&t1);
 
+                    let mut is_literal = true;
                     for elem in elements.iter_mut().skip(1) {
                         let (s, t) = self.algo_w(&mut current_env, elem)?;
                         let s2 = self.unify(&subst.apply(&elem_type), &s.apply(&t));
@@ -622,12 +660,17 @@ impl<'a> TypecheckContext<'a> {
                         subst = subst.compose(&s).compose(&s2);
                         current_env = subst.apply_env(&current_env);
                         elem_type = subst.apply(&elem_type);
+
+                        is_literal = is_literal && elem_type.literal;
                     }
 
-                    Ok((
-                        subst,
-                        Ty::Ctor(self.symbols.intrinsic_types[LIST], vec![elem_type]),
-                    ))
+                    let mut ty = Ty::new(TyKind::Ctor(
+                        self.symbols.intrinsic_types[LIST],
+                        vec![elem_type],
+                    ));
+                    ty.literal = is_literal;
+
+                    Ok((subst, ty))
                 }
             }
 
@@ -650,7 +693,8 @@ impl<'a> TypecheckContext<'a> {
                 let mut expected_fn_type = return_type.clone();
 
                 for arg_type in arg_types.into_iter().rev() {
-                    expected_fn_type = Ty::Fn(Box::new(arg_type), Box::new(expected_fn_type));
+                    expected_fn_type =
+                        Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(expected_fn_type)));
                 }
 
                 let s_unify = self.unify(&subst.apply(&callee_type), &expected_fn_type);
@@ -658,12 +702,13 @@ impl<'a> TypecheckContext<'a> {
                     s_unify,
                     node.span,
                     Some((
-                        format!("Function argument types do not match function signature - tried to equate $1 and {}", expected_fn_type.render(self)),
+                        format!("Function argument types do not match function signature - tried to equate {} and {}", callee_type.render(self), expected_fn_type.render(self)),
                         vec![],
                     )),
                 )?;
                 let final_subst = subst.compose(&s_unify);
                 let final_return_type = s_unify.apply(&return_type);
+                let final_fn_type = final_subst.apply(&callee_type);
 
                 if final_return_type.free_type_vars().len() == 0
                     && let Some(callee_id) = callee.symbol_id
@@ -671,12 +716,11 @@ impl<'a> TypecheckContext<'a> {
                     //monotype, check monormorphisation table
                     if let Some(existing_id) = self
                         .fn_instantiation_ids
-                        .get(&(callee_id, final_subst.apply(&callee_type).clone()))
+                        .get(&(callee_id, final_fn_type.clone()))
                     {
                         node.symbol_id = Some(*existing_id);
                     } else {
-                        let new_symbol_id = self
-                            .register_monomorphised_fn(callee, &final_subst.apply(&callee_type));
+                        let new_symbol_id = self.register_monomorphised_fn(callee, &final_fn_type);
                         node.symbol_id = Some(new_symbol_id);
                     }
                 }
@@ -690,67 +734,62 @@ impl<'a> TypecheckContext<'a> {
                 let (s2, t2) = self.algo_w(&mut env1, right)?;
                 let s3 = s1.compose(&s2);
 
-                use crate::ast::BinaryOp::*;
-                match op {
-                    Add | Subtract | Multiply | Divide | Modulus | Exponent => {
-                        let s4 = self.unify(&s3.apply(&t1), &s3.apply(&t2));
-                        let s4 = self.bind_err_ctx(
-                            s4,
-                            node.span,
-                            Some((
-                                    "Operands of arithmetic operations must be of the same type - tried to equate $1 and $2.".into(),
-                                    vec![]
-                            )),
-                        )?;
-                        let final_subst = s3.compose(&s4);
-                        Ok((final_subst, s4.apply(&s3.apply(&t1))))
+                let left_type = s3.apply(&t1);
+                let right_type = s3.apply(&t2);
+
+                let op_map = self.accepting_binops.get(op);
+                if op_map.is_none() {
+                    self.bind_err_ctx(
+                        Err(TypeError {
+                            kind: TypeErrorKind::UnificationFail,
+                            types: vec![left_type, right_type],
+                            hints: vec![format!("Binary operator {:?} is not supported", op)],
+                        }),
+                        node.span,
+                        Some((format!("Unsupported binary operator {:?}", op), vec![])),
+                    )?;
+                    return Err(());
+                }
+                let op_map = op_map.unwrap();
+
+                if let Some(result_type) = op_map.get(&(left_type.clone(), right_type.clone())) {
+                    Ok((s3, result_type.clone()))
+                } else {
+                    let allowed_combinations: Vec<_> = op_map
+                        .iter()
+                        .map(|((l, r), result)| (l.clone(), r.clone(), result.clone()))
+                        .collect();
+
+                    let mut found_result = None;
+
+                    for (allowed_left, allowed_right, result_type) in allowed_combinations {
+                        if let Ok(s4) = self.unify(&left_type, &allowed_left) {
+                            if let Ok(s5) =
+                                self.unify(&s4.apply(&right_type), &s4.apply(&allowed_right))
+                            {
+                                let final_subst = s3.compose(&s4).compose(&s5);
+                                found_result = Some((final_subst, result_type));
+                                break;
+                            }
+                        }
                     }
-                    Equal | NotEqual | LessThan | LessThanEquiv | GreaterThan
-                    | GreaterThanEquiv => {
-                        let s4 = self.unify(&s3.apply(&t1), &s3.apply(&t2));
-                        let s4 = self.bind_err_ctx(
-                            s4,
+
+                    if let Some((final_subst, result_type)) = found_result {
+                        Ok((final_subst, result_type))
+                    } else {
+                        self.bind_err_ctx(
+                            Err(TypeError {
+                                kind: TypeErrorKind::UnificationFail,
+                                types: vec![left_type.clone(), right_type.clone()],
+                                hints: vec![],
+                            }),
                             node.span,
                             Some((
-                                "Operands of comparison operations must be of the same type - tried to equate $1 and $2.".into(),
+                                format!("Binary op '{}' is not valid for operands of types '{}' and '{}'", op, left_type.render(self), right_type.render(self)),
                                 vec![],
                             )),
                         )?;
-                        let final_subst = s3.compose(&s4);
-                        Ok((final_subst, self.fresh_type_var()))
-                    }
-                    And | Or => {
-                        let bool_type = self.fresh_type_var();
-                        let s4 = self.unify(&s3.apply(&t1), &bool_type);
-                        let s4 = self.bind_err_ctx(
-                            s4,
-                            node.span,
-                            Some((
-                                "Left operand of logical operation must be boolean".into(),
-                                vec![],
-                            )),
-                        )?;
-                        let s5 = self.unify(&s4.apply(&s3.apply(&t2)), &s4.apply(&bool_type));
-                        let s5 = self.bind_err_ctx(
-                            s5,
-                            node.span,
-                            Some((
-                                "Right operand of logical operation must be boolean".into(),
-                                vec![],
-                            )),
-                        )?;
-                        let final_subst = s3.compose(&s4).compose(&s5);
-                        Ok((final_subst, s5.apply(&s4.apply(&bool_type))))
-                    }
-                    _ => {
-                        let s4 = self.unify(&s3.apply(&t1), &s3.apply(&t2));
-                        let s4 = self.bind_err_ctx(
-                            s4,
-                            node.span,
-                            Some(("Operands must be of the same type".into(), vec![])),
-                        )?;
-                        let final_subst = s3.compose(&s4);
-                        Ok((final_subst, s4.apply(&s3.apply(&t1))))
+                        unreachable!()
                     }
                 }
             }
@@ -785,7 +824,17 @@ impl<'a> TypecheckContext<'a> {
                     )?;
                     let final_subst = s1.compose(&s2);
 
-                    (final_subst, s2.apply(&t1))
+                    let nocrypt = matches!(declared_type.kind, TyKind::Nocrypt(_));
+                    let t1 = if nocrypt {
+                        Ty {
+                            kind: TyKind::Nocrypt(Box::new(s2.apply(&t1))),
+                            literal: s2.apply(&t1).literal,
+                        }
+                    } else {
+                        s2.apply(&t1)
+                    };
+
+                    (final_subst, t1)
                     //(
                     //final_subst,
                     //Ty::Concrete(self.symbols.intrinsic_types[VOID]),
@@ -801,9 +850,18 @@ impl<'a> TypecheckContext<'a> {
                     .unwrap_or(Err(()))
                     .expect("Let binding without symbol id");
 
-                env.insert(symbol_id, Scheme::generalise(&env, &result.1));
+                env.insert(
+                    symbol_id,
+                    Scheme {
+                        bound_vars: vec![],
+                        body: result.1.clone(),
+                    },
+                );
 
-                Ok((result.0, Ty::Concrete(self.symbols.intrinsic_types[VOID])))
+                Ok((
+                    result.0,
+                    Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
+                ))
             }
 
             ExprKind::IfElse {
@@ -840,12 +898,30 @@ impl<'a> TypecheckContext<'a> {
                     let mut subst = Substitution::new();
                     let mut current_env = env.clone();
                     let mut last_type = self.fresh_type_var();
+                    let mut let_bound_vars = Vec::new();
 
                     for stmt in statements {
+                        if let NodeKind::Expr {
+                            expr: ExprKind::LetBinding { symbols, .. },
+                        } = &stmt.kind
+                        {
+                            if let Some(symbol_id) = symbols.symbol_id {
+                                let_bound_vars.push(symbol_id);
+                            }
+                        }
+
                         let (s, t) = self.algo_w(&mut current_env, stmt)?;
                         subst = subst.compose(&s);
                         current_env = subst.apply_env(&current_env);
                         last_type = subst.apply(&t);
+                    }
+
+                    //generalising bindings at end of block
+                    for symbol_id in let_bound_vars {
+                        if let Some(scheme) = current_env.get(&symbol_id) {
+                            let generalized_scheme = Scheme::generalise(&current_env, &scheme.body);
+                            current_env.insert(symbol_id, generalized_scheme);
+                        }
                     }
 
                     self.debug_type_env("Type env at end of block".into(), &current_env);
@@ -908,10 +984,10 @@ impl<'a> TypecheckContext<'a> {
 
                 let mut fn_type = final_return_type.1;
                 for arg_type in arg_types.into_iter().rev() {
-                    fn_type = Ty::Fn(
+                    fn_type = Ty::new(TyKind::Fn(
                         Box::new(final_return_type.0.apply(&arg_type)),
                         Box::new(fn_type),
-                    );
+                    ));
                 }
 
                 Ok((final_return_type.0, fn_type))
@@ -962,6 +1038,7 @@ impl<'a> TypecheckContext<'a> {
     fn initialise_type_env(&mut self) {
         //add intrinsics
         self.type_env = create_intrinsic_type_env(self.symbols, &mut self.type_var_counter);
+        self.accepting_binops = create_intrinsic_binops(self.symbols, &self.type_env);
     }
 
     fn type_from_node(&mut self, node: &Node) -> Result<Ty, ()> {
@@ -974,7 +1051,7 @@ impl<'a> TypecheckContext<'a> {
             } => {
                 let ok = |a| {
                     if *nocrypt {
-                        Ok(Ty::Nocrypt(Box::new(a)))
+                        Ok(Ty::new(TyKind::Nocrypt(Box::new(a))))
                     } else {
                         Ok(a)
                     }
@@ -994,13 +1071,13 @@ impl<'a> TypecheckContext<'a> {
                             return ok(self.fresh_type_var());
                         }
 
-                        ok(Ty::Concrete(symbol_id))
+                        ok(Ty::new(TyKind::Concrete(symbol_id)))
                     } else {
                         let mut args = Vec::new();
                         for type_var in type_vars {
                             args.push(self.type_from_node(type_var)?);
                         }
-                        ok(Ty::Ctor(symbol_id, args))
+                        ok(Ty::new(TyKind::Ctor(symbol_id, args)))
                     }
                 } else {
                     self.errors.push(Diagnostic::new(DiagnosticMsg {
@@ -1029,7 +1106,7 @@ impl<'a> TypecheckContext<'a> {
 
                 let mut fn_type = ret_type;
                 for arg_type in arg_types.into_iter().rev() {
-                    fn_type = Ty::Fn(Box::new(arg_type), Box::new(fn_type));
+                    fn_type = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
                 }
 
                 Ok(fn_type)
@@ -1039,7 +1116,7 @@ impl<'a> TypecheckContext<'a> {
                 for elem in elements {
                     types.push(self.type_from_node(elem)?);
                 }
-                Ok(Ty::Tuple(types))
+                Ok(Ty::new(TyKind::Tuple(types)))
             }
             _ => {
                 self.errors.push(Diagnostic::new(DiagnosticMsg {
@@ -1087,6 +1164,18 @@ impl<'a> TypecheckContext<'a> {
                         self.register_monomorphised_fn(node, ty);
                         //monomorphisations of parametric functions will occur at call sites
                     }
+
+                    //check for prior decl, if exists, unify
+                    let scheme = if let Some(existing_scheme) = env.get(&symbol_id) {
+                        let s = self
+                            .unify(&existing_scheme.body, ty)
+                            .expect("Failed to unify function declaration with prior declaration");
+                        let new_type = s.apply(ty);
+                        Scheme::generalise(env, &new_type)
+                    } else {
+                        scheme
+                    };
+
                     env.insert(symbol_id, scheme.clone());
                     self.type_env.insert(symbol_id, scheme);
                 }
@@ -1129,8 +1218,8 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn occurs(&mut self, a: TypeVar, t: &Ty) -> bool {
-        use Ty::*;
-        match t {
+        use TyKind::*;
+        match &t.kind {
             Var(b) => a == *b,
             Fn(arg, ret) => self.occurs(a, arg) || self.occurs(a, ret),
             Ctor(_, args) | Tuple(args) => args.iter().any(|arg| self.occurs(a, arg)),
@@ -1140,7 +1229,7 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn bind(&mut self, a: TypeVar, t: &Ty) -> Result<Substitution, TypeError> {
-        if let Ty::Var(b) = t
+        if let TyKind::Var(b) = &t.kind
             && *b == a
         {
             return Ok(Substitution::new());
@@ -1149,7 +1238,7 @@ impl<'a> TypecheckContext<'a> {
         if self.occurs(a, t) {
             return Err(TypeError {
                 kind: TypeErrorKind::InfiniteType,
-                types: vec![Ty::Var(a), t.clone()],
+                types: vec![Ty::new(TyKind::Var(a)), t.clone()],
                 hints: vec![],
             });
         }
@@ -1161,8 +1250,8 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn unify(&mut self, t1: &Ty, t2: &Ty) -> Result<Substitution, TypeError> {
-        use Ty::*;
-        match (t1, t2) {
+        use TyKind::*;
+        match (&t1.kind, &t2.kind) {
             (a, b) if a == b => Ok(Substitution::new()),
 
             (Var(a), Var(b)) if a == b => Ok(Substitution::new()),
@@ -1177,7 +1266,9 @@ impl<'a> TypecheckContext<'a> {
                 Ok(s1.compose(&s2))
             }
 
-            (Nocrypt(a), Nocrypt(b)) => self.unify(a, b),
+            (Nocrypt(a), Nocrypt(b)) =>  self.unify(a, b),
+            (Nocrypt(a), _) if t2.nocryptable() => self.unify(a, t2),
+            (_, Nocrypt(b)) if t1.nocryptable() => self.unify(t1, b),
             (Nocrypt(_), _) | (_, Nocrypt(_)) => Err(TypeError {
                 kind: TypeErrorKind::UnificationFail,
                 types: vec![t1.clone(), t2.clone()],
@@ -1225,9 +1316,23 @@ impl<'a> TypecheckContext<'a> {
 }
 
 impl Ty {
+    pub fn new(kind: TyKind) -> Self {
+        Ty {
+            kind,
+            literal: false,
+        }
+    }
+
+    pub fn new_literal(kind: TyKind) -> Self {
+        Ty {
+            kind,
+            literal: true,
+        }
+    }
+
     fn free_type_vars(&self) -> HashSet<TypeVar> {
-        use Ty::*;
-        match self {
+        use TyKind::*;
+        match &self.kind {
             Var(a) => {
                 let mut set = HashSet::new();
                 set.insert(*a);
@@ -1273,17 +1378,31 @@ impl Ty {
         set
     }
 
+    fn nocryptable(&self) -> bool {
+        use TyKind::*;
+        match &self.kind {
+            Nocrypt(_) => true,
+            Var(_) | Concrete(_) => self.literal,
+            Fn(arg, ret) => arg.nocryptable() && ret.nocryptable(),
+            Tuple(types) => types.iter().all(|ty| ty.nocryptable()),
+            Ctor(_, args) => args.iter().all(|arg| arg.nocryptable()),
+        }
+    }
+
     fn render(&self, ctx: &TypecheckContext) -> String {
-        use Ty::*;
-        match self {
-            Var(a) => format!("t{}", a),
+        use TyKind::*;
+        match &self.kind {
+            Var(a) => format!("T{}", a),
             Concrete(id) => ctx
                 .symbols
                 .intrinsic_types
                 .iter()
                 .find(|(_, sym_id)| *sym_id == id)
                 .map_or("<unknown>".to_string(), |(name, _)| name.clone()),
-            Fn(arg, ret) => format!("({} -> {})", arg.render(ctx), ret.render(ctx)),
+            Fn(_, _) => {
+                let (args, ret) = self.render_curried_fn(ctx, &self, String::new());
+                format!("({}) -> {}", args, ret)
+            }
             Tuple(types) => {
                 let elems: Vec<String> = types.iter().map(|ty| ty.render(ctx)).collect();
                 format!("({})", elems.join(", "))
@@ -1301,6 +1420,30 @@ impl Ty {
                         .unwrap_or("<unknown>".to_string()),
                     args_str.join(", ")
                 )
+            }
+        }
+    }
+
+    fn render_curried_fn(
+        &self,
+        ctx: &TypecheckContext,
+        next: &Ty,
+        arg_buf: String,
+    ) -> (String, String) {
+        use TyKind::*;
+        match &next.kind {
+            Fn(arg, ret) => {
+                let arg_str = arg.render(ctx);
+                let new_arg_buf = if arg_buf.is_empty() {
+                    arg_str
+                } else {
+                    format!("{}, {}", arg_buf, arg_str)
+                };
+                self.render_curried_fn(ctx, ret, new_arg_buf)
+            }
+            _ => {
+                let ret_str = next.render(ctx);
+                (arg_buf, ret_str)
             }
         }
     }
@@ -1345,24 +1488,24 @@ impl Substitution {
     }
 
     fn apply(&self, t: &Ty) -> Ty {
-        use Ty::*;
-        match t {
-            Var(a) => self.0.get(a).cloned().unwrap_or(Var(*a)),
+        use TyKind::*;
+        match &t.kind {
+            Var(a) => self.0.get(a).cloned().unwrap_or(Ty::new(Var(*a))),
             Fn(arg, ret) => {
                 let new_arg = self.apply(arg);
                 let new_ret = self.apply(ret);
-                Fn(Box::new(new_arg), Box::new(new_ret))
+                Ty::new(Fn(Box::new(new_arg), Box::new(new_ret)))
             }
             Tuple(types) => {
                 let new_types = types.iter().map(|ty| self.apply(ty)).collect();
-                Tuple(new_types)
+                Ty::new(Tuple(new_types))
             }
             Ctor(name, args) => {
                 let new_args = args.iter().map(|arg| self.apply(arg)).collect();
-                Ctor(*name, new_args)
+                Ty::new(Ctor(*name, new_args))
             }
             Concrete(_) => t.clone(),
-            Nocrypt(t) => Nocrypt(Box::new(self.apply(t))),
+            Nocrypt(t) => Ty::new(Nocrypt(Box::new(self.apply(t)))),
         }
     }
 
@@ -1387,6 +1530,15 @@ impl Substitution {
             .map(|(k, v)| (*k, self.apply_scheme(v)))
             .collect()
     }
+
+    #[allow(dead_code)]
+    fn render(&self, ctx: &TypecheckContext) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for (var, ty) in &self.0 {
+            parts.push(format!("T{} => {}", var, ty.render(ctx)));
+        }
+        format!("{{{}}}", parts.join(", "))
+    }
 }
 
 pub fn fresh_type_var_id(counter: &mut TypeVar) -> TypeVar {
@@ -1396,5 +1548,5 @@ pub fn fresh_type_var_id(counter: &mut TypeVar) -> TypeVar {
 }
 
 pub fn fresh_type_var(counter: &mut TypeVar) -> Ty {
-    Ty::Var(fresh_type_var_id(counter))
+    Ty::new(TyKind::Var(fresh_type_var_id(counter)))
 }
