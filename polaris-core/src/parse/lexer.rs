@@ -379,10 +379,18 @@ impl Lexer {
                         }
                     }
                 }
-                '&' | '|' | '*' => {
+                '&' | '*' => {
                     self.advance();
                     if let Some(next_char) = self.current_char {
                         if next_char == c {
+                            self.advance();
+                        }
+                    }
+                }
+                '|' => {
+                    self.advance();
+                    if let Some(next_char) = self.current_char {
+                        if next_char == '|' || next_char == '>' {
                             self.advance();
                         }
                     }
@@ -422,6 +430,7 @@ impl Lexer {
                 "!=" => TokenVariant::NotEquiv,
                 "<" => TokenVariant::LessThan,
                 "<=" => TokenVariant::LessThanEquiv,
+                "|>" => TokenVariant::Pipeline,
                 ">" => TokenVariant::GreaterThan,
                 ">=" => TokenVariant::GreaterThanEquiv,
                 "&" => TokenVariant::BitAnd,

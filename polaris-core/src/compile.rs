@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::desugar::desugar_pass;
 use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
 use crate::parse::parse;
 use crate::symbol::{SymbolContext, symbol_pass};
@@ -48,6 +49,7 @@ impl CompileContext {
             errors: Vec::new(),
             warnings: Vec::new(),
             passes: vec![
+                ("Desugaring", desugar_pass),
                 ("Symbol resolution", symbol_pass),
                 ("Dependencies", dependency_pass),
                 ("Typechecking", typecheck_pass),

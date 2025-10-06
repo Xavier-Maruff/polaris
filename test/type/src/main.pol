@@ -15,5 +15,7 @@ pub fn main() {
     let b = "test"
     let a: nocrypt String = b
     check_inference(a)
+    a |> check_inference()
+    a |> check_inference
     check_inference("test")
 }
