@@ -28,8 +28,6 @@ impl DesugarContext {
                     failed = true;
                 }
             }
-
-            println!("AST: {:#?}", module.ast);
         }
 
         if failed { Err(()) } else { Ok(()) }
