@@ -1,4 +1,13 @@
-# <img width="30" height="30" alt="Polaris Logo" src="https://github.com/user-attachments/assets/5ab29a5f-3a68-4bbb-bfea-3eaaee8eba6b" /> Polaris
+<br/>
+<div align="center">
+  <a href="https://github.com/github_username/repo_name">
+    <img width="80" height="80" alt="Polaris Logo" src="https://github.com/user-attachments/assets/81e1bc3f-032d-48a0-bdea-7b68786ce0d3" />
+  </a>
+
+<h1 align="center">Polaris</h1>
+<div align="center">Encryption-oriented programming</div>
+</div>
+<br/><br/>
 
 > [!CAUTION]
 > Polaris is a work in progress, and is not yet even capable of codegen. Watch this space for updates!
