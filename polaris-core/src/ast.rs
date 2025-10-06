@@ -34,7 +34,7 @@ pub enum NodeKind {
     TypeDecl {
         public: bool,
         symbol: String,
-        type_vars: Vec<String>,
+        type_vars: Vec<(String, Option<SymbolId>, CodeSpan)>,
         variants: Vec<Node>,
     },
     TypeConstructor {
@@ -237,7 +237,11 @@ impl NodeKind {
             } => format!(
                 "type {}({}) {{\n{}\n}}",
                 symbol,
-                type_vars.join(", "),
+                type_vars
+                    .iter()
+                    .map(|a| a.0.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 variants
                     .iter()
                     .map(|v| format!("  {}", v.render(symbols)))

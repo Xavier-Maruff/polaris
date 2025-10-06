@@ -4,6 +4,10 @@ type Check(a) {
    Ctor2
 }
 
+type Other {
+   Check(a: Check(I32))
+}
+
 
 pub fn check_inference(arg) {
     let b = Ok(12)
@@ -12,10 +16,10 @@ pub fn check_inference(arg) {
 }
 
 pub fn main() {
-    let b = "test"
+    let b: nocrypt String = "test"
     let a: nocrypt String = b
-    check_inference(a)
-    a |> check_inference()
     a |> check_inference
-    check_inference("test")
+
+    let c = Ctor1(12)
+    a == c
 }

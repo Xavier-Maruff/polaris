@@ -1255,7 +1255,11 @@ impl<'a> ParseContext<'a> {
         if matches!(self.curr_tok.variant, TokenVariant::LParen) {
             wrap_err!(node, self.advance(lexer));
             while !matches!(self.curr_tok.variant, TokenVariant::RParen) {
-                type_vars.push(self.parse_ident(node, lexer, false)?);
+                type_vars.push((
+                    self.parse_ident(node, lexer, false)?,
+                    None,
+                    self.prev_tok.span,
+                ));
                 if matches!(self.curr_tok.variant, TokenVariant::Comma) {
                     wrap_err!(node, self.advance(lexer));
                 } else {
@@ -1296,7 +1300,7 @@ impl<'a> ParseContext<'a> {
         is_pub: bool,
         start_span: usize,
         symbol: String,
-        type_vars: Vec<String>,
+        type_vars: Vec<(String, Option<usize>, CodeSpan)>,
     ) -> Result<Node, ()> {
         wrap_err!(node, self.expect(lexer, TokenVariant::LBrace));
 
@@ -1369,7 +1373,7 @@ impl<'a> ParseContext<'a> {
         is_pub: bool,
         start_span: usize,
         symbol: String,
-        type_vars: Vec<String>,
+        type_vars: Vec<(String, Option<usize>, CodeSpan)>,
     ) -> Result<Node, ()> {
         wrap_err!(node, self.expect(lexer, TokenVariant::Assign));
         let actual = Box::new(self.parse_type(node, lexer)?);
@@ -1381,7 +1385,7 @@ impl<'a> ParseContext<'a> {
                     NodeKind::Type {
                         parent_module: None,
                         nocrypt: false,
-                        symbol: s.clone(),
+                        symbol: s.0.clone(),
                         type_vars: vec![],
                     },
                     CodeSpan {

@@ -231,17 +231,67 @@ impl<'a> TypecheckContext<'a> {
             NodeKind::Module { .. } => self.algo_w_module(env, node, true),
             NodeKind::ConstDecl { .. } => self.algo_w_const_decl(env, node),
 
-            //todo
-            NodeKind::TypeDecl { .. } => Ok((
-                Substitution::new(),
-                Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
-            )),
+            // NodeKind::TypeDecl { .. } => Ok((
+            //     Substitution::new(),
+            //     Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
+            // )),
+            // NodeKind::TypeAlias { .. } => Ok((
+            //     Substitution::new(),
+            //     Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
+            // )),
 
-            //todo
-            NodeKind::TypeAlias { .. } => Ok((
-                Substitution::new(),
-                Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
-            )),
+            //todo: type decls / alias + constructors
+            NodeKind::TypeDecl {
+                symbol,
+                type_vars,
+                variants,
+                ..
+            } => {
+                //register the symbol type vars as type vars
+                for type_var in type_vars {
+                    let var = self.fresh_type_var();
+                    self.type_env.insert(
+                        type_var.1.unwrap(),
+                        Scheme {
+                            bound_vars: vec![],
+                            body: var,
+                        },
+                    );
+                }
+
+                //register actual type
+                let type_id = node.symbol_id.unwrap();
+                self.symbols.symbol_names.insert(type_id, symbol.clone());
+                self.type_env.insert(
+                    type_id,
+                    Scheme {
+                        //bound_vars: type_vars.iter().map(|(_, id, _)| id.unwrap()).collect(),
+                        bound_vars: vec![],
+                        //did this for the intrinsics as well, maybe should
+                        //actually be a fresh type var?
+                        //i feel like it maybe doesn't matter either way as long as no collisions?
+                        body: Ty::new(TyKind::Concrete(type_id)),
+                    },
+                );
+
+                //register constructors
+                for variant in variants {
+                    //variant is Node kind TypeConstructor, fields Vec<(Option<String>, Node)> optionall named
+                    //meaning at invocation ordering is optional
+                    //atm going to ignore that, and just go positional
+
+                    //constructor types are just fn args -> type, just going to build out funciton type
+                    //and then add_declaration_to_env
+
+                    let mut ctor_type = Ty::new(TyKind::Concrete(type_id));
+                }
+
+                //all env mods are global, returning null subst and void type
+                Ok((
+                    Substitution::new(),
+                    Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
+                ))
+            }
 
             //not doing full algo_w for fn decls at top level, instead just getting generic types
             NodeKind::FnDecl {
@@ -805,7 +855,7 @@ impl<'a> TypecheckContext<'a> {
                 symbols,
                 ..
             } => {
-                let (s1, t1) = self.algo_w(env, value_expr)?;
+                let (s1, mut t1) = self.algo_w(env, value_expr)?;
 
                 let result = if let Some(type_node) = symbol_type {
                     let declared_type = self.type_from_node(type_node)?;
@@ -825,23 +875,22 @@ impl<'a> TypecheckContext<'a> {
                     let final_subst = s1.compose(&s2);
 
                     let nocrypt = matches!(declared_type.kind, TyKind::Nocrypt(_));
+                    let mut t1 = s2.apply(&t1);
+                    t1.literal = false;
+
                     let t1 = if nocrypt {
                         Ty {
-                            kind: TyKind::Nocrypt(Box::new(s2.apply(&t1))),
-                            literal: s2.apply(&t1).literal,
+                            kind: TyKind::Nocrypt(Box::new(t1)),
+                            literal: false,
                         }
                     } else {
-                        s2.apply(&t1)
+                        t1
                     };
 
                     (final_subst, t1)
-                    //(
-                    //final_subst,
-                    //Ty::Concrete(self.symbols.intrinsic_types[VOID]),
-                    //)
                 } else {
+                    t1.literal = false;
                     (s1, t1)
-                    //(s1, Ty::Concrete(self.symbols.intrinsic_types[VOID]))
                 };
 
                 let symbol_id = symbols
@@ -910,10 +959,11 @@ impl<'a> TypecheckContext<'a> {
                             }
                         }
 
-                        let (s, t) = self.algo_w(&mut current_env, stmt)?;
-                        subst = subst.compose(&s);
-                        current_env = subst.apply_env(&current_env);
-                        last_type = subst.apply(&t);
+                        if let Ok((s, t)) = self.algo_w(&mut current_env, stmt) {
+                            subst = subst.compose(&s);
+                            current_env = subst.apply_env(&current_env);
+                            last_type = subst.apply(&t);
+                        }
                     }
 
                     //generalising bindings at end of block
@@ -1395,10 +1445,10 @@ impl Ty {
             Var(a) => format!("T{}", a),
             Concrete(id) => ctx
                 .symbols
-                .intrinsic_types
-                .iter()
-                .find(|(_, sym_id)| *sym_id == id)
-                .map_or("<unknown>".to_string(), |(name, _)| name.clone()),
+                .symbol_names
+                .get(id)
+                .cloned()
+                .unwrap_or("<unknown>".to_string()),
             Fn(_, _) => {
                 let (args, ret) = self.render_curried_fn(ctx, &self, String::new());
                 format!("({}) -> {}", args, ret)

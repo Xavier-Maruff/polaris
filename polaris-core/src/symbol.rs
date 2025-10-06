@@ -870,6 +870,7 @@ impl SymbolPassContext {
                 symbol,
                 public,
                 variants,
+                type_vars,
                 ..
             } => {
                 //declare type
@@ -881,6 +882,25 @@ impl SymbolPassContext {
                         .entry(module_name.to_string())
                         .or_insert_with(HashMap::new)
                         .insert(symbol.clone(), symbol_id);
+                }
+
+                //rewriting type vars in type decl to be globally unique, avoiding the scoping issue
+                // a -> a$TypeName
+                //should be fine - if there were an issue, there must be a user-land double decl of the whole type
+
+                let scoped_type_var = |a: &(String, Option<SymbolId>, CodeSpan)| {
+                    (a.0.clone(), a.0.clone() + "$" + symbol.as_str())
+                };
+                let symbol_map = type_vars.iter().map(scoped_type_var).collect();
+
+                for variant in variants.iter_mut() {
+                    self.rewrite_symbols(&symbol_map, variant);
+                }
+
+                for ty_var in type_vars.iter_mut() {
+                    ty_var.0 = scoped_type_var(&ty_var).1;
+                    ty_var.1 =
+                        Some(self.declare_symbol(ty_var.2, ty_var.0.clone(), true, false, None));
                 }
 
                 if !variants.is_empty() {
@@ -914,6 +934,74 @@ impl SymbolPassContext {
                 }
             }
 
+            _ => {}
+        }
+    }
+
+    fn rewrite_symbols(&mut self, map: &HashMap<String, String>, node: &mut Node) {
+        match &mut node.kind {
+            NodeKind::TypeDecl {
+                symbol,
+                type_vars,
+                variants,
+                ..
+            } => {
+                if let Some(new_name) = map.get(symbol) {
+                    *symbol = new_name.clone();
+                }
+
+                for ty_var in type_vars.iter_mut() {
+                    if let Some(new_name) = map.get(&ty_var.0) {
+                        ty_var.0 = new_name.clone();
+                    }
+                }
+
+                for variant in variants {
+                    self.rewrite_symbols(map, variant);
+                }
+            }
+
+            NodeKind::TypeConstructor { symbol, fields } => {
+                if let Some(new_name) = map.get(symbol) {
+                    *symbol = new_name.clone();
+                }
+
+                for (_, ty, _) in fields {
+                    self.rewrite_symbols(map, ty);
+                }
+            }
+
+            NodeKind::Type {
+                parent_module,
+                symbol,
+                type_vars,
+                ..
+            } => {
+                if let Some(new_name) = map.get(symbol) {
+                    *symbol = new_name.clone();
+                }
+
+                for ty in type_vars {
+                    self.rewrite_symbols(map, ty);
+                }
+
+                //if parent module is being renamed, it must be an import alias
+                if let Some(parent_module) = parent_module {
+                    if let Some(new_name) = map.get(parent_module) {
+                        *parent_module = new_name.clone();
+                    }
+                }
+            }
+
+            NodeKind::Expr {
+                expr: ExprKind::Symbol { name },
+            } => {
+                if let Some(new_name) = map.get(name) {
+                    *name = new_name.clone();
+                }
+            }
+
+            //not implementing all for the moment, only needed
             _ => {}
         }
     }
