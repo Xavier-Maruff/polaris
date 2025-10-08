@@ -61,6 +61,7 @@ pub enum NodeKind {
         host: bool,
         symbol: String,
         return_type: Option<Box<Node>>,
+        // (symbol, optional type, span)
         args: Vec<(Box<Node>, Option<Box<Node>>, CodeSpan)>,
         expr: Option<Box<Node>>,
     },

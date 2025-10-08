@@ -55,11 +55,11 @@ macro_rules! wrap_err {
     };
 
     //add optional hint
-    ($ast:ident, $s:expr, $hint:expr) => {
+    ($ast:ident, $s:expr, $($hint:expr),*) => {
         match $s {
             Ok(ret) => ret,
             Err(mut err) => {
-                err.hints.push($hint.to_string());
+                $( err.hints.push($hint.to_string()); )*
                 $ast.add_error(err);
                 return Err(());
             }
@@ -907,7 +907,11 @@ impl<'a> ParseContext<'a> {
                         let start_span = self.curr_tok.span.start;
                         let name = if named_args {
                             let name = self.parse_ident(node, lexer, false)?;
-                            wrap_err!(node, self.expect(lexer, TokenVariant::Colon));
+                            wrap_err!(
+                                node,
+                                self.expect(lexer, TokenVariant::Colon),
+                                "If you use a named argument, all arguments must then be named."
+                            );
                             Some(name)
                         } else {
                             None
@@ -919,7 +923,9 @@ impl<'a> ParseContext<'a> {
                                 self.curr_tok.variant,
                                 TokenVariant::Comma | TokenVariant::RParen
                             ) {
-                                wrap_err!(node, self.advance(lexer));
+                                // if matches!(self.curr_tok.variant, TokenVariant::Comma) {
+                                //     wrap_err!(node, self.advance(lexer));
+                                // }
                                 args.push((
                                     name.clone(),
                                     Node::new(
@@ -931,6 +937,8 @@ impl<'a> ParseContext<'a> {
                                         CodeSpan::new(start_span, self.prev_tok.span.end),
                                     ),
                                 ));
+                            } else {
+                                args.push((name, self.parse_expr(node, lexer)?));
                             }
                         } else {
                             args.push((name, self.parse_expr(node, lexer)?));

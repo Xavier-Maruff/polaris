@@ -36,6 +36,8 @@ struct TypecheckContext<'a> {
     //this seems like a shit approach
     ///reverse mapping (original func id, instantiated type) -> new func id
     fn_instantiation_ids: HashMap<(SymbolId, Ty), SymbolId>,
+    //track function argument labelling for call-time arg reordering
+    fn_arg_labels: HashMap<SymbolId, Vec<String>>,
 }
 
 pub type TypeVar = usize;
@@ -96,6 +98,7 @@ impl<'a> TypecheckContext<'a> {
             current_file: String::new(),
             monomorphised_fns: HashMap::new(),
             fn_instantiation_ids: HashMap::new(),
+            fn_arg_labels: HashMap::new(),
         }
     }
 
@@ -205,6 +208,28 @@ impl<'a> TypecheckContext<'a> {
             }
         }
 
+        println!("\nFunction argument labels:");
+        println!("\n| {:<32} | {:<64} |", " Function ", " Arg Labels ");
+        println!("|-{:-<32}-|-{:-<64}-|", "", "");
+        for (symbol_id, labels) in &self.fn_arg_labels {
+            if !self
+                .symbols
+                .intrinsic_types
+                .values()
+                .any(|&id| id == *symbol_id)
+                && !self
+                    .symbols
+                    .intrinsic_symbols
+                    .values()
+                    .any(|&id| id == *symbol_id)
+            {
+                let rendered = labels.join(", ");
+                println!(
+                    "| {:<32} | {:<64} |",
+                    self.symbols.symbol_names[symbol_id], rendered
+                );
+            }
+        }
         println!("\n");
     }
 
@@ -258,6 +283,9 @@ impl<'a> TypecheckContext<'a> {
                     type_param_map.insert(param_name.clone(), Ty::new(TyKind::Var(param_var)));
                     bound_vars.push(param_var);
                 }
+
+                let variant_symbol_ids: Vec<SymbolId> =
+                    variants.iter().filter_map(|v| v.symbol_id).collect();
 
                 let type_params: Vec<Ty> = type_vars
                     .iter()
@@ -318,12 +346,32 @@ impl<'a> TypecheckContext<'a> {
                                         body: curried_type,
                                     },
                                 );
+
+                                //add labels
+                                let field_labels = fields
+                                    .iter()
+                                    .map(|(label, _, _)| label.clone())
+                                    .collect::<Vec<Option<String>>>();
+
+                                if !field_labels.iter().all(|l| l.is_none()) {
+                                    self.fn_arg_labels.insert(
+                                        ctor_symbol_id,
+                                        field_labels
+                                            .iter()
+                                            .map(|l| l.clone().unwrap_or_else(|| "_".into()))
+                                            .collect(),
+                                    );
+                                }
                             }
                         }
                     }
                 }
 
-                self.type_env = env.clone();
+                for (symbol_id, scheme) in env.iter() {
+                    if *symbol_id == type_symbol_id || variant_symbol_ids.contains(symbol_id) {
+                        self.type_env.insert(*symbol_id, scheme.clone());
+                    }
+                }
 
                 //return void type
                 Ok((
@@ -771,12 +819,81 @@ impl<'a> TypecheckContext<'a> {
                 let mut current_env = env1;
                 let mut arg_types = Vec::new();
 
-                for (_, arg) in args {
+                let fn_arg_labels = if let Some(symbol_id) = callee.symbol_id {
+                    self.fn_arg_labels.get(&symbol_id).cloned()
+                } else {
+                    None
+                };
+
+                for (label, arg) in args {
                     let (s, t) = self.algo_w(&mut current_env, arg)?;
                     subst = subst.compose(&s);
                     current_env = subst.apply_env(&current_env);
-                    arg_types.push(subst.apply(&t));
+                    arg_types.push((label, subst.apply(&t)));
                 }
+
+                //if fn_arg_labels some, reorder arg_types so labels are in order
+                let arg_types = if let Some(fn_arg_labels) = fn_arg_labels {
+                    let mut reordered_arg_types = Vec::new();
+                    let mut used_indices = HashSet::new();
+                    for label in fn_arg_labels.iter() {
+                        if let Some((index, (_, ty))) = arg_types
+                            .iter()
+                            .enumerate()
+                            .find(|(_, (arg_label, _))| arg_label.as_ref() == Some(&label))
+                        {
+                            reordered_arg_types.push(ty.clone());
+                            used_indices.insert(index);
+                        }
+                    }
+
+                    //find labels that where used in the call but not in the function definition
+                    for (index, (arg_label, _)) in arg_types.iter().enumerate() {
+                        if let Some(arg_label) = arg_label {
+                            if !fn_arg_labels.contains(arg_label) && !used_indices.contains(&index)
+                            {
+                                let symbol = self
+                                    .symbols
+                                    .symbol_names
+                                    .get(&callee.symbol_id.unwrap_or(0));
+
+                                self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                    message: format!(
+                                        "{} '{}' does not have an argument labelled '{}'",
+                                        if symbol.is_some()
+                                            && symbol
+                                                .unwrap()
+                                                .chars()
+                                                .next()
+                                                .map(|c| c.is_uppercase())
+                                                .unwrap_or(false)
+                                        {
+                                            "Type constructor"
+                                        } else {
+                                            "Function"
+                                        },
+                                        symbol.unwrap_or(&"<unknown>".into()),
+                                        arg_label
+                                    ),
+                                    span: node.span.clone(),
+                                    file: self.current_file.clone(),
+                                    err_type: DiagnosticMsgType::UndeclaredSymbol,
+                                }));
+                                return Err(());
+                            }
+                        }
+                    }
+
+                    //add any unlabeled args in original order
+                    for (index, (_, ty)) in arg_types.iter().enumerate() {
+                        if !used_indices.contains(&index) {
+                            reordered_arg_types.push(ty.clone());
+                        }
+                    }
+                    reordered_arg_types
+                } else {
+                    arg_types.into_iter().map(|(_, ty)| ty).collect()
+                };
 
                 let return_type = self.fresh_type_var();
                 let mut expected_fn_type = return_type.clone();
@@ -1001,6 +1118,7 @@ impl<'a> TypecheckContext<'a> {
                         if let Ok((s, t)) = self.algo_w(&mut current_env, stmt) {
                             subst = subst.compose(&s);
                             current_env = subst.apply_env(&current_env);
+                            self.refresh_polymorphic_constructors(&mut current_env);
                             last_type = subst.apply(&t);
                         }
                     }
@@ -1234,6 +1352,14 @@ impl<'a> TypecheckContext<'a> {
         fresh_type_var(&mut self.type_var_counter)
     }
 
+    fn refresh_polymorphic_constructors(&self, env: &mut TypeEnv) {
+        for (symbol_id, global_scheme) in &self.type_env {
+            if !global_scheme.bound_vars.is_empty() && env.contains_key(symbol_id) {
+                env.insert(*symbol_id, global_scheme.clone());
+            }
+        }
+    }
+
     fn add_declaration_to_env(&mut self, node: &Node, ty: &Ty, env: &mut TypeEnv) {
         match &node.kind {
             NodeKind::ConstDecl { symbol, .. } => {
@@ -1256,7 +1382,7 @@ impl<'a> TypecheckContext<'a> {
                     }
                 }
             }
-            NodeKind::FnDecl { .. } => {
+            NodeKind::FnDecl { args, .. } => {
                 if let Some(symbol_id) = node.symbol_id {
                     let scheme = Scheme::generalise(env, ty);
                     //bound vars empty -> monotype, can just register directly
@@ -1278,6 +1404,23 @@ impl<'a> TypecheckContext<'a> {
 
                     env.insert(symbol_id, scheme.clone());
                     self.type_env.insert(symbol_id, scheme);
+
+                    //record arg labels for reordering at call sites
+                    let arg_labels = args
+                        .iter()
+                        .map(|(pattern, _, _)| {
+                            if let NodeKind::Expr {
+                                expr: ExprKind::Symbol { name },
+                            } = &pattern.kind
+                            {
+                                Some(name.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .filter_map(|label| label)
+                        .collect::<Vec<_>>();
+                    self.fn_arg_labels.insert(symbol_id, arg_labels);
                 }
             }
             _ => {}

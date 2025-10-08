@@ -19,7 +19,9 @@ pub fn main() {
     let b: nocrypt String = "test"
     let a: nocrypt String = b
     a |> check_inference
+    check_inference(arg: a)
+    check_inference(12)
 
-    let c = Ctor1(12)
-    c
+    let c = Ctor1(val: a)
+    Ctor1(c)
 }
