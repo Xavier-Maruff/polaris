@@ -242,51 +242,90 @@ impl<'a> TypecheckContext<'a> {
 
             //todo: type decls / alias + constructors
             NodeKind::TypeDecl {
-                symbol,
+                symbol: _symbol,
                 type_vars,
                 variants,
                 ..
             } => {
-                //register the symbol type vars as type vars
-                for type_var in type_vars {
-                    let var = self.fresh_type_var();
-                    self.type_env.insert(
-                        type_var.1.unwrap(),
-                        Scheme {
-                            bound_vars: vec![],
-                            body: var,
-                        },
-                    );
+                let type_symbol_id = node.symbol_id.ok_or(())?;
+
+                //new tv for each type param
+                let mut type_param_map = HashMap::new();
+                let mut bound_vars = Vec::new();
+
+                for (param_name, _, _) in type_vars.iter() {
+                    let param_var = fresh_type_var_id(&mut self.type_var_counter);
+                    type_param_map.insert(param_name.clone(), Ty::new(TyKind::Var(param_var)));
+                    bound_vars.push(param_var);
                 }
 
-                //register actual type
-                let type_id = node.symbol_id.unwrap();
-                self.symbols.symbol_names.insert(type_id, symbol.clone());
-                self.type_env.insert(
-                    type_id,
+                let type_params: Vec<Ty> = type_vars
+                    .iter()
+                    .map(|(param_name, _, _)| type_param_map[param_name].clone())
+                    .collect();
+
+                let base_type = if type_params.is_empty() {
+                    Ty::new(TyKind::Concrete(type_symbol_id))
+                } else {
+                    Ty::new(TyKind::Ctor(type_symbol_id, type_params))
+                };
+
+                env.insert(
+                    type_symbol_id,
                     Scheme {
-                        //bound_vars: type_vars.iter().map(|(_, id, _)| id.unwrap()).collect(),
-                        bound_vars: vec![],
-                        //did this for the intrinsics as well, maybe should
-                        //actually be a fresh type var?
-                        //i feel like it maybe doesn't matter either way as long as no collisions?
-                        body: Ty::new(TyKind::Concrete(type_id)),
+                        bound_vars: bound_vars.clone(),
+                        body: base_type.clone(),
                     },
                 );
 
-                //register constructors
                 for variant in variants {
-                    //variant is Node kind TypeConstructor, fields Vec<(Option<String>, Node)> optionall named
-                    //meaning at invocation ordering is optional
-                    //atm going to ignore that, and just go positional
+                    if let NodeKind::TypeConstructor {
+                        symbol: _ctor_name,
+                        fields,
+                    } = &variant.kind
+                    {
+                        if let Some(ctor_symbol_id) = variant.symbol_id {
+                            let result_type = base_type.clone();
 
-                    //constructor types are just fn args -> type, just going to build out funciton type
-                    //and then add_declaration_to_env
+                            if fields.is_empty() {
+                                //just construct the type, no args
+                                env.insert(
+                                    ctor_symbol_id,
+                                    Scheme {
+                                        bound_vars: bound_vars.clone(),
+                                        body: result_type,
+                                    },
+                                );
+                            } else {
+                                let mut curried_type = result_type;
 
-                    let mut ctor_type = Ty::new(TyKind::Concrete(type_id));
+                                //reverse for currying
+                                for (_, field_type_node, _) in fields.iter().rev() {
+                                    let field_type = self.type_from_node_with_params(
+                                        field_type_node,
+                                        &type_param_map,
+                                    )?;
+                                    curried_type = Ty::new(TyKind::Fn(
+                                        Box::new(field_type),
+                                        Box::new(curried_type),
+                                    ));
+                                }
+
+                                env.insert(
+                                    ctor_symbol_id,
+                                    Scheme {
+                                        bound_vars: bound_vars.clone(),
+                                        body: curried_type,
+                                    },
+                                );
+                            }
+                        }
+                    }
                 }
 
-                //all env mods are global, returning null subst and void type
+                self.type_env = env.clone();
+
+                //return void type
                 Ok((
                     Substitution::new(),
                     Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
@@ -878,7 +917,7 @@ impl<'a> TypecheckContext<'a> {
                     let mut t1 = s2.apply(&t1);
                     t1.literal = false;
 
-                    let t1 = if nocrypt {
+                    let t1 = if nocrypt && !matches!(t1.kind, TyKind::Nocrypt(_)) {
                         Ty {
                             kind: TyKind::Nocrypt(Box::new(t1)),
                             literal: false,
@@ -1091,7 +1130,11 @@ impl<'a> TypecheckContext<'a> {
         self.accepting_binops = create_intrinsic_binops(self.symbols, &self.type_env);
     }
 
-    fn type_from_node(&mut self, node: &Node) -> Result<Ty, ()> {
+    fn type_from_node_with_params(
+        &mut self,
+        node: &Node,
+        type_param_map: &HashMap<String, Ty>,
+    ) -> Result<Ty, ()> {
         match &node.kind {
             NodeKind::Type {
                 type_vars,
@@ -1107,6 +1150,14 @@ impl<'a> TypecheckContext<'a> {
                     }
                 };
 
+                //check for type param first
+                if symbol.chars().next().map_or(false, |c| c.is_lowercase()) {
+                    if let Some(param_ty) = type_param_map.get(symbol) {
+                        return ok(param_ty.clone());
+                    }
+                    return ok(self.fresh_type_var());
+                }
+
                 let symbol_id = if let Some(id) = node.symbol_id {
                     Some(id)
                 } else {
@@ -1115,17 +1166,11 @@ impl<'a> TypecheckContext<'a> {
 
                 if let Some(symbol_id) = symbol_id {
                     if type_vars.is_empty() {
-                        //starts lowercase, must be a type param
-                        if symbol.chars().next().map_or(false, |c| c.is_lowercase()) {
-                            //maybe lookup in env?
-                            return ok(self.fresh_type_var());
-                        }
-
                         ok(Ty::new(TyKind::Concrete(symbol_id)))
                     } else {
                         let mut args = Vec::new();
                         for type_var in type_vars {
-                            args.push(self.type_from_node(type_var)?);
+                            args.push(self.type_from_node_with_params(type_var, type_param_map)?);
                         }
                         ok(Ty::new(TyKind::Ctor(symbol_id, args)))
                     }
@@ -1145,11 +1190,11 @@ impl<'a> TypecheckContext<'a> {
             NodeKind::FnType { args, return_type } => {
                 let mut arg_types = Vec::new();
                 for arg in args {
-                    arg_types.push(self.type_from_node(arg)?);
+                    arg_types.push(self.type_from_node_with_params(arg, type_param_map)?);
                 }
 
                 let ret_type = if let Some(ret) = return_type {
-                    self.type_from_node(ret)?
+                    self.type_from_node_with_params(ret, type_param_map)?
                 } else {
                     self.fresh_type_var()
                 };
@@ -1164,7 +1209,7 @@ impl<'a> TypecheckContext<'a> {
             NodeKind::TupleType { elements } => {
                 let mut types = Vec::new();
                 for elem in elements {
-                    types.push(self.type_from_node(elem)?);
+                    types.push(self.type_from_node_with_params(elem, type_param_map)?);
                 }
                 Ok(Ty::new(TyKind::Tuple(types)))
             }
@@ -1178,6 +1223,11 @@ impl<'a> TypecheckContext<'a> {
                 Err(())
             }
         }
+    }
+
+    fn type_from_node(&mut self, node: &Node) -> Result<Ty, ()> {
+        let empty_map = HashMap::new();
+        self.type_from_node_with_params(node, &empty_map)
     }
 
     fn fresh_type_var(&mut self) -> Ty {

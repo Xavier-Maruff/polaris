@@ -21,5 +21,5 @@ pub fn main() {
     a |> check_inference
 
     let c = Ctor1(12)
-    a == c
+    c
 }
