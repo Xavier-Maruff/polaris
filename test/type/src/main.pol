@@ -5,7 +5,7 @@ type Check(a) {
 }
 
 type Other {
-   Check(a: Check(I32))
+    Other(val: nocrypt String)
 }
 
 
@@ -15,6 +15,10 @@ pub fn check_inference(arg) {
     b
 }
 
+pub fn label_test(str: t, int: Int, tuple: #(String, Int)) {
+    #(str, int)
+}
+
 pub fn main() {
     let b: nocrypt String = "test"
     let a: nocrypt String = b
@@ -22,6 +26,13 @@ pub fn main() {
     check_inference(arg: a)
     check_inference(12)
 
-    let c = Ctor1(val: a)
-    Ctor1(c)
+    let q = label_test(int: 12, str: "test", tuple: #("test", 12))
+
+    let b = 12
+    let d = Ctor1(val: b)
+
+    let map: Map(String, Int) = #{"key": 12, "key2": 12}
+
+    Ctor1(map)
+
 }

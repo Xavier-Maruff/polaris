@@ -6,7 +6,7 @@ use crate::{
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::{
-        INT, LIST, REAL, STRING, VOID, create_intrinsic_binops, create_intrinsic_type_env,
+        INT, LIST, MAP, REAL, STRING, VOID, create_intrinsic_binops, create_intrinsic_type_env,
     },
     module::DepGraphContext,
     parse::CodeSpan,
@@ -727,6 +727,60 @@ impl<'a> TypecheckContext<'a> {
                 Substitution::new(),
                 Ty::new_literal(TyKind::Concrete(self.symbols.intrinsic_types[STRING])),
             )),
+            ExprKind::MapLit(map) => {
+                let mut key_type = self.fresh_type_var();
+                let mut value_type = self.fresh_type_var();
+                let mut env = env.clone();
+
+                for (key, value) in map.iter_mut() {
+                    let (s1, t1) = self.algo_w(&mut env, key)?;
+                    let s2 = self.unify(&s1.apply(&t1), &key_type);
+                    let s2 = self.bind_err_ctx(
+                        s2,
+                        key.span.clone(),
+                        Some((
+                            format!(
+                                "Map key type mismatch - expected {}, got {}. Maps are not dynamically typed.",
+                                key_type.render(self),
+                                t1.render(self)
+                            ),
+                            vec![],
+                        )),
+                    )?;
+                    let subst = s1.compose(&s2);
+                    env = subst.apply_env(&env);
+
+                    let (s3, t3) = self.algo_w(&mut env.clone(), value)?;
+                    let s4 = self.unify(&subst.apply(&t3), &value_type);
+                    let s4 = self.bind_err_ctx(
+                        s4,
+                        value.span.clone(),
+                        Some((
+                            format!(
+                                "Map value type mismatch - expected {}, got {}. Maps are not dynamically typed.",
+                                value_type.render(self),
+                                t3.render(self)
+                            ),
+                            vec![],
+                        )),
+                    )?;
+
+                    let final_subst = subst.compose(&s3).compose(&s4);
+                    let final_env = final_subst.apply_env(&env);
+
+                    key_type = final_subst.apply(&key_type);
+                    value_type = final_subst.apply(&value_type);
+
+                    env = final_env;
+                }
+
+                let ty = Ty::new_literal(TyKind::Ctor(
+                    self.symbols.intrinsic_types[MAP],
+                    vec![key_type, value_type],
+                ));
+
+                Ok((Substitution::new(), ty))
+            }
 
             ExprKind::Symbol { name } => {
                 if let Some(symbol_id) = node.symbol_id {
@@ -815,6 +869,24 @@ impl<'a> TypecheckContext<'a> {
             ExprKind::FnCall { callee, args } => {
                 let (s1, callee_type) = self.algo_w(env, callee)?;
                 let env1 = s1.apply_env(env);
+
+                if callee_type.fn_args().len() != args.len() {
+                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                        message: format!(
+                            "Function '{}' expected {} arguments but got {}.",
+                            self.symbols
+                                .symbol_names
+                                .get(&callee.symbol_id.unwrap_or(0))
+                                .unwrap_or(&"<unknown>".into()),
+                            callee_type.fn_args().len(),
+                            args.len()
+                        ),
+                        span: node.span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::TypeMismatch,
+                    }));
+                    return Err(());
+                }
 
                 let mut subst = s1;
                 let mut current_env = env1;
@@ -1022,8 +1094,9 @@ impl<'a> TypecheckContext<'a> {
                         node.span,
                         Some((
                             format!(
-                                "Annotated type {} does not match inferred type $1",
-                                declared_type.render(self)
+                                "Annotated type {} does not match inferred type {}",
+                                declared_type.render(self),
+                                t1.render(self)
                             )
                             .into(),
                             vec![],
@@ -1633,6 +1706,17 @@ impl Ty {
         }
     }
 
+    fn fn_args(&self) -> Vec<Ty> {
+        use TyKind::*;
+        let mut args = Vec::new();
+        let mut current = self;
+        while let Fn(arg, ret) = &current.kind {
+            args.push((**arg).clone());
+            current = ret;
+        }
+        args
+    }
+
     fn render(&self, ctx: &TypecheckContext) -> String {
         use TyKind::*;
         match &self.kind {
@@ -1649,7 +1733,7 @@ impl Ty {
             }
             Tuple(types) => {
                 let elems: Vec<String> = types.iter().map(|ty| ty.render(ctx)).collect();
-                format!("({})", elems.join(", "))
+                format!("#({})", elems.join(", "))
             }
             Nocrypt(t) => format!("nocrypt {}", t.render(ctx)),
             Ctor(id, args) => {
