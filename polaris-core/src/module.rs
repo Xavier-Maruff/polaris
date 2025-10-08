@@ -1,9 +1,8 @@
-use std::collections::HashMap;
-
 use petgraph::{
     algo::{condensation, toposort},
     graph::DiGraph,
 };
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::{
     ast::{ExprKind, Node, NodeKind},
@@ -80,11 +79,11 @@ impl<'a> DependencyContext<'a> {
                     .cloned()
                     .unwrap_or_default();
 
-                let mut subs: HashMap<SymbolId, HashMap<String, SymbolId>> = HashMap::new();
+                let mut subs: HashMap<SymbolId, HashMap<String, SymbolId>> = HashMap::default();
 
                 //get real ids for each imported symbol, create substitution map
                 for (imported_module, (local_module_id, symbols)) in imports.iter() {
-                    let mut map = HashMap::new();
+                    let mut map = HashMap::default();
                     let exports = self.symbols.exports.get(imported_module).unwrap();
                     for export_name in symbols.iter() {
                         let export_id = exports.get(export_name);
@@ -100,7 +99,7 @@ impl<'a> DependencyContext<'a> {
 
                 //everything again for types because I am dumb
                 for (imported_module, (local_module_id, symbols)) in type_imports.iter() {
-                    let mut map = HashMap::new();
+                    let mut map = HashMap::default();
                     let exports = self.symbols.type_exports.get(imported_module).unwrap();
                     for export_name in symbols.iter() {
                         let export_id = exports.get(export_name);
@@ -657,7 +656,7 @@ impl<'a> DependencyContext<'a> {
     /// import graph -> sccs -> condensation dag -> topological sort
     fn build_condensation_graph(&mut self) {
         let mut import_graph: DiGraph<ModuleId, ()> = DiGraph::new();
-        let mut node_indices = HashMap::new();
+        let mut node_indices = HashMap::default();
 
         //register all modules as nodes
         for module in self.deps.modules.keys() {

@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+//use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
     ast::{ExprKind, Node, NodeKind},
@@ -69,9 +70,9 @@ impl SymbolPassContext {
             current_file: String::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
-            symbol_decl_locs: HashMap::new(),
+            symbol_decl_locs: HashMap::default(),
             symbols: SymbolContext::default(),
-            module_aliases: HashMap::new(),
+            module_aliases: HashMap::default(),
             scope_stack: Vec::new(),
             type_scope_stack: Vec::new(),
             anonymous_scope_depth: Vec::new(),
@@ -86,8 +87,8 @@ impl SymbolPassContext {
     }
 
     fn push_scope(&mut self) {
-        self.scope_stack.push(HashMap::new());
-        self.type_scope_stack.push(HashMap::new());
+        self.scope_stack.push(HashMap::default());
+        self.type_scope_stack.push(HashMap::default());
         self.anonymous_scope_depth.push(0);
     }
 
@@ -106,8 +107,8 @@ impl SymbolPassContext {
     }
 
     fn push_anonymous_scope(&mut self) {
-        self.scope_stack.push(HashMap::new());
-        self.type_scope_stack.push(HashMap::new());
+        self.scope_stack.push(HashMap::default());
+        self.type_scope_stack.push(HashMap::default());
         self.anonymous_scope_depth.last_mut().map(|d| *d += 1);
     }
 
@@ -247,7 +248,7 @@ impl SymbolPassContext {
         if let NodeKind::Expr { expr } = &mut symbol_node.kind {
             use ExprKind::*;
             match expr {
-                Discard => Ok(HashMap::new()),
+                Discard => Ok(HashMap::default()),
                 Symbol { name, .. } => {
                     //if capitalised, is a type constructor, don't declare, instead link to type constructor symbol
                     if name
@@ -270,7 +271,7 @@ impl SymbolPassContext {
                             });
                             return Err(());
                         }
-                        return Ok(HashMap::new());
+                        return Ok(HashMap::default());
                     }
 
                     //check if symbol needs to be mirror prior declaration
@@ -284,10 +285,11 @@ impl SymbolPassContext {
                     };
 
                     symbol_node.symbol_id = Some(symbol_id);
-                    Ok(HashMap::from([(name.clone(), symbol_id)]))
+                    //Ok(HashMap::from([(name.clone(), symbol_id)]))
+                    Ok([(name.clone(), symbol_id)].into_iter().collect())
                 }
                 TupleLit(elements) => {
-                    let mut symbol_ids = HashMap::new();
+                    let mut symbol_ids = HashMap::default();
                     for elem in elements {
                         symbol_ids.extend(self.declare_binding(elem, in_match, mirror_symbols)?);
                     }
@@ -295,7 +297,7 @@ impl SymbolPassContext {
                     Ok(symbol_ids)
                 }
                 ListLit(elements) => {
-                    let mut symbol_ids = HashMap::new();
+                    let mut symbol_ids = HashMap::default();
                     for elem in elements {
                         symbol_ids.extend(self.declare_binding(elem, in_match, mirror_symbols)?);
                     }
@@ -303,7 +305,7 @@ impl SymbolPassContext {
                     Ok(symbol_ids)
                 }
                 FnCall { args, .. } if in_match => {
-                    let mut symbol_ids = HashMap::new();
+                    let mut symbol_ids = HashMap::default();
                     for arg in args {
                         symbol_ids.extend(self.declare_binding(
                             &mut arg.1,
@@ -778,13 +780,13 @@ impl SymbolPassContext {
                 self.symbols
                     .imports
                     .entry(module_name.to_string())
-                    .or_insert_with(HashMap::new)
-                    .insert(module.clone(), (symbol_id, HashSet::new()));
+                    .or_insert_with(HashMap::default)
+                    .insert(module.clone(), (symbol_id, HashSet::default()));
 
                 //register alias for symbol resolution
                 self.module_aliases
                     .entry(module_name.to_string())
-                    .or_insert_with(HashMap::new)
+                    .or_insert_with(HashMap::default)
                     .insert(symbol.clone(), module.clone());
 
                 //register directly imported types
@@ -800,9 +802,9 @@ impl SymbolPassContext {
                         .symbols
                         .type_imports
                         .entry(module_name.to_string())
-                        .or_insert_with(HashMap::new)
+                        .or_insert_with(HashMap::default)
                         .entry(module.to_string())
-                        .or_insert_with(|| (symbol_id, HashSet::new()));
+                        .or_insert_with(|| (symbol_id, HashSet::default()));
 
                     imported_types.1.insert(top_level_type.clone());
                 }
@@ -820,9 +822,9 @@ impl SymbolPassContext {
                         .symbols
                         .imports
                         .entry(module_name.to_string())
-                        .or_insert_with(HashMap::new)
+                        .or_insert_with(HashMap::default)
                         .entry(module.to_string())
-                        .or_insert_with(|| (symbol_id, HashSet::new()));
+                        .or_insert_with(|| (symbol_id, HashSet::default()));
 
                     imported_symbols.1.insert(top_level_symbol.clone());
                 }
@@ -835,7 +837,7 @@ impl SymbolPassContext {
                     self.symbols
                         .exports
                         .entry(module_name.to_string())
-                        .or_insert_with(HashMap::new)
+                        .or_insert_with(HashMap::default)
                         .insert(symbol.clone(), symbol_id);
                 }
             }
@@ -847,7 +849,7 @@ impl SymbolPassContext {
                             self.symbols
                                 .exports
                                 .entry(module_name.to_string())
-                                .or_insert_with(HashMap::new)
+                                .or_insert_with(HashMap::default)
                                 .insert(symbol_name.clone(), *symbol_id);
                         }
                     }
@@ -861,7 +863,7 @@ impl SymbolPassContext {
                     self.symbols
                         .type_exports
                         .entry(module_name.to_string())
-                        .or_insert_with(HashMap::new)
+                        .or_insert_with(HashMap::default)
                         .insert(symbol.clone(), symbol_id);
                 }
             }
@@ -880,7 +882,7 @@ impl SymbolPassContext {
                     self.symbols
                         .type_exports
                         .entry(module_name.to_string())
-                        .or_insert_with(HashMap::new)
+                        .or_insert_with(HashMap::default)
                         .insert(symbol.clone(), symbol_id);
                 }
 
@@ -924,7 +926,7 @@ impl SymbolPassContext {
                                     self.symbols
                                         .exports
                                         .entry(module_name.to_string())
-                                        .or_insert_with(HashMap::new)
+                                        .or_insert_with(HashMap::default)
                                         .insert(symbol.clone(), variant_id);
                                 }
                             }

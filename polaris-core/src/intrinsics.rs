@@ -6,7 +6,7 @@ use crate::{
     symbol::{SymbolContext, SymbolId},
     types::{Scheme, Ty, TyKind, TypeEnv, TypeVar, fresh_type_var_id},
 };
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 macro_rules! define_intrinsic_types {
     ($($name:ident => $str:literal),* $(,)?) => {
@@ -70,7 +70,7 @@ define_intrinsic_symbols! {
 
 macro_rules! create_symbol_map {
     ($items:expr, $symbol_idx:expr) => {{
-        let mut symbols = HashMap::new();
+        let mut symbols = HashMap::default();
         for item in $items.iter() {
             symbols.insert(item.to_string(), *$symbol_idx);
             *$symbol_idx += 1;
@@ -89,8 +89,8 @@ pub fn intrinsic_symbols(symbol_idx: &mut usize) -> HashMap<String, SymbolId> {
 }
 
 pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut TypeVar) -> TypeEnv {
-    let mut type_env = TypeEnv::new();
-    let mut type_var_map = HashMap::new();
+    let mut type_env = TypeEnv::default();
+    let mut type_var_map = HashMap::default();
 
     macro_rules! decl_concrete {
         //intrinsic type
@@ -206,7 +206,7 @@ pub fn create_intrinsic_binops(
     symbols: &SymbolContext,
     env: &TypeEnv,
 ) -> HashMap<BinaryOp, HashMap<(Ty, Ty), Ty>> {
-    let mut map: HashMap<BinaryOp, HashMap<(Ty, Ty), Ty>> = HashMap::new();
+    let mut map: HashMap<BinaryOp, HashMap<(Ty, Ty), Ty>> = HashMap::default();
 
     macro_rules! add_binop {
         (($lhs:ident, $op:expr, $rhs:ident) => $res:ident) => {
@@ -227,13 +227,13 @@ pub fn create_intrinsic_binops(
                 .clone();
 
             map.entry($op)
-                .or_insert_with(HashMap::new)
+                .or_insert_with(HashMap::default)
                 .insert((lhs_ty, rhs_ty), res_ty);
         };
 
         (($lhs:expr, $op:expr, $rhs:expr) => $res:expr) => {
             map.entry($op)
-                .or_insert_with(HashMap::new)
+                .or_insert_with(HashMap::default)
                 .insert(($lhs, $rhs), $res);
         };
     }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::desugar::desugar_pass;
 use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
@@ -43,7 +43,7 @@ impl CompileContext {
         Self {
             logger,
             config,
-            packages: HashMap::new(),
+            packages: HashMap::default(),
             dependencies: DepGraphContext::default(),
             symbols: SymbolContext::default(),
             errors: Vec::new(),

@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+//use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
     ast::{BinaryOp, ExprKind, Node, NodeKind},
@@ -89,16 +90,16 @@ impl<'a> TypecheckContext<'a> {
     fn new(ctx: &'a mut CompileContext) -> Self {
         Self {
             symbols: &mut ctx.symbols,
-            type_env: HashMap::new(),
+            type_env: HashMap::default(),
             type_var_counter: 0,
             errors: &mut ctx.errors,
             deps: &mut ctx.dependencies,
             // warnings: &mut ctx.warnings,
-            accepting_binops: HashMap::new(),
+            accepting_binops: HashMap::default(),
             current_file: String::new(),
-            monomorphised_fns: HashMap::new(),
-            fn_instantiation_ids: HashMap::new(),
-            fn_arg_labels: HashMap::new(),
+            monomorphised_fns: HashMap::default(),
+            fn_instantiation_ids: HashMap::default(),
+            fn_arg_labels: HashMap::default(),
         }
     }
 
@@ -275,7 +276,7 @@ impl<'a> TypecheckContext<'a> {
                 let type_symbol_id = node.symbol_id.ok_or(())?;
 
                 //new tv for each type param
-                let mut type_param_map = HashMap::new();
+                let mut type_param_map = HashMap::default();
                 let mut bound_vars = Vec::new();
 
                 for (param_name, _, _) in type_vars.iter() {
@@ -835,7 +836,7 @@ impl<'a> TypecheckContext<'a> {
                 //if fn_arg_labels some, reorder arg_types so labels are in order
                 let arg_types = if let Some(fn_arg_labels) = fn_arg_labels {
                     let mut reordered_arg_types = Vec::new();
-                    let mut used_indices = HashSet::new();
+                    let mut used_indices = HashSet::default();
                     for label in fn_arg_labels.iter() {
                         if let Some((index, (_, ty))) = arg_types
                             .iter()
@@ -1344,7 +1345,7 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn type_from_node(&mut self, node: &Node) -> Result<Ty, ()> {
-        let empty_map = HashMap::new();
+        let empty_map = HashMap::default();
         self.type_from_node_with_params(node, &empty_map)
     }
 
@@ -1486,7 +1487,7 @@ impl<'a> TypecheckContext<'a> {
             });
         }
 
-        let mut m = HashMap::new();
+        let mut m = HashMap::default();
         m.insert(a, t.clone());
 
         Ok(Substitution(m))
@@ -1577,7 +1578,7 @@ impl Ty {
         use TyKind::*;
         match &self.kind {
             Var(a) => {
-                let mut set = HashSet::new();
+                let mut set = HashSet::default();
                 set.insert(*a);
                 set
             }
@@ -1587,20 +1588,20 @@ impl Ty {
                 set
             }
             Tuple(types) => {
-                let mut set = HashSet::new();
+                let mut set = HashSet::default();
                 for ty in types {
                     set.extend(ty.free_type_vars());
                 }
                 set
             }
             Ctor(_, args) => {
-                let mut set = HashSet::new();
+                let mut set = HashSet::default();
                 for arg in args {
                     set.extend(arg.free_type_vars());
                 }
                 set
             }
-            Concrete(_) => HashSet::new(),
+            Concrete(_) => HashSet::default(),
             Nocrypt(t) => t.free_type_vars(),
         }
     }
@@ -1614,7 +1615,7 @@ impl Ty {
     }
 
     fn free_type_vars_in_env(env: &TypeEnv) -> HashSet<TypeVar> {
-        let mut set = HashSet::new();
+        let mut set = HashSet::default();
         for scheme in env.values() {
             set.extend(Ty::free_type_vars_in_scheme(scheme));
         }
@@ -1714,7 +1715,7 @@ impl Scheme {
 
 impl Substitution {
     fn new() -> Self {
-        Substitution(HashMap::new())
+        Substitution(HashMap::default())
     }
 
     fn compose(&self, other: &Substitution) -> Substitution {
