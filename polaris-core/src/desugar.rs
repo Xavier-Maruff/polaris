@@ -57,6 +57,9 @@ impl DesugarContext {
                     left,
                     right,
                 } => {
+                    self.visit_node(left, failed)?;
+                    //maybe this shouldn't be here?
+                    self.visit_node(right, failed)?;
                     // a |> b => b(a)
                     // a |> b(c) => b(a, c)
 

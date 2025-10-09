@@ -2,7 +2,7 @@
 //this isn't super robust
 
 use crate::{
-    ast::BinaryOp,
+    ast::{BinaryOp, UnaryOp},
     symbol::{SymbolContext, SymbolId},
     types::{Scheme, Ty, TyKind, TypeEnv, TypeVar, fresh_type_var_id},
 };
@@ -301,6 +301,64 @@ pub fn create_intrinsic_binops(
         BinaryOp::NotEqual,
         Ty::new(TyKind::Var(usize::MAX))
     ) => bool_ty);
+
+    map
+}
+
+pub fn create_intrinsic_unary_ops(
+    symbols: &SymbolContext,
+    env: &TypeEnv,
+) -> HashMap<UnaryOp, HashMap<Ty, Ty>> {
+    let mut map: HashMap<UnaryOp, HashMap<Ty, Ty>> = HashMap::default();
+
+    macro_rules! add_unop {
+        (($op:expr, $arg:ident) => $res:ident) => {
+            let arg_ty = env
+                .get(&symbols.intrinsic_types[$arg])
+                .unwrap()
+                .body
+                .clone();
+            let res_ty = env
+                .get(&symbols.intrinsic_types[$res])
+                .unwrap()
+                .body
+                .clone();
+
+            map.entry($op)
+                .or_insert_with(HashMap::default)
+                .insert(arg_ty, res_ty);
+        };
+    }
+
+    add_unop!((UnaryOp::Negate, INT) => INT);
+    add_unop!((UnaryOp::Negate, I8) => I8);
+    add_unop!((UnaryOp::Negate, I16) => I16);
+    add_unop!((UnaryOp::Negate, I32) => I32);
+    add_unop!((UnaryOp::Negate, I64) => I64);
+    add_unop!((UnaryOp::Negate, REAL) => REAL);
+    add_unop!((UnaryOp::Negate, FIXED1) => FIXED1);
+    add_unop!((UnaryOp::Negate, FIXED2) => FIXED2);
+    add_unop!((UnaryOp::Negate, FIXED4) => FIXED4);
+
+    add_unop!((UnaryOp::Not, BOOL) => BOOL);
+
+    //monad binding - results and optiosn
+    let t = Ty::new(TyKind::Var(usize::MAX));
+    let option_t = Ty::new(TyKind::Ctor(
+        symbols.intrinsic_types[OPTION].clone(),
+        vec![t.clone()],
+    ));
+    map.entry(UnaryOp::MonadBind)
+        .or_insert_with(HashMap::default)
+        .insert(option_t, t.clone());
+
+    let result_t = Ty::new(TyKind::Ctor(
+        symbols.intrinsic_types[RESULT].clone(),
+        vec![t.clone(), Ty::new(TyKind::Var(usize::MAX))],
+    ));
+    map.entry(UnaryOp::MonadBind)
+        .or_insert_with(HashMap::default)
+        .insert(result_t, t);
 
     map
 }

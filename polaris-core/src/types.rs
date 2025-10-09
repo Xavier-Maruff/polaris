@@ -2,11 +2,12 @@
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
-    ast::{BinaryOp, ExprKind, Node, NodeKind},
+    ast::{BinaryOp, ExprKind, Node, NodeKind, UnaryOp},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::{
         INT, LIST, MAP, REAL, STRING, VOID, create_intrinsic_binops, create_intrinsic_type_env,
+        create_intrinsic_unary_ops,
     },
     module::DepGraphContext,
     parse::CodeSpan,
@@ -30,6 +31,8 @@ struct TypecheckContext<'a> {
     current_file: String,
     // op -> (lhs, rhs) -> result type
     accepting_binops: HashMap<BinaryOp, HashMap<(Ty, Ty), Ty>>,
+    // op -> operand type -> result type
+    accepting_unops: HashMap<UnaryOp, HashMap<Ty, Ty>>,
     //todo: move to compile context
     //should this map to node borrows instead of just symbold ids?
     ///map new func id -> (original func id, instantiated type)
@@ -100,6 +103,7 @@ impl<'a> TypecheckContext<'a> {
             monomorphised_fns: HashMap::default(),
             fn_instantiation_ids: HashMap::default(),
             fn_arg_labels: HashMap::default(),
+            accepting_unops: HashMap::default(),
         }
     }
 
@@ -1073,9 +1077,66 @@ impl<'a> TypecheckContext<'a> {
                 }
             }
 
-            ExprKind::UnaryOp { expr: operand, .. } => {
+            ExprKind::UnaryOp {
+                expr: operand, op, ..
+            } => {
+                //atm just returning original type - todo
                 let (s, t) = self.algo_w(env, operand)?;
-                Ok((s, t))
+
+                let op_map = self.accepting_unops.get(op);
+                if op_map.is_none() {
+                    self.bind_err_ctx(
+                        Err(TypeError {
+                            kind: TypeErrorKind::UnificationFail,
+                            types: vec![t.clone()],
+                            hints: vec![format!("Unary operator {:?} is not supported", op)],
+                        }),
+                        node.span,
+                        Some((format!("Unsupported unary operator {:?}", op), vec![])),
+                    )?;
+                    return Err(());
+                }
+                let op_map = op_map.unwrap();
+
+                if let Some(result_type) = op_map.get(&t) {
+                    Ok((s, result_type.clone()))
+                } else {
+                    let allowed_types: Vec<_> = op_map
+                        .iter()
+                        .map(|(ty, result)| (ty.clone(), result.clone()))
+                        .collect();
+
+                    let mut found_result = None;
+                    for (allowed_type, result_type) in allowed_types {
+                        if let Ok(s2) = self.unify(&t, &allowed_type) {
+                            let final_subst = s.compose(&s2);
+                            found_result = Some((final_subst, result_type));
+                            break;
+                        }
+                    }
+
+                    if let Some((final_subst, result_type)) = found_result {
+                        Ok((final_subst, result_type))
+                    } else {
+                        self.bind_err_ctx(
+                            Err(TypeError {
+                                kind: TypeErrorKind::UnificationFail,
+                                types: vec![t.clone()],
+                                hints: vec![],
+                            }),
+                            node.span,
+                            Some((
+                                format!(
+                                    "Unary op '{}' is not valid for operand of type '{}'",
+                                    op,
+                                    t.render(self)
+                                ),
+                                vec![],
+                            )),
+                        )?;
+                        unreachable!()
+                    }
+                }
             }
 
             ExprKind::LetBinding {
@@ -1292,9 +1353,8 @@ impl<'a> TypecheckContext<'a> {
         }
 
         let new_symbol_id = self.symbols.symbol_idx;
-        //todo: actually sort this out for real
-        //because wtf is going to happen for closures??
-        let symbol_id = callee.symbol_id.unwrap_or(0);
+        //should never fail - symbol ids are always assigned, even to closures
+        let symbol_id = callee.symbol_id.unwrap();
         self.symbols.symbol_idx += 1;
         self.symbols.symbol_names.insert(
             new_symbol_id,
@@ -1320,6 +1380,7 @@ impl<'a> TypecheckContext<'a> {
         //add intrinsics
         self.type_env = create_intrinsic_type_env(self.symbols, &mut self.type_var_counter);
         self.accepting_binops = create_intrinsic_binops(self.symbols, &self.type_env);
+        self.accepting_unops = create_intrinsic_unary_ops(self.symbols, &self.type_env);
     }
 
     fn type_from_node_with_params(

@@ -11,6 +11,7 @@
 * Closure typing
 * Field access on single-constructor types
 * Type aliases
+* Bind operator
 
 ## IR
 * Everything

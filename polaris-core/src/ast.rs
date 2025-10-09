@@ -76,7 +76,7 @@ pub enum NodeKind {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Negate,
     Not,
@@ -651,7 +651,7 @@ impl std::fmt::Display for UnaryOp {
             UnaryOp::Negate => "-",
             UnaryOp::Not => "!",
             UnaryOp::BitNot => "~",
-            UnaryOp::MonadBind => ">>=",
+            UnaryOp::MonadBind => "?",
         };
         write!(f, "{}", s)
     }

@@ -33,6 +33,16 @@ pub fn main() {
 
     let map: Map(String, Int) = #{"key": 12, "key2": 12}
 
-    Ctor1(map)
+    let closure: fn(Int) -> Int = fn (x: Int) -> Int { x + 1 }
+    let closure = fn (a) {Ctor1(val: a)}
+    let ret = closure(b)
+    let other_ret = fn (x: nocrypt String) { Ctor1(x) } (a)
 
+    let some = Some(12)
+    let unwrapped = some?
+
+    let ok = Ok("test")
+    let other = ok? |> Ctor1 |> Ctor1 |> Ctor1 |> Ctor1
+
+    closure
 }

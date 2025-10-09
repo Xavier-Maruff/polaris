@@ -692,6 +692,8 @@ impl SymbolPassContext {
                 return_type,
                 expr,
             } => {
+                self.symbols.symbol_idx += 1;
+                node.symbol_id = Some(self.symbols.symbol_idx);
                 self.push_scope();
                 for arg in args {
                     if let Ok(_) = self.declare_binding(&mut arg.0, false, &None) {
