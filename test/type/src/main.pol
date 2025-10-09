@@ -4,6 +4,10 @@ type Check(a) {
    Ctor2
 }
 
+type Field(a) {
+    Field(val: a)
+}
+
 type Other {
     Other(val: nocrypt String)
 }
@@ -43,6 +47,9 @@ pub fn main() {
 
     let ok = Ok("test")
     let other = ok? |> Ctor1 |> Ctor1 |> Ctor1 |> Ctor1
+
+    let test_param = Field(12)
+    let param_val = test_param.val
 
     closure
 }

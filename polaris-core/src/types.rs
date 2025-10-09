@@ -42,6 +42,8 @@ struct TypecheckContext<'a> {
     fn_instantiation_ids: HashMap<(SymbolId, Ty), SymbolId>,
     //track function argument labelling for call-time arg reordering
     fn_arg_labels: HashMap<SymbolId, Vec<String>>,
+    //field access types for single-constructor types
+    field_access_types: HashMap<SymbolId, HashMap<String, Ty>>,
 }
 
 pub type TypeVar = usize;
@@ -104,6 +106,7 @@ impl<'a> TypecheckContext<'a> {
             fn_instantiation_ids: HashMap::default(),
             fn_arg_labels: HashMap::default(),
             accepting_unops: HashMap::default(),
+            field_access_types: HashMap::default(),
         }
     }
 
@@ -311,12 +314,16 @@ impl<'a> TypecheckContext<'a> {
                     },
                 );
 
-                for variant in variants {
+                let mut last_variant: HashMap<String, Ty> = HashMap::default();
+
+                for (i, variant) in variants.iter().enumerate() {
                     if let NodeKind::TypeConstructor {
                         symbol: _ctor_name,
                         fields,
                     } = &variant.kind
                     {
+                        let is_last_variant = i == variants.len() - 1;
+
                         if let Some(ctor_symbol_id) = variant.symbol_id {
                             let result_type = base_type.clone();
 
@@ -333,11 +340,17 @@ impl<'a> TypecheckContext<'a> {
                                 let mut curried_type = result_type;
 
                                 //reverse for currying
-                                for (_, field_type_node, _) in fields.iter().rev() {
+                                for (label, field_type_node, _) in fields.iter().rev() {
                                     let field_type = self.type_from_node_with_params(
                                         field_type_node,
                                         &type_param_map,
                                     )?;
+
+                                    if is_last_variant && label.is_some() {
+                                        last_variant
+                                            .insert(label.clone().unwrap(), field_type.clone());
+                                    }
+
                                     curried_type = Ty::new(TyKind::Fn(
                                         Box::new(field_type),
                                         Box::new(curried_type),
@@ -348,7 +361,7 @@ impl<'a> TypecheckContext<'a> {
                                     ctor_symbol_id,
                                     Scheme {
                                         bound_vars: bound_vars.clone(),
-                                        body: curried_type,
+                                        body: curried_type.clone(),
                                     },
                                 );
 
@@ -359,17 +372,22 @@ impl<'a> TypecheckContext<'a> {
                                     .collect::<Vec<Option<String>>>();
 
                                 if !field_labels.iter().all(|l| l.is_none()) {
-                                    self.fn_arg_labels.insert(
-                                        ctor_symbol_id,
-                                        field_labels
-                                            .iter()
-                                            .map(|l| l.clone().unwrap_or_else(|| "_".into()))
-                                            .collect(),
-                                    );
+                                    let field_labels: Vec<String> = field_labels
+                                        .iter()
+                                        .map(|l| l.clone().unwrap_or_else(|| "_".into()))
+                                        .collect();
+
+                                    self.fn_arg_labels
+                                        .insert(ctor_symbol_id, field_labels.clone());
                                 }
                             }
                         }
                     }
+                }
+
+                if variants.len() == 1 {
+                    //enable field access
+                    self.field_access_types.insert(type_symbol_id, last_variant);
                 }
 
                 for (symbol_id, scheme) in env.iter() {
@@ -802,6 +820,90 @@ impl<'a> TypecheckContext<'a> {
                         err_type: DiagnosticMsgType::UndeclaredSymbol,
                     }));
                     Err(())
+                }
+            }
+
+            ExprKind::FieldAccess { expr, field } => {
+                //check if expr type has only a single constructor, and then check if field exists on that constructor
+                let (s1, expr_type) = self.algo_w(env, expr)?;
+                let expr_type = s1.apply(&expr_type);
+
+                let expr_type_id = match &expr_type.kind {
+                    TyKind::Concrete(id) => Some(*id),
+                    TyKind::Ctor(id, _) => Some(*id),
+                    _ => None,
+                };
+
+                if expr_type_id.is_none() {
+                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                        message: format!("Type '{}' does not have fields", expr_type.render(self)),
+                        span: node.span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::TypeMismatch,
+                    }));
+                    return Err(());
+                }
+
+                let field_access_map = self.field_access_types.get(&expr_type_id.unwrap());
+                match field_access_map {
+                    None => {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                        message: format!(
+                            "Type '{}' does not have fields - if you need to access wrapped data, use a 'match' expression to match on the type variant.",
+                            expr_type.render(self)
+                        ),
+                        span: node.span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::TypeMismatch,
+                    }));
+                        return Err(());
+                    }
+                    Some(field_access_map) => {
+                        if let Some(expected_field_type) = field_access_map.get(field) {
+                            //need to instantiate type params
+                            let instantiated_field_type = match &expr_type.kind {
+                                TyKind::Ctor(type_id, type_args) => {
+                                    let mut param_subst = Substitution::new();
+
+                                    //find param names
+                                    if let Some(type_scheme) = self.type_env.get(type_id) {
+                                        for (i, &bound_var) in
+                                            type_scheme.bound_vars.iter().enumerate()
+                                        {
+                                            if i < type_args.len() {
+                                                param_subst
+                                                    .0
+                                                    .insert(bound_var, type_args[i].clone());
+                                            }
+                                        }
+                                    }
+
+                                    param_subst.apply(expected_field_type)
+                                }
+                                _ => expected_field_type.clone(),
+                            };
+
+                            let final_field_type = s1.apply(&instantiated_field_type);
+                            Ok((s1, final_field_type))
+                        } else {
+                            self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: format!(
+                                "Type '{}' does not have a field named '{}'. Available fields are: {}",
+                                expr_type.render(self),
+                                field,
+                                field_access_map
+                                    .keys()
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                            span: node.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::UndeclaredSymbol,
+                        }));
+                            Err(())
+                        }
+                    }
                 }
             }
 
