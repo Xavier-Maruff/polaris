@@ -6,7 +6,7 @@ pub fn cyclic() -> Int {
 }
 
 fn main() {
-    run_test()
+    run_test(12)
     run_second_func()
-    other.run_test()
+    other.run_test(12)
 }

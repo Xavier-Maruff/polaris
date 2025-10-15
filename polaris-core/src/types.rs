@@ -6,8 +6,8 @@ use crate::{
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::{
-        INT, LIST, MAP, REAL, STRING, VOID, create_intrinsic_binops, create_intrinsic_type_env,
-        create_intrinsic_unary_ops,
+        BOOL, INT, LIST, MAP, REAL, STRING, VOID, create_intrinsic_binops,
+        create_intrinsic_type_env, create_intrinsic_unary_ops,
     },
     module::DepGraphContext,
     parse::CodeSpan,
@@ -534,11 +534,8 @@ impl<'a> TypecheckContext<'a> {
                 args,
                 return_type,
                 expr,
-                symbol,
                 ..
             } => {
-                println!("\nType checking function declaration: {}", symbol);
-
                 if let Some(body) = expr {
                     let mut arg_types = Vec::new();
                     let mut new_env = env.clone();
@@ -976,7 +973,12 @@ impl<'a> TypecheckContext<'a> {
                 let (s1, callee_type) = self.algo_w(env, callee)?;
                 let env1 = s1.apply_env(env);
 
-                if callee_type.fn_args().len() != args.len() {
+                let fn_args = callee_type.fn_args();
+                let is_void_function_call = fn_args.len() == 1
+                    && args.len() == 0
+                    && matches!(fn_args[0].kind, TyKind::Concrete(id) if id == self.symbols.intrinsic_types[VOID]);
+
+                if !is_void_function_call && fn_args.len() != args.len() {
                     self.errors.push(Diagnostic::new(DiagnosticMsg {
                         message: format!(
                             "Function '{}' expected {} arguments but got {}.",
@@ -984,7 +986,7 @@ impl<'a> TypecheckContext<'a> {
                                 .symbol_names
                                 .get(&callee.symbol_id.unwrap_or(0))
                                 .unwrap_or(&"<unknown>".into()),
-                            callee_type.fn_args().len(),
+                            fn_args.len(),
                             args.len()
                         ),
                         span: node.span.clone(),
@@ -1004,11 +1006,18 @@ impl<'a> TypecheckContext<'a> {
                     None
                 };
 
-                for (label, arg) in args {
-                    let (s, t) = self.algo_w(&mut current_env, arg)?;
-                    subst = subst.compose(&s);
-                    current_env = subst.apply_env(&current_env);
-                    arg_types.push((label, subst.apply(&t)));
+                if is_void_function_call {
+                    arg_types.push((
+                        None,
+                        Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
+                    ));
+                } else {
+                    for (label, arg) in args {
+                        let (s, t) = self.algo_w(&mut current_env, arg)?;
+                        subst = subst.compose(&s);
+                        current_env = subst.apply_env(&current_env);
+                        arg_types.push((label.clone(), subst.apply(&t)));
+                    }
                 }
 
                 //if fn_arg_labels some, reorder arg_types so labels are in order
@@ -1076,6 +1085,15 @@ impl<'a> TypecheckContext<'a> {
 
                 let return_type = self.fresh_type_var();
                 let mut expected_fn_type = return_type.clone();
+
+                if arg_types.len() == 0 {
+                    expected_fn_type = Ty::new(TyKind::Fn(
+                        Box::new(Ty::new(TyKind::Concrete(
+                            self.symbols.intrinsic_types[VOID],
+                        ))),
+                        Box::new(expected_fn_type),
+                    ));
+                }
 
                 for arg_type in arg_types.into_iter().rev() {
                     expected_fn_type =
@@ -1245,20 +1263,18 @@ impl<'a> TypecheckContext<'a> {
                 symbol_type,
                 expr: value_expr,
                 symbols,
-                ..
             } => {
                 let (s1, mut t1) = self.algo_w(env, value_expr)?;
-
-                let result = if let Some(type_node) = symbol_type {
-                    let declared_type = self.type_from_node(type_node)?;
-                    let s2 = self.unify(&s1.apply(&t1), &declared_type);
+                let result = if let Some(declared_type) = symbol_type {
+                    let expected_type = self.type_from_node(declared_type)?;
+                    let s2 = self.unify(&s1.apply(&t1), &expected_type);
                     let s2 = self.bind_err_ctx(
                         s2,
                         node.span,
                         Some((
                             format!(
-                                "Annotated type {} does not match inferred type {}",
-                                declared_type.render(self),
+                                "Let binding type annotation '{}' does not match inferred type '{}'",
+                                expected_type.render(self),
                                 t1.render(self)
                             )
                             .into(),
@@ -1267,7 +1283,8 @@ impl<'a> TypecheckContext<'a> {
                     )?;
                     let final_subst = s1.compose(&s2);
 
-                    let nocrypt = matches!(declared_type.kind, TyKind::Nocrypt(_));
+                    let nocrypt = matches!(expected_type.kind, TyKind::Nocrypt(_));
+
                     let mut t1 = s2.apply(&t1);
                     t1.literal = false;
 
@@ -1286,24 +1303,49 @@ impl<'a> TypecheckContext<'a> {
                     (s1, t1)
                 };
 
-                let symbol_id = symbols
-                    .symbol_id
-                    .map(Ok)
-                    .unwrap_or(Err(()))
-                    .expect("Let binding without symbol id");
-
-                env.insert(
-                    symbol_id,
-                    Scheme {
-                        bound_vars: vec![],
-                        body: result.1.clone(),
-                    },
-                );
+                let s_pat = self.typecheck_pattern(env, symbols, &result.1)?;
+                let final_subst = result.0.compose(&s_pat);
 
                 Ok((
-                    result.0,
+                    final_subst,
                     Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
                 ))
+            }
+
+            ExprKind::Match { expr, arms } => {
+                let (s1, t_expr) = self.algo_w(env, expr)?;
+                let mut subst = s1;
+                let mut t_expr = subst.apply(&t_expr);
+
+                let mut t_match = self.fresh_type_var();
+
+                for (patterns, arm_expr) in arms {
+                    let mut arm_env = subst.apply_env(env);
+
+                    for pattern in patterns {
+                        let s_pat = self.typecheck_pattern(&mut arm_env, pattern, &t_expr)?;
+                        subst = subst.compose(&s_pat);
+                        t_expr = subst.apply(&t_expr);
+                    }
+
+                    let (s_arm, t_arm) = self.algo_w(&mut arm_env, arm_expr)?;
+                    subst = subst.compose(&s_arm);
+
+                    let s_unify = self.unify(&subst.apply(&t_match), &subst.apply(&t_arm));
+                    let s_unify = self.bind_err_ctx(
+                        s_unify,
+                        arm_expr.span,
+                        Some((
+                            "Match arm expressions must have compatible types".into(),
+                            vec![],
+                        )),
+                    )?;
+                    subst = subst.compose(&s_unify);
+
+                    t_match = subst.apply(&t_match);
+                }
+
+                Ok((subst, t_match))
             }
 
             ExprKind::IfElse {
@@ -1313,6 +1355,25 @@ impl<'a> TypecheckContext<'a> {
             } => {
                 let (s1, _cond_type) = self.algo_w(env, condition)?;
                 let mut env1 = s1.apply_env(env);
+
+                //condition must be bool
+                let s_cond = self.unify(
+                    &s1.apply(&_cond_type),
+                    &Ty::new_literal(TyKind::Concrete(self.symbols.intrinsic_types[BOOL])),
+                );
+                let s_cond = self.bind_err_ctx(
+                    s_cond,
+                    condition.span.clone(),
+                    Some((
+                        format!(
+                            "If condition must be of type Bool, got {}",
+                            _cond_type.render(self)
+                        ),
+                        vec![],
+                    )),
+                )?;
+                let s1 = s1.compose(&s_cond);
+                env1 = s1.apply_env(&env1);
 
                 let (s2, then_type) = self.algo_w(&mut env1, then_branch)?;
                 let s3 = s1.compose(&s2);
@@ -1367,9 +1428,6 @@ impl<'a> TypecheckContext<'a> {
                             current_env.insert(symbol_id, generalized_scheme);
                         }
                     }
-
-                    self.debug_type_env("Type env at end of block".into(), &current_env);
-                    println!("Type of block expression: {}", last_type.render(self));
 
                     Ok((subst, last_type))
                 }
@@ -1678,6 +1736,262 @@ impl<'a> TypecheckContext<'a> {
         }
     }
 
+    fn typecheck_pattern(
+        &mut self,
+        env: &mut TypeEnv,
+        pattern: &Node,
+        expected_type: &Ty,
+    ) -> Result<Substitution, ()> {
+        if let NodeKind::Expr { expr } = &pattern.kind {
+            use ExprKind::*;
+            match expr {
+                Symbol { .. } => {
+                    if let Some(symbol_id) = pattern.symbol_id {
+                        if let Some(existing_scheme) = env.get(&symbol_id) {
+                            let s = self.unify(&existing_scheme.body, expected_type);
+                            return self.bind_err_ctx(
+                                s,
+                                pattern.span,
+                                Some(("Pattern variable types do not match".into(), vec![])),
+                            );
+                        } else {
+                            env.insert(
+                                symbol_id,
+                                Scheme {
+                                    bound_vars: vec![],
+                                    body: expected_type.clone(),
+                                },
+                            );
+                        }
+
+                        Ok(Substitution::new())
+                    } else {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: "Pattern variable without symbol id".to_string(),
+                            span: pattern.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeMismatch,
+                        }));
+                        Err(())
+                    }
+                }
+                Discard => Ok(Substitution::new()),
+                ListPattern(elements) => {
+                    use crate::ast::ListPatternElement;
+                    match &expected_type.kind {
+                        TyKind::Ctor(ctor_id, type_args)
+                            if *ctor_id == self.symbols.intrinsic_types[LIST] =>
+                        {
+                            let elem_type = &type_args[0];
+                            let mut subst = Substitution::new();
+
+                            for elem in elements {
+                                match elem {
+                                    ListPatternElement::Element(node) => {
+                                        let s = self.typecheck_pattern(
+                                            env,
+                                            node,
+                                            &subst.apply(elem_type),
+                                        )?;
+                                        subst = subst.compose(&s);
+                                    }
+                                    ListPatternElement::Wildcard => {
+                                        //
+                                    }
+                                    ListPatternElement::Rest(Some(node)) => {
+                                        let s = self.typecheck_pattern(
+                                            env,
+                                            node,
+                                            &subst.apply(expected_type),
+                                        )?;
+                                        subst = subst.compose(&s);
+                                    }
+                                    ListPatternElement::Rest(None) => {
+                                        //
+                                    }
+                                }
+                            }
+                            Ok(subst)
+                        }
+                        _ => {
+                            self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                message: format!(
+                                    "Expected list type for list pattern, found {}",
+                                    expected_type.render(&self)
+                                ),
+                                span: pattern.span.clone(),
+                                file: self.current_file.clone(),
+                                err_type: DiagnosticMsgType::TypeMismatch,
+                            }));
+                            Err(())
+                        }
+                    }
+                }
+                TupleLit(elements) => match &expected_type.kind {
+                    TyKind::Tuple(element_types) => {
+                        if elements.len() != element_types.len() {
+                            self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                message: format!(
+                                    "Tuple pattern has {} elements but type has {}",
+                                    elements.len(),
+                                    element_types.len()
+                                ),
+                                span: pattern.span.clone(),
+                                file: self.current_file.clone(),
+                                err_type: DiagnosticMsgType::TypeMismatch,
+                            }));
+                            return Err(());
+                        }
+
+                        let mut subst = Substitution::new();
+                        for (element_pattern, element_type) in
+                            elements.iter().zip(element_types.iter())
+                        {
+                            let s = self.typecheck_pattern(
+                                env,
+                                element_pattern,
+                                &subst.apply(element_type),
+                            )?;
+                            subst = subst.compose(&s);
+                        }
+                        Ok(subst)
+                    }
+                    _ => {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: format!(
+                                "Expected tuple type for tuple pattern, got {}",
+                                expected_type.render(self)
+                            ),
+                            span: pattern.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeMismatch,
+                        }));
+                        Err(())
+                    }
+                },
+                FnCall { callee, args } => {
+                    if let NodeKind::Expr {
+                        expr: ExprKind::Symbol { name, .. },
+                    } = &callee.kind
+                    {
+                        let constructor_symbol_id = callee.symbol_id;
+                        if let Some(constructor_id) = constructor_symbol_id {
+                            if let Some(constructor_scheme) = self.type_env.get(&constructor_id) {
+                                let constructor_type = constructor_scheme
+                                    .clone()
+                                    .instantiate(&mut self.type_var_counter);
+
+                                let return_type =
+                                    self.get_constructor_return_type(&constructor_type);
+
+                                let s_unify = self.unify(&return_type, expected_type);
+                                let s_unify = self.bind_err_ctx(s_unify, pattern.span, Some((format!(
+                                    "Constructor pattern {} does not match expected type {}",
+                                    name,
+                                    expected_type.render(self)
+                                ), vec![])))?;
+
+                                let arg_types = self.get_constructor_arg_types(&constructor_type);
+                                let instantiated_arg_types: Vec<Ty> =
+                                    arg_types.iter().map(|ty| s_unify.apply(ty)).collect();
+
+                                if args.len() != instantiated_arg_types.len() {
+                                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                        message: format!(
+                                            "Constructor {} expects {} arguments but pattern has {}",
+                                            name,
+                                            instantiated_arg_types.len(),
+                                            args.len()
+                                        ),
+                                        span: pattern.span.clone(),
+                                        file: self.current_file.clone(),
+                                        err_type: DiagnosticMsgType::TypeMismatch,
+                                    }));
+                                    return Err(());
+                                }
+
+                                let mut s_args = Substitution::new();
+                                for (arg_pattern, arg_type) in
+                                    args.iter().zip(instantiated_arg_types.iter())
+                                {
+                                    let s_arg = self.typecheck_pattern(
+                                        env,
+                                        &arg_pattern.1,
+                                        &s_args.apply(arg_type),
+                                    )?;
+                                    s_args = s_args.compose(&s_arg);
+                                }
+
+                                Ok(s_unify.compose(&s_args))
+                            } else {
+                                self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                    message: format!("Unknown constructor: {}", name),
+                                    span: pattern.span.clone(),
+                                    file: self.current_file.clone(),
+                                    err_type: DiagnosticMsgType::UndeclaredSymbol,
+                                }));
+                                Err(())
+                            }
+                        } else {
+                            self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                message: format!("Constructor {} not resolved", name),
+                                span: pattern.span.clone(),
+                                file: self.current_file.clone(),
+                                err_type: DiagnosticMsgType::UndeclaredSymbol,
+                            }));
+                            Err(())
+                        }
+                    } else {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: "Function call patterns must use constructor names"
+                                .to_string(),
+                            span: pattern.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::InvalidBindingPattern,
+                        }));
+                        Err(())
+                    }
+                }
+                _ => {
+                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                        message: "Unsupported pattern type in let binding".to_string(),
+                        span: pattern.span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::InvalidBindingPattern,
+                    }));
+                    Err(())
+                }
+            }
+        } else {
+            self.errors.push(Diagnostic::new(DiagnosticMsg {
+                message: "Invalid pattern structure".to_string(),
+                span: pattern.span.clone(),
+                file: self.current_file.clone(),
+                err_type: DiagnosticMsgType::InvalidBindingPattern,
+            }));
+            Err(())
+        }
+    }
+
+    fn get_constructor_return_type(&self, constructor_type: &Ty) -> Ty {
+        match &constructor_type.kind {
+            TyKind::Fn(_, ret) => ret.as_ref().clone(),
+            _ => constructor_type.clone(),
+        }
+    }
+
+    fn get_constructor_arg_types(&self, constructor_type: &Ty) -> Vec<Ty> {
+        let mut args = Vec::new();
+        let mut current = constructor_type;
+
+        while let TyKind::Fn(arg, ret) = &current.kind {
+            args.push((**arg).clone());
+            current = ret;
+        }
+
+        args
+    }
+
     fn is_nonexpansive(&self, e: &ExprKind) -> bool {
         match e {
             ExprKind::IntLit(_)
@@ -1687,6 +2001,19 @@ impl<'a> TypecheckContext<'a> {
             ExprKind::TupleLit(xs) | ExprKind::ListLit(xs) => xs
                 .iter()
                 .all(|n| matches!(&n.kind, NodeKind::Expr{expr} if self.is_nonexpansive(expr))),
+            ExprKind::ListPattern(elements) => {
+                use crate::ast::ListPatternElement;
+                elements.iter().all(|elem| match elem {
+                    ListPatternElement::Element(node) => {
+                        matches!(&node.kind, NodeKind::Expr{expr} if self.is_nonexpansive(expr))
+                    }
+                    ListPatternElement::Wildcard => true,
+                    ListPatternElement::Rest(Some(node)) => {
+                        matches!(&node.kind, NodeKind::Expr{expr} if self.is_nonexpansive(expr))
+                    }
+                    ListPatternElement::Rest(None) => true,
+                })
+            }
             ExprKind::MapLit(kvs) => kvs.iter().all(|(k, v)| {
                 matches!(&k.kind, NodeKind::Expr{expr} if self.is_nonexpansive(expr))
                     && matches!(&v.kind, NodeKind::Expr{expr} if self.is_nonexpansive(expr))

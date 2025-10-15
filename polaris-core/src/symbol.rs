@@ -297,6 +297,21 @@ impl SymbolPassContext {
                     Ok(symbol_ids)
                 }
                 ListLit(elements) => {
+                    //list patterns only allowed in match exprs, otherwise not typesafe
+                    if !in_match {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: "List patterns are not allowed in let bindings - only type-safe destructuring patterns like tuples are permitted".to_string(),
+                                file: self.current_file.clone(),
+                                span: symbol_node.span,
+                                err_type: DiagnosticMsgType::InvalidBindingPattern,
+                            },
+                            notes: vec![],
+                            hints: vec!["Consider using a tuple pattern instead".to_string()],
+                        });
+                        return Err(());
+                    }
+
                     let mut symbol_ids = HashMap::default();
                     for elem in elements {
                         symbol_ids.extend(self.declare_binding(elem, in_match, mirror_symbols)?);
@@ -304,23 +319,109 @@ impl SymbolPassContext {
 
                     Ok(symbol_ids)
                 }
-                FnCall { args, .. } if in_match => {
+                ListPattern(elements) => {
+                    use crate::ast::ListPatternElement;
+
+                    if !in_match {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: "List patterns are not allowed in let bindings - only type-safe destructuring patterns like tuples are permitted".to_string(),
+                                file: self.current_file.clone(),
+                                span: symbol_node.span,
+                                err_type: DiagnosticMsgType::InvalidBindingPattern,
+                            },
+                            notes: vec![],
+                            hints: vec!["Consider using a tuple pattern instead".to_string()],
+                        });
+                        return Err(());
+                    }
+
                     let mut symbol_ids = HashMap::default();
-                    for arg in args {
-                        symbol_ids.extend(self.declare_binding(
-                            &mut arg.1,
-                            in_match,
-                            mirror_symbols,
-                        )?);
+                    for elem in elements {
+                        match elem {
+                            ListPatternElement::Element(node) => {
+                                symbol_ids.extend(self.declare_binding(
+                                    node,
+                                    in_match,
+                                    mirror_symbols,
+                                )?);
+                            }
+                            ListPatternElement::Wildcard => {
+                                //
+                            }
+                            ListPatternElement::Rest(Some(node)) => {
+                                symbol_ids.extend(self.declare_binding(
+                                    node,
+                                    in_match,
+                                    mirror_symbols,
+                                )?);
+                            }
+                            ListPatternElement::Rest(None) => {
+                                //
+                            }
+                        }
                     }
 
                     Ok(symbol_ids)
                 }
-                //todo: add binary op destructuring patterns
-                _ => {
+                FnCall { callee, args, .. } => {
+                    //constructor pattern only allowed in match
+                    if !in_match {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: "Constructor patterns are not allowed in let bindings - only type-safe destructuring patterns like tuples are permitted".to_string(),
+                                file: self.current_file.clone(),
+                                span: symbol_node.span,
+                                err_type: DiagnosticMsgType::InvalidBindingPattern,
+                            },
+                            notes: vec![],
+                            hints: vec!["Consider using a tuple pattern instead".to_string()],
+                        });
+                        return Err(());
+                    }
+
+                    //only allow type constructors in match patterns
+                    if let NodeKind::Expr {
+                        expr: ExprKind::Symbol { name, .. },
+                    } = &mut callee.kind
+                    {
+                        if name
+                            .chars()
+                            .next()
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
+                        {
+                            callee.symbol_id = self.find_in_scope(name, false);
+                            if callee.symbol_id.is_none() {
+                                self.errors.push(Diagnostic {
+                                    primary: DiagnosticMsg {
+                                        message: format!("Undeclared type constructor '{}'", name),
+                                        file: self.current_file.clone(),
+                                        span: callee.span,
+                                        err_type: DiagnosticMsgType::UndeclaredSymbol,
+                                    },
+                                    notes: vec![],
+                                    hints: vec![],
+                                });
+                                return Err(());
+                            }
+
+                            let mut symbol_ids = HashMap::default();
+                            for arg in args {
+                                symbol_ids.extend(self.declare_binding(
+                                    &mut arg.1,
+                                    in_match,
+                                    mirror_symbols,
+                                )?);
+                            }
+                            return Ok(symbol_ids);
+                        }
+                    }
+
+                    //not a constructor pattern
                     self.errors.push(Diagnostic {
                         primary: DiagnosticMsg {
-                            message: "Invalid binding pattern".to_string(),
+                            message: "Invalid binding pattern - function calls in patterns must be type constructors".to_string(),
                             file: self.current_file.clone(),
                             span: symbol_node.span,
                             err_type: DiagnosticMsgType::InvalidBindingPattern,
@@ -330,17 +431,56 @@ impl SymbolPassContext {
                     });
                     Err(())
                 }
+                //todo: add binary op destructuring patterns
+                _ => {
+                    let message = if in_match {
+                        "Invalid pattern in match expression".to_string()
+                    } else {
+                        "Invalid pattern in let binding - only identifiers and tuple patterns are allowed".to_string()
+                    };
+
+                    let hints = if in_match {
+                        vec![]
+                    } else {
+                        vec!["Let bindings support only type-safe destructuring patterns like (a, b) = tuple".to_string()]
+                    };
+
+                    self.errors.push(Diagnostic {
+                        primary: DiagnosticMsg {
+                            message,
+                            file: self.current_file.clone(),
+                            span: symbol_node.span,
+                            err_type: DiagnosticMsgType::InvalidBindingPattern,
+                        },
+                        notes: vec![],
+                        hints,
+                    });
+                    Err(())
+                }
             }
         } else {
+            let message = if in_match {
+                "Invalid pattern in match expression".to_string()
+            } else {
+                "Invalid pattern in let binding - only identifiers and tuple patterns are allowed"
+                    .to_string()
+            };
+
+            let hints = if in_match {
+                vec![]
+            } else {
+                vec!["Let bindings support only type-safe destructuring patterns like (a, b) = tuple".to_string()]
+            };
+
             self.errors.push(Diagnostic {
                 primary: DiagnosticMsg {
-                    message: "Invalid binding pattern".to_string(),
+                    message,
                     file: self.current_file.clone(),
                     span: symbol_node.span,
                     err_type: DiagnosticMsgType::InvalidBindingPattern,
                 },
                 notes: vec![],
-                hints: vec![],
+                hints,
             });
             Err(())
         }
@@ -594,6 +734,25 @@ impl SymbolPassContext {
                     self.resolve_scoped_symbols(module_name, elem, false);
                 }
             }
+            ListPattern(elements) => {
+                use crate::ast::ListPatternElement;
+                for elem in elements {
+                    match elem {
+                        ListPatternElement::Element(node) => {
+                            self.resolve_scoped_symbols(module_name, node, false);
+                        }
+                        ListPatternElement::Wildcard => {
+                            //
+                        }
+                        ListPatternElement::Rest(Some(node)) => {
+                            self.resolve_scoped_symbols(module_name, node, false);
+                        }
+                        ListPatternElement::Rest(None) => {
+                            //
+                        }
+                    }
+                }
+            }
 
             MapLit(pairs) => {
                 for (key, value) in pairs {
@@ -623,9 +782,6 @@ impl SymbolPassContext {
                 for arm in arms {
                     self.push_scope();
                     let mut mirrored_symbols = None;
-                    // if let Ok(_) = self.declare_binding(&mut arm.0, true) {
-                    //     self.resolve_scoped_symbols(module_name, &mut arm.1);
-                    // }
 
                     for pattern in &mut arm.0 {
                         if let Ok(symbols) = self.declare_binding(pattern, true, &mirrored_symbols)
@@ -683,6 +839,9 @@ impl SymbolPassContext {
                             }
                         }
                     }
+
+                    self.resolve_scoped_symbols(module_name, &mut arm.1, false);
+
                     self.pop_scope();
                 }
             }

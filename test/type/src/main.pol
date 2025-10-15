@@ -51,5 +51,26 @@ pub fn main() {
     let test_param = Field(12)
     let param_val = test_param.val
 
-    closure
+    let test_match = Ctor1(12)
+    let out = match test_match {
+        Ctor1(val) -> val + 1,
+        Ctor2 -> 0
+    }
+
+    let test_if = if True && False {
+        12
+    } else {
+        0
+    }
+
+    out
+}
+
+
+
+pub fn check_pattern(val: Check(t)) {
+    match val {
+        Ctor1(v) -> v,
+        Ctor2 -> 0
+    }
 }

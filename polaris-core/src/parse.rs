@@ -342,16 +342,22 @@ impl<'a> ParseContext<'a> {
 
         let mut arms = vec![];
         while !matches!(self.curr_tok.variant, TokenVariant::RBrace) {
-            let mut patterns = vec![self.parse_expr(node, lexer)?];
+            let mut patterns = vec![self.parse_pattern(node, lexer)?];
             while matches!(self.curr_tok.variant, TokenVariant::BitOr) {
                 wrap_err!(node, self.advance(lexer));
-                patterns.push(self.parse_expr(node, lexer)?);
+                patterns.push(self.parse_pattern(node, lexer)?);
             }
 
             wrap_err!(node, self.expect(lexer, TokenVariant::Arrow));
             let body = self.parse_expr(node, lexer)?;
 
             arms.push((patterns, body));
+
+            if matches!(self.curr_tok.variant, TokenVariant::Comma) {
+                wrap_err!(node, self.advance(lexer));
+            } else {
+                break;
+            }
         }
 
         wrap_err!(node, self.expect(lexer, TokenVariant::RBrace));
@@ -365,6 +371,22 @@ impl<'a> ParseContext<'a> {
                 end: self.prev_tok.span.end,
             },
         ))
+    }
+
+    fn parse_pattern(&mut self, node: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        use TokenVariant::*;
+
+        match &self.curr_tok.variant {
+            LBracket => self.parse_list_or_pattern(node, lexer, true),
+            Octothorpe if matches!(self.next_tok.variant, LParen) => {
+                //tuple pattern
+                self.parse_tuple_literal(node, lexer)
+            }
+            _ => {
+                //other pattern
+                self.parse_expr(node, lexer)
+            }
+        }
     }
 
     fn parse_const_decl(
@@ -700,6 +722,119 @@ impl<'a> ParseContext<'a> {
         ))
     }
 
+    fn parse_list_literal(&mut self, node: &mut Node, lexer: &mut Lexer) -> Result<Node, ()> {
+        self.parse_list_or_pattern(node, lexer, false)
+    }
+
+    fn parse_list_or_pattern(
+        &mut self,
+        node: &mut Node,
+        lexer: &mut Lexer,
+        is_pattern: bool,
+    ) -> Result<Node, ()> {
+        use crate::ast::ListPatternElement;
+
+        let start_span = self.curr_tok.span.start;
+        wrap_err!(node, self.expect(lexer, TokenVariant::LBracket));
+
+        if is_pattern {
+            let mut pattern_elements = vec![];
+            let mut seen_rest = false;
+
+            while !matches!(self.curr_tok.variant, TokenVariant::RBracket) {
+                if seen_rest {
+                    wrap_err!(
+                        node,
+                        Err(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message:
+                                    "Rest pattern '...' must be the last element in list pattern"
+                                        .to_string(),
+                                span: CodeSpan {
+                                    start: self.curr_tok.span.start,
+                                    end: self.curr_tok.span.end,
+                                },
+                                file: lexer.file.clone(),
+                                err_type: DiagnosticMsgType::UnexpectedToken,
+                            },
+                            notes: vec![],
+                            hints: vec!["Move the rest pattern to the end of the list".to_string()],
+                        })
+                    );
+                    return Err(());
+                }
+
+                match &self.curr_tok.variant {
+                    TokenVariant::Ellipsis => {
+                        //... or ...ident
+                        wrap_err!(node, self.advance(lexer));
+                        seen_rest = true;
+
+                        if matches!(self.curr_tok.variant, TokenVariant::Ident(_)) {
+                            let rest_name = self.parse_expr(node, lexer)?;
+                            pattern_elements
+                                .push(ListPatternElement::Rest(Some(Box::new(rest_name))));
+                        } else {
+                            pattern_elements.push(ListPatternElement::Rest(None));
+                        }
+                    }
+                    TokenVariant::Ident(name) if name == "_" => {
+                        wrap_err!(node, self.advance(lexer));
+                        pattern_elements.push(ListPatternElement::Wildcard);
+                    }
+                    _ => {
+                        //regular element
+                        let elem = self.parse_expr(node, lexer)?;
+                        pattern_elements.push(ListPatternElement::Element(Box::new(elem)));
+                    }
+                }
+
+                if matches!(self.curr_tok.variant, TokenVariant::Comma) {
+                    wrap_err!(node, self.advance(lexer));
+                } else {
+                    break;
+                }
+            }
+
+            wrap_err!(node, self.expect(lexer, TokenVariant::RBracket));
+
+            Ok(Node::new(
+                NodeKind::Expr {
+                    expr: ExprKind::ListPattern(pattern_elements),
+                },
+                CodeSpan {
+                    start: start_span,
+                    end: self.prev_tok.span.end,
+                },
+            ))
+        } else {
+            //regular list literal
+            let mut elements = vec![];
+            while !matches!(self.curr_tok.variant, TokenVariant::RBracket) {
+                let elem = self.parse_expr(node, lexer)?;
+                elements.push(elem);
+
+                if matches!(self.curr_tok.variant, TokenVariant::Comma) {
+                    wrap_err!(node, self.advance(lexer));
+                } else {
+                    break;
+                }
+            }
+
+            wrap_err!(node, self.expect(lexer, TokenVariant::RBracket));
+
+            Ok(Node::new(
+                NodeKind::Expr {
+                    expr: ExprKind::ListLit(elements),
+                },
+                CodeSpan {
+                    start: start_span,
+                    end: self.prev_tok.span.end,
+                },
+            ))
+        }
+    }
+
     fn parse_expr_bind_power(
         &mut self,
         node: &mut Node,
@@ -774,6 +909,7 @@ impl<'a> ParseContext<'a> {
                     return Err(());
                 }
             },
+            LBracket => self.parse_list_literal(node, lexer)?,
             IntLit(_) => self.parse_int_literal(node, lexer)?,
             RealLit(_) => self.parse_real_literal(node, lexer)?,
             StringLit(_) => self.parse_string_literal(node, lexer)?,

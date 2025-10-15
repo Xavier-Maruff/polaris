@@ -108,6 +108,13 @@ pub enum BinaryOp {
 }
 
 #[derive(Clone, Debug)]
+pub enum ListPatternElement {
+    Element(Box<Node>),
+    Wildcard,
+    Rest(Option<Box<Node>>),
+}
+
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     IntLit(i64),
     RealLit {
@@ -115,6 +122,7 @@ pub enum ExprKind {
         places: usize,
     },
     ListLit(Vec<Node>),
+    ListPattern(Vec<ListPatternElement>),
     MapLit(Vec<(Node, Node)>),
     StringLit(String),
     TupleLit(Vec<Node>),
@@ -376,6 +384,20 @@ impl ExprKind {
                 let elem_strs: Vec<String> = elements.iter().map(|e| e.render(symbols)).collect();
                 format!("[{}]", elem_strs.join(", "))
             }
+            ListPattern(elements) => {
+                let elem_strs: Vec<String> = elements
+                    .iter()
+                    .map(|elem| match elem {
+                        ListPatternElement::Element(node) => node.render(symbols),
+                        ListPatternElement::Wildcard => "_".to_string(),
+                        ListPatternElement::Rest(Some(node)) => {
+                            format!("...{}", node.render(symbols))
+                        }
+                        ListPatternElement::Rest(None) => "...".to_string(),
+                    })
+                    .collect();
+                format!("[{}]", elem_strs.join(", "))
+            }
             MapLit(pairs) => {
                 let pair_strs: Vec<String> = pairs
                     .iter()
@@ -515,6 +537,20 @@ impl ExprKind {
             ListLit(elements) => {
                 for elem in elements {
                     elem.collect_diagnostics(errs, collect_errors);
+                }
+            }
+            ListPattern(elements) => {
+                for elem in elements {
+                    match elem {
+                        ListPatternElement::Element(node) => {
+                            node.collect_diagnostics(errs, collect_errors);
+                        }
+                        ListPatternElement::Wildcard => {}
+                        ListPatternElement::Rest(Some(node)) => {
+                            node.collect_diagnostics(errs, collect_errors);
+                        }
+                        ListPatternElement::Rest(None) => {}
+                    }
                 }
             }
             MapLit(pairs) => {

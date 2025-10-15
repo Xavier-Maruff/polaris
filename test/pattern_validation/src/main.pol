@@ -1,0 +1,48 @@
+
+type ADT(a) {
+    Ctor(val: a)
+}
+
+fn main()  {
+    let x = 42
+
+    let #(a, b) = #(1, 2)
+    let #(first, second, third) = #(10, 20, 30)
+
+    let #(#(x1, y1), #(x2, y2)) = #(#(1, 2), #(3, 4))
+
+    let #(_, #(inner1, inner2, #(deep1, deep2))) = #(100, #(200, 300, #(400, 500)))
+
+    //should fail
+    //let [head, tail] = [1, 2, 3]
+    //let Some(value) = some_optional
+
+    let test_data = #(99, "test")
+    let result = match test_data {
+        #(a, b) -> a,
+        _ -> 0
+    }
+
+    let result2 = match Some(None) {
+        Some(Some(val)) -> 1,
+        None -> 2
+    }
+
+    let result3 = match [1, 2, 3] {
+        [first, second, ...] -> first + second,
+        [] -> 0
+    }
+
+    let empty_list_test = match [] {
+        [] -> 100,
+        [x, ...] -> 200
+    }
+
+    let non_empty_list_test = match [1, 2, 3] {
+        [] -> 0,
+        [a, b, c] -> a + b + c,
+        [first, ...rest] -> first
+    }
+
+    result + result2 + result3 + empty_list_test + non_empty_list_test
+}

@@ -352,6 +352,37 @@ impl<'a> DependencyContext<'a> {
                     );
                 }
             }
+            ListPattern(elements) => {
+                use crate::ast::ListPatternElement;
+                for elem in elements.iter_mut() {
+                    match elem {
+                        ListPatternElement::Element(node) => {
+                            DependencyContext::apply_symbol_substitutions(
+                                node,
+                                subs,
+                                current_file,
+                                errors,
+                                logger,
+                            );
+                        }
+                        ListPatternElement::Wildcard => {
+                            // no symbols
+                        }
+                        ListPatternElement::Rest(Some(node)) => {
+                            DependencyContext::apply_symbol_substitutions(
+                                node,
+                                subs,
+                                current_file,
+                                errors,
+                                logger,
+                            );
+                        }
+                        ListPatternElement::Rest(None) => {
+                            //anon rest pattern
+                        }
+                    }
+                }
+            }
             MapLit(pairs) => {
                 for (key, value) in pairs.iter_mut() {
                     DependencyContext::apply_symbol_substitutions(

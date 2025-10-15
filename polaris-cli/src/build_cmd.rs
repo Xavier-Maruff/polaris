@@ -3,12 +3,12 @@ use std::{collections::HashSet, fs, io, path};
 use crate::{cli::BuildArgs, config::load_config, log};
 use polaris_core::{compile::CompileContext, log::Logger};
 
-pub async fn command(args: BuildArgs) {
+pub async fn command(args: BuildArgs) -> Result<(), ()> {
     let (logger, hdl) = match log::spawn_log_thread(args.verbosity, false) {
         Ok(logger) => logger,
         Err(e) => {
             eprintln!("Failed to spawn log thread: {}", e);
-            return;
+            return Err(());
         }
     };
 
@@ -23,7 +23,7 @@ pub async fn command(args: BuildArgs) {
             logger.error(&format!("Failed to load config: {}", e));
             logger.quit();
             hdl.join().expect("Failed to join log thread");
-            return;
+            return Err(());
         }
     };
 
@@ -32,7 +32,7 @@ pub async fn command(args: BuildArgs) {
         logger.error(&format!("Profile '{}' not found in config", args.profile));
         logger.quit();
         hdl.join().expect("Failed to join log thread");
-        return;
+        return Err(());
     }
     let profile = profile.unwrap();
 
@@ -78,7 +78,7 @@ pub async fn command(args: BuildArgs) {
         logger.error("Build failed due to unexpected critical errors.");
         logger.quit();
         hdl.join().expect("Failed to join log thread");
-        return;
+        return Err(());
     }
 
     match compile_ctx.run_passes() {
@@ -109,6 +109,8 @@ pub async fn command(args: BuildArgs) {
 
     logger.quit();
     hdl.join().expect("Failed to join log thread");
+
+    if comp_failed { Err(()) } else { Ok(()) }
 }
 
 fn ingest_package(

@@ -2,6 +2,6 @@ import other/test.{type TestInt}
 import sanity/main.{cyclic}
 
 
-pub fn run_second_func() -> TestInt {
-    12 * cyclic()
+pub fn run_second_func()  {
+    cyclic() * 12
 }

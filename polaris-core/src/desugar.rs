@@ -134,6 +134,28 @@ impl DesugarContext {
                     ok((), failed)
                 }
 
+                ListPattern(elements) => {
+                    use crate::ast::ListPatternElement;
+                    let mut failed = failed;
+                    for elem in elements.iter_mut() {
+                        match elem {
+                            ListPatternElement::Element(node) => {
+                                failed |= self.visit_node(node, failed).is_err();
+                            }
+                            ListPatternElement::Wildcard => {
+                                //
+                            }
+                            ListPatternElement::Rest(Some(node)) => {
+                                failed |= self.visit_node(node, failed).is_err();
+                            }
+                            ListPatternElement::Rest(None) => {
+                                //
+                            }
+                        }
+                    }
+                    ok((), failed)
+                }
+
                 MapLit(entries) => {
                     let mut failed = failed;
                     for (key, value) in entries.iter_mut() {

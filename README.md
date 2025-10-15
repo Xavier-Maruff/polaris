@@ -154,7 +154,7 @@ As discussed earlier, we can make a function generic by using an implicit type v
 ```gleam
 fn my_func(a: Result(Int, t)) -> Result(Int, t) {
  match a {
-   Ok(i) -> Ok(i + 12)
+   Ok(i) -> Ok(i + 12),
    Error(m) -> Error(m)
  }
 }
@@ -172,7 +172,7 @@ Otherwise extern functions as of yet cannot be declared due to the unique layout
 
 ### Monad-y goodness
 
-Polaris has two intrinsic monadic types that come with a monad bind operator '?': `Option(t)` and `Result(a, b)`. This is the same as Rust's early return operator, though expanded to option types:
+Polaris has two intrinsic monadic types that come with a monad bind operator '?': `Option(t)` and `Result(a, b)`. These behave as you would expect from other languages with similar constructs, such as Rust - the use of this operator will early-return `None` or `Error(b)` from the enclosing function if the value is `None` or `Error(b)`, respectively. Since Polaris has no concept of operator overloading, `?` cannot be used for any other type.
 
 ```gleam
 //will return None if arg == None, due to '?' monad binding
