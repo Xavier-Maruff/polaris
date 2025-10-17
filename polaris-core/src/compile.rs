@@ -4,7 +4,7 @@ use crate::desugar::desugar_pass;
 use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
 use crate::parse::parse;
 use crate::symbol::{SymbolContext, symbol_pass};
-use crate::types::typecheck_pass;
+use crate::types::{TypeInfo, typecheck_pass};
 use crate::{diagnostic::Diagnostic, log};
 
 pub type Pass = (&'static str, fn(&mut CompileContext) -> Result<(), ()>);
@@ -26,6 +26,7 @@ pub struct CompileContext {
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
     pub passes: Vec<Pass>,
+    pub type_info: TypeInfo,
 }
 
 impl Default for CompileConfig {
@@ -54,6 +55,7 @@ impl CompileContext {
                 ("Dependencies", dependency_pass),
                 ("Typechecking", typecheck_pass),
             ],
+            type_info: TypeInfo::default(),
         }
     }
 
@@ -62,6 +64,7 @@ impl CompileContext {
         self.warnings.extend(other.warnings);
         self.packages.extend(other.packages);
         self.symbols.merge(other.symbols);
+        self.type_info = other.type_info;
     }
 
     pub fn ingest_source(&mut self, package: String, module: String, file: String, source: String) {

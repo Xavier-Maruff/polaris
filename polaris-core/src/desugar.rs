@@ -85,6 +85,7 @@ impl DesugarContext {
                                 symbol_id: right.symbol_id,
                                 warnings: node.warnings.clone(),
                                 errors: node.errors.clone(),
+                                ty: node.ty.clone(),
                             };
                         }
                     }

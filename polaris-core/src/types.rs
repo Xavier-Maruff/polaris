@@ -28,6 +28,7 @@ struct TypecheckContext<'a> {
     // warnings: &'a mut Vec<Diagnostic>,
     symbols: &'a mut SymbolContext,
     deps: &'a mut DepGraphContext,
+    type_info: &'a mut TypeInfo,
     current_file: String,
     // op -> (lhs, rhs) -> result type
     accepting_binops: HashMap<BinaryOp, HashMap<(Ty, Ty), Ty>>,
@@ -36,12 +37,6 @@ struct TypecheckContext<'a> {
     //todo: move to compile context
     //should this map to node borrows instead of just symbold ids?
     ///map new func id -> (original func id, instantiated type)
-    monomorphised_fns: HashMap<SymbolId, (SymbolId, Ty)>,
-    //this seems like a shit approach
-    ///reverse mapping (original func id, instantiated type) -> new func id
-    fn_instantiation_ids: HashMap<(SymbolId, Ty), SymbolId>,
-    //track function argument labelling for call-time arg reordering
-    fn_arg_labels: HashMap<SymbolId, Vec<String>>,
     //field access types for single-constructor types
     field_access_types: HashMap<SymbolId, HashMap<String, Ty>>,
     type_aliases: HashMap<SymbolId, TypeAliasInfo>,
@@ -88,6 +83,14 @@ pub struct Scheme {
     pub body: Ty,
 }
 
+#[derive(Clone, Default)]
+pub struct TypeInfo {
+    pub type_env: TypeEnv,
+    pub fn_arg_labels: HashMap<SymbolId, Vec<String>>,
+    pub monomorphised_fns: HashMap<SymbolId, (SymbolId, Ty)>,
+    pub fn_instantiation_ids: HashMap<(SymbolId, Ty), SymbolId>,
+}
+
 #[derive(Clone, Debug)]
 struct TypeAliasInfo {
     params: Vec<String>,
@@ -110,12 +113,10 @@ impl<'a> TypecheckContext<'a> {
             type_var_counter: 0,
             errors: &mut ctx.errors,
             deps: &mut ctx.dependencies,
+            type_info: &mut ctx.type_info,
             // warnings: &mut ctx.warnings,
             accepting_binops: HashMap::default(),
             current_file: String::new(),
-            monomorphised_fns: HashMap::default(),
-            fn_instantiation_ids: HashMap::default(),
-            fn_arg_labels: HashMap::default(),
             accepting_unops: HashMap::default(),
             field_access_types: HashMap::default(),
             type_aliases: HashMap::default(),
@@ -124,6 +125,11 @@ impl<'a> TypecheckContext<'a> {
     }
 
     pub fn typecheck(&mut self) -> Result<(), ()> {
+        self.type_info.type_env.clear();
+        self.type_info.fn_arg_labels.clear();
+        self.type_info.monomorphised_fns.clear();
+        self.type_info.fn_instantiation_ids.clear();
+
         self.initialise_type_env();
 
         let sccs = self.deps.sccs.clone();
@@ -177,6 +183,7 @@ impl<'a> TypecheckContext<'a> {
             }
         }
 
+        self.type_info.type_env = self.type_env.clone();
         self.debug_type_env("Final type env".into(), &self.type_env);
         self.print_monomorphised_fns();
 
@@ -184,6 +191,7 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn print_monomorphised_fns(&self) {
+        let type_info = &*self.type_info;
         println!("\nMonomorphised functions:");
         println!(
             "\n| {:<32} | {:<32} | {:<96} |",
@@ -191,7 +199,7 @@ impl<'a> TypecheckContext<'a> {
         );
         println!("|-{:-<32}-|-{:-<32}-|-{:-<96}-|", "", "", "");
         let unknown = "<unknown>".into();
-        for (new_id, (orig_id, ty)) in &self.monomorphised_fns {
+        for (new_id, (orig_id, ty)) in &type_info.monomorphised_fns {
             let orig_name = self.symbols.symbol_names.get(orig_id).unwrap_or(&unknown);
             let new_name = self.symbols.symbol_names.get(new_id).unwrap_or(&unknown);
             println!(
@@ -205,6 +213,7 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn debug_type_env(&self, title: String, env: &TypeEnv) {
+        let type_info = &*self.type_info;
         println!("{}", title);
         println!("\n| {:<32} | {:<96} |", " Symbol ", " Type ");
         println!("|-{:-<32}-|-{:-<96}-|", "", "");
@@ -232,7 +241,7 @@ impl<'a> TypecheckContext<'a> {
         println!("\nFunction argument labels:");
         println!("\n| {:<32} | {:<64} |", " Function ", " Arg Labels ");
         println!("|-{:-<32}-|-{:-<64}-|", "", "");
-        for (symbol_id, labels) in &self.fn_arg_labels {
+        for (symbol_id, labels) in &type_info.fn_arg_labels {
             if !self
                 .symbols
                 .intrinsic_types
@@ -282,7 +291,8 @@ impl<'a> TypecheckContext<'a> {
                 let (param_names, bound_vars, type_param_map) =
                     self.build_alias_param_map(alias)?;
 
-                let alias_type = self.type_from_node_with_params(actual, &type_param_map)?;
+                let alias_type =
+                    self.type_from_node_with_params(actual.as_mut(), &type_param_map)?;
 
                 let mut deps = HashSet::default();
                 self.collect_alias_dependencies(alias_symbol_id, &alias_type, &mut deps);
@@ -396,13 +406,14 @@ impl<'a> TypecheckContext<'a> {
 
                 let mut last_variant: HashMap<String, Ty> = HashMap::default();
 
-                for (i, variant) in variants.iter().enumerate() {
+                let total_variants = variants.len();
+                for (i, variant) in variants.iter_mut().enumerate() {
                     if let NodeKind::TypeConstructor {
                         symbol: _ctor_name,
                         fields,
-                    } = &variant.kind
+                    } = &mut variant.kind
                     {
-                        let is_last_variant = i == variants.len() - 1;
+                        let is_last_variant = i == total_variants - 1;
 
                         if let Some(ctor_symbol_id) = variant.symbol_id {
                             let result_type = base_type.clone();
@@ -420,7 +431,7 @@ impl<'a> TypecheckContext<'a> {
                                 let mut curried_type = result_type;
 
                                 //reverse for currying
-                                for (label, field_type_node, _) in fields.iter().rev() {
+                                for (label, field_type_node, _) in fields.iter_mut().rev() {
                                     let field_type = self.type_from_node_with_params(
                                         field_type_node,
                                         &type_param_map,
@@ -457,7 +468,8 @@ impl<'a> TypecheckContext<'a> {
                                         .map(|l| l.clone().unwrap_or_else(|| "_".into()))
                                         .collect();
 
-                                    self.fn_arg_labels
+                                    self.type_info
+                                        .fn_arg_labels
                                         .insert(ctor_symbol_id, field_labels.clone());
                                 }
                             }
@@ -491,7 +503,7 @@ impl<'a> TypecheckContext<'a> {
 
                 for (_, arg_type, _) in args {
                     let arg_ty = if let Some(type_node) = arg_type {
-                        self.type_from_node(type_node)?
+                        self.type_from_node(type_node.as_mut())?
                     } else {
                         self.fresh_type_var()
                     };
@@ -499,7 +511,7 @@ impl<'a> TypecheckContext<'a> {
                 }
 
                 let ret_type = if let Some(ret) = return_type {
-                    self.type_from_node(ret)?
+                    self.type_from_node(ret.as_mut())?
                 } else {
                     self.fresh_type_var()
                 };
@@ -580,7 +592,7 @@ impl<'a> TypecheckContext<'a> {
                 let (s1, t1) = self.algo_w(env, expr)?;
 
                 if let Some(type_node) = const_type {
-                    let declared_type = self.type_from_node(type_node)?;
+                    let declared_type = self.type_from_node(type_node.as_mut())?;
                     let s2 = self.unify(&s1.apply(&t1), &declared_type);
                     let s2 = self.bind_err_ctx(
                         s2,
@@ -606,7 +618,7 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn algo_w(&mut self, env: &mut TypeEnv, node: &mut Node) -> Result<(Substitution, Ty), ()> {
-        match &mut node.kind {
+        let result = match &mut node.kind {
             NodeKind::Module { .. } => self.algo_w_module(env, node, false),
             NodeKind::Expr { .. } => self.algo_w_expr(env, node),
             NodeKind::ConstDecl { .. } => self.algo_w_const_decl(env, node),
@@ -622,7 +634,7 @@ impl<'a> TypecheckContext<'a> {
 
                     for (arg_pattern, arg_type, _) in args {
                         let arg_ty = if let Some(type_node) = arg_type {
-                            self.type_from_node(type_node)?
+                            self.type_from_node(type_node.as_mut())?
                         } else {
                             self.fresh_type_var()
                         };
@@ -653,7 +665,7 @@ impl<'a> TypecheckContext<'a> {
                     };
 
                     let final_return_type = if let Some(ret_type_node) = return_type {
-                        let declared_ret_type = self.type_from_node(ret_type_node)?;
+                        let declared_ret_type = self.type_from_node(ret_type_node.as_mut())?;
                         let s2 = self.unify(&s1.apply(&body_type), &declared_ret_type);
                         let s2 = self.bind_err_ctx(
                             s2,
@@ -702,7 +714,7 @@ impl<'a> TypecheckContext<'a> {
                     let mut arg_types = Vec::new();
                     for (_, arg_type, _) in args {
                         if let Some(type_node) = arg_type {
-                            arg_types.push(self.type_from_node(type_node)?);
+                            arg_types.push(self.type_from_node(type_node.as_mut())?);
                         } else {
                             self.errors.push(Diagnostic::new(DiagnosticMsg {
                                 message: "Host function argument missing type annotation"
@@ -716,7 +728,7 @@ impl<'a> TypecheckContext<'a> {
                     }
 
                     let return_ty = if let Some(ret_type_node) = return_type {
-                        self.type_from_node(ret_type_node)?
+                        self.type_from_node(ret_type_node.as_mut())?
                     } else {
                         self.errors.push(Diagnostic::new(DiagnosticMsg {
                             message: "Host function missing return type annotation".to_string(),
@@ -737,7 +749,14 @@ impl<'a> TypecheckContext<'a> {
                 }
             }
             _ => Ok((Substitution::new(), self.fresh_type_var())),
+        };
+
+        if let Ok((subst, ty)) = &result {
+            let annotated = subst.apply(ty);
+            node.ty = Some(annotated);
         }
+
+        result
     }
 
     fn bind_err_ctx<T>(
@@ -1081,7 +1100,7 @@ impl<'a> TypecheckContext<'a> {
                 let mut arg_types = Vec::new();
 
                 let fn_arg_labels = if let Some(symbol_id) = callee.symbol_id {
-                    self.fn_arg_labels.get(&symbol_id).cloned()
+                    self.type_info.fn_arg_labels.get(&symbol_id).cloned()
                 } else {
                     None
                 };
@@ -1198,6 +1217,7 @@ impl<'a> TypecheckContext<'a> {
                 {
                     //monotype, check monormorphisation table
                     if let Some(existing_id) = self
+                        .type_info
                         .fn_instantiation_ids
                         .get(&(callee_id, final_fn_type.clone()))
                     {
@@ -1346,7 +1366,7 @@ impl<'a> TypecheckContext<'a> {
             } => {
                 let (s1, mut t1) = self.algo_w(env, value_expr)?;
                 let result = if let Some(declared_type) = symbol_type {
-                    let expected_type = self.type_from_node(declared_type)?;
+                    let expected_type = self.type_from_node(declared_type.as_mut())?;
                     let s2 = self.unify(&s1.apply(&t1), &expected_type);
                     let s2 = self.bind_err_ctx(
                         s2,
@@ -1523,7 +1543,7 @@ impl<'a> TypecheckContext<'a> {
 
                 for (arg_pattern, arg_type, _) in args {
                     let arg_ty = if let Some(type_node) = arg_type {
-                        self.type_from_node(type_node)?
+                        self.type_from_node(type_node.as_mut())?
                     } else {
                         self.fresh_type_var()
                     };
@@ -1548,7 +1568,7 @@ impl<'a> TypecheckContext<'a> {
                 let (s1, body_type) = self.algo_w(&mut new_env, body)?;
 
                 let final_return_type = if let Some(ret_type_node) = return_type {
-                    let declared_ret_type = self.type_from_node(ret_type_node)?;
+                    let declared_ret_type = self.type_from_node(ret_type_node.as_mut())?;
                     let s2 = self.unify(&s1.apply(&body_type), &declared_ret_type);
                     let s2 = self.bind_err_ctx(
                         s2,
@@ -1585,6 +1605,7 @@ impl<'a> TypecheckContext<'a> {
         //check instantiation table for prior monomorphisation
         if let Some(symbol_id) = callee.symbol_id {
             if let Some(existing_id) = self
+                .type_info
                 .fn_instantiation_ids
                 .get(&(symbol_id, callee_type.clone()))
             {
@@ -1608,9 +1629,11 @@ impl<'a> TypecheckContext<'a> {
             ),
         );
 
-        self.monomorphised_fns
+        self.type_info
+            .monomorphised_fns
             .insert(new_symbol_id, (symbol_id, callee_type.clone()));
-        self.fn_instantiation_ids
+        self.type_info
+            .fn_instantiation_ids
             .insert((symbol_id, callee_type.clone()), new_symbol_id);
 
         new_symbol_id
@@ -1736,7 +1759,7 @@ impl<'a> TypecheckContext<'a> {
     fn instantiate_type_alias(
         &mut self,
         alias_id: SymbolId,
-        type_arg_nodes: &Vec<Node>,
+        type_arg_nodes: &mut Vec<Node>,
         type_param_map: &HashMap<String, Ty>,
         span: &CodeSpan,
     ) -> Result<Ty, ()> {
@@ -1789,7 +1812,7 @@ impl<'a> TypecheckContext<'a> {
         }
 
         let mut arg_types = Vec::new();
-        for arg in type_arg_nodes {
+        for arg in type_arg_nodes.iter_mut() {
             arg_types.push(self.type_from_node_with_params(arg, type_param_map)?);
         }
 
@@ -1804,10 +1827,10 @@ impl<'a> TypecheckContext<'a> {
 
     fn type_from_node_with_params(
         &mut self,
-        node: &Node,
+        node: &mut Node,
         type_param_map: &HashMap<String, Ty>,
     ) -> Result<Ty, ()> {
-        match &node.kind {
+        let result = match &mut node.kind {
             NodeKind::Type {
                 type_vars,
                 symbol,
@@ -1849,7 +1872,7 @@ impl<'a> TypecheckContext<'a> {
                         ok(Ty::new(TyKind::Concrete(symbol_id)))
                     } else {
                         let mut args = Vec::new();
-                        for type_var in type_vars {
+                        for type_var in type_vars.iter_mut() {
                             args.push(self.type_from_node_with_params(type_var, type_param_map)?);
                         }
                         ok(Ty::new(TyKind::Ctor(symbol_id, args)))
@@ -1869,12 +1892,12 @@ impl<'a> TypecheckContext<'a> {
             }
             NodeKind::FnType { args, return_type } => {
                 let mut arg_types = Vec::new();
-                for arg in args {
+                for arg in args.iter_mut() {
                     arg_types.push(self.type_from_node_with_params(arg, type_param_map)?);
                 }
 
                 let ret_type = if let Some(ret) = return_type {
-                    self.type_from_node_with_params(ret, type_param_map)?
+                    self.type_from_node_with_params(ret.as_mut(), type_param_map)?
                 } else {
                     self.fresh_type_var()
                 };
@@ -1888,7 +1911,7 @@ impl<'a> TypecheckContext<'a> {
             }
             NodeKind::TupleType { elements } => {
                 let mut types = Vec::new();
-                for elem in elements {
+                for elem in elements.iter_mut() {
                     types.push(self.type_from_node_with_params(elem, type_param_map)?);
                 }
                 Ok(Ty::new(TyKind::Tuple(types)))
@@ -1902,10 +1925,16 @@ impl<'a> TypecheckContext<'a> {
                 }));
                 Err(())
             }
+        };
+
+        if let Ok(ty) = &result {
+            node.ty = Some(ty.clone());
         }
+
+        result
     }
 
-    fn type_from_node(&mut self, node: &Node) -> Result<Ty, ()> {
+    fn type_from_node(&mut self, node: &mut Node) -> Result<Ty, ()> {
         let empty_map = HashMap::default();
         self.type_from_node_with_params(node, &empty_map)
     }
@@ -1982,7 +2011,7 @@ impl<'a> TypecheckContext<'a> {
                         })
                         .filter_map(|label| label)
                         .collect::<Vec<_>>();
-                    self.fn_arg_labels.insert(symbol_id, arg_labels);
+                    self.type_info.fn_arg_labels.insert(symbol_id, arg_labels);
                 }
             }
             _ => {}

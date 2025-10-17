@@ -2,6 +2,7 @@ use crate::{
     diagnostic::Diagnostic,
     parse::{CodeSpan, token::TokenVariant},
     symbol::{SymbolContext, SymbolId},
+    types::Ty,
 };
 
 #[derive(Clone, Debug)]
@@ -11,6 +12,7 @@ pub struct Node {
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
     pub symbol_id: Option<SymbolId>,
+    pub ty: Option<Ty>,
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +192,7 @@ impl Node {
             symbol_id: None,
             errors: vec![],
             warnings: vec![],
+            ty: None,
         }
     }
 
