@@ -78,6 +78,9 @@ pub enum DiagnosticMsgType {
     RecursiveTypeDefinition,
     InvalidBindingPattern,
     MismatchedPattern,
+    TypeAliasCycle,
+    TypeAliasArityMismatch,
+    TypeAliasExpansionFailure,
     Unimplemented,
 }
 
@@ -114,6 +117,9 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         InvalidFunctionCall => "ET0025",
         RecursiveTypeDefinition => "ET0026",
         MismatchedPattern => "ET0027",
+        TypeAliasCycle => "ET0031",
+        TypeAliasArityMismatch => "ET0032",
+        TypeAliasExpansionFailure => "ET0033",
         Unimplemented => "EC0027", // todo
     }
 }

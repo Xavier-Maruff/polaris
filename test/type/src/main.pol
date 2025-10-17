@@ -12,6 +12,11 @@ type Other {
     Other(val: nocrypt String)
 }
 
+type AliasInt = Int
+type AliasResult(a) = Result(a, String)
+type AliasField = Field(Int)
+type WrappedAlias(a) = #(AliasResult(a), Array(a))
+
 
 pub fn check_inference(arg) {
     let b = Ok(12)
@@ -21,6 +26,10 @@ pub fn check_inference(arg) {
 
 pub fn label_test(str: t, int: Int, tuple: #(String, Int)) {
     #(str, int)
+}
+
+pub fn alias_passthrough(val: AliasResult(t)) -> AliasResult(t) {
+    val
 }
 
 pub fn main() {
@@ -56,6 +65,16 @@ pub fn main() {
         Ctor1(val) -> val + 1,
         Ctor2 -> 0
     }
+
+    let alias_val: AliasInt = 24
+    let nocrypt_alias: nocrypt AliasInt = 42
+    let alias_result: AliasResult(Int) = Ok(alias_val)
+    let alias_field: AliasField = Field(val: alias_val)
+    let _alias_field_val = alias_field.val
+    let alias_tuple: WrappedAlias(Int) = #(alias_result, [alias_val])
+    let alias_passthrough_fn: fn(AliasResult(Int)) -> AliasResult(Int) = alias_passthrough
+    let alias_passthrough_result = alias_passthrough_fn(alias_result)
+    let _nocrypt_alias_passthrough: AliasResult(nocrypt AliasInt) = Ok(nocrypt_alias)
 
     let test_if = if True && False {
         12

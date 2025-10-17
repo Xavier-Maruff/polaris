@@ -1,24 +1,31 @@
 # TODO
+
 ## Build system
-* New project command
-* Test command
-* Lint command
+
+- New project command
+- Test command
+- Lint command
 
 ## Parser
-* All good for now
+
+- All good for now
 
 ## Type system
-* Field access on single-constructor types
-* Type aliases
+
+- Taint analysis
 
 ## IR
-* Everything
+
+- Everything
 
 ## VM Bytecode
-* Everything
+
+- Everything
 
 ## Standard library
-* Everything
+
+- Everything
 
 ## Runtime
-* Everything
+
+- Everything

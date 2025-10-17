@@ -6,7 +6,7 @@ use crate::{
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::{
-        BOOL, INT, LIST, MAP, REAL, STRING, VOID, create_intrinsic_binops,
+        ARRAY, BOOL, INT, LIST, MAP, REAL, STRING, VOID, create_intrinsic_binops,
         create_intrinsic_type_env, create_intrinsic_unary_ops,
     },
     module::DepGraphContext,
@@ -44,6 +44,8 @@ struct TypecheckContext<'a> {
     fn_arg_labels: HashMap<SymbolId, Vec<String>>,
     //field access types for single-constructor types
     field_access_types: HashMap<SymbolId, HashMap<String, Ty>>,
+    type_aliases: HashMap<SymbolId, TypeAliasInfo>,
+    alias_dependencies: HashMap<SymbolId, HashSet<SymbolId>>,
 }
 
 pub type TypeVar = usize;
@@ -87,6 +89,15 @@ pub struct Scheme {
 }
 
 #[derive(Clone, Debug)]
+struct TypeAliasInfo {
+    params: Vec<String>,
+    bound_vars: Vec<TypeVar>,
+    body: Ty,
+    span: CodeSpan,
+    file: String,
+}
+
+#[derive(Clone, Debug)]
 struct Substitution(HashMap<TypeVar, Ty>);
 
 pub type TypeEnv = HashMap<SymbolId, Scheme>;
@@ -107,6 +118,8 @@ impl<'a> TypecheckContext<'a> {
             fn_arg_labels: HashMap::default(),
             accepting_unops: HashMap::default(),
             field_access_types: HashMap::default(),
+            type_aliases: HashMap::default(),
+            alias_dependencies: HashMap::default(),
         }
     }
 
@@ -264,14 +277,81 @@ impl<'a> TypecheckContext<'a> {
             NodeKind::Module { .. } => self.algo_w_module(env, node, true),
             NodeKind::ConstDecl { .. } => self.algo_w_const_decl(env, node),
 
-            // NodeKind::TypeDecl { .. } => Ok((
-            //     Substitution::new(),
-            //     Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
-            // )),
-            // NodeKind::TypeAlias { .. } => Ok((
-            //     Substitution::new(),
-            //     Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
-            // )),
+            NodeKind::TypeAlias { alias, actual, .. } => {
+                let alias_symbol_id = node.symbol_id.ok_or(())?;
+                let (param_names, bound_vars, type_param_map) =
+                    self.build_alias_param_map(alias)?;
+
+                let alias_type = self.type_from_node_with_params(actual, &type_param_map)?;
+
+                let mut deps = HashSet::default();
+                self.collect_alias_dependencies(alias_symbol_id, &alias_type, &mut deps);
+                if let Some(conflict) = self.detect_alias_cycle(alias_symbol_id, &deps) {
+                    let alias_name = self
+                        .symbols
+                        .symbol_names
+                        .get(&alias_symbol_id)
+                        .cloned()
+                        .unwrap_or_else(|| "<unknown>".into());
+
+                    let conflict_name = self
+                        .symbols
+                        .symbol_names
+                        .get(&conflict)
+                        .cloned()
+                        .unwrap_or_else(|| "<unknown>".into());
+
+                    let mut diagnostic = Diagnostic {
+                        primary: DiagnosticMsg {
+                            message: format!(
+                                "Type alias '{}' forms a cycle through '{}'",
+                                alias_name, conflict_name
+                            ),
+                            span: node.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeAliasCycle,
+                        },
+                        notes: vec![],
+                        hints: vec!["Break the cycle by replacing one alias with a full type definition or removing the circular reference.".into()],
+                    };
+
+                    if let Some(conflict_info) = self.type_aliases.get(&conflict) {
+                        diagnostic.notes.push(DiagnosticMsg {
+                            message: format!("'{}' was previously aliased here", conflict_name),
+                            span: conflict_info.span.clone(),
+                            file: conflict_info.file.clone(),
+                            err_type: DiagnosticMsgType::TypeAliasCycle,
+                        });
+                    }
+
+                    self.errors.push(diagnostic);
+                    return Err(());
+                }
+
+                let info = TypeAliasInfo {
+                    params: param_names.clone(),
+                    bound_vars: bound_vars.clone(),
+                    body: alias_type.clone(),
+                    span: node.span.clone(),
+                    file: self.current_file.clone(),
+                };
+
+                self.type_aliases.insert(alias_symbol_id, info);
+                self.alias_dependencies.insert(alias_symbol_id, deps);
+
+                let scheme = Scheme {
+                    bound_vars: bound_vars.clone(),
+                    body: alias_type.clone(),
+                };
+
+                env.insert(alias_symbol_id, scheme.clone());
+                self.type_env.insert(alias_symbol_id, scheme);
+
+                Ok((
+                    Substitution::new(),
+                    Ty::new(TyKind::Concrete(self.symbols.intrinsic_types[VOID])),
+                ))
+            }
 
             //todo: type decls / alias + constructors
             NodeKind::TypeDecl {
@@ -1285,7 +1365,7 @@ impl<'a> TypecheckContext<'a> {
 
                     let nocrypt = matches!(expected_type.kind, TyKind::Nocrypt(_));
 
-                    let mut t1 = s2.apply(&t1);
+                    let mut t1 = s2.apply(&expected_type);
                     t1.literal = false;
 
                     let t1 = if nocrypt && !matches!(t1.kind, TyKind::Nocrypt(_)) {
@@ -1543,6 +1623,185 @@ impl<'a> TypecheckContext<'a> {
         self.accepting_unops = create_intrinsic_unary_ops(self.symbols, &self.type_env);
     }
 
+    fn build_alias_param_map(
+        &mut self,
+        alias_node: &Node,
+    ) -> Result<(Vec<String>, Vec<TypeVar>, HashMap<String, Ty>), ()> {
+        if let NodeKind::Type { type_vars, .. } = &alias_node.kind {
+            let mut param_names = Vec::new();
+            let mut bound_vars = Vec::new();
+            let mut param_map: HashMap<String, Ty> = HashMap::default();
+
+            for type_var in type_vars {
+                if let NodeKind::Type { symbol, .. } = &type_var.kind {
+                    let var_id = fresh_type_var_id(&mut self.type_var_counter);
+                    param_names.push(symbol.clone());
+                    bound_vars.push(var_id);
+                    param_map.insert(symbol.clone(), Ty::new(TyKind::Var(var_id)));
+                }
+            }
+
+            Ok((param_names, bound_vars, param_map))
+        } else {
+            self.errors.push(Diagnostic::new(DiagnosticMsg {
+                message: "Invalid type alias declaration".into(),
+                span: alias_node.span.clone(),
+                file: self.current_file.clone(),
+                err_type: DiagnosticMsgType::TypeAliasExpansionFailure,
+            }));
+            Err(())
+        }
+    }
+
+    fn collect_alias_dependencies(
+        &self,
+        alias_symbol_id: SymbolId,
+        ty: &Ty,
+        deps: &mut HashSet<SymbolId>,
+    ) {
+        use TyKind::*;
+        match &ty.kind {
+            Var(_) => {}
+            Concrete(id) => {
+                if *id == alias_symbol_id || self.type_aliases.contains_key(id) {
+                    deps.insert(*id);
+                }
+            }
+            Ctor(id, args) => {
+                if *id == alias_symbol_id || self.type_aliases.contains_key(id) {
+                    deps.insert(*id);
+                }
+                for arg in args {
+                    self.collect_alias_dependencies(alias_symbol_id, arg, deps);
+                }
+            }
+            Fn(arg, ret) => {
+                self.collect_alias_dependencies(alias_symbol_id, arg, deps);
+                self.collect_alias_dependencies(alias_symbol_id, ret, deps);
+            }
+            Tuple(elements) => {
+                for elem in elements {
+                    self.collect_alias_dependencies(alias_symbol_id, elem, deps);
+                }
+            }
+            Nocrypt(inner) => {
+                self.collect_alias_dependencies(alias_symbol_id, inner, deps);
+            }
+        }
+    }
+
+    fn detect_alias_cycle(&self, alias_id: SymbolId, deps: &HashSet<SymbolId>) -> Option<SymbolId> {
+        if deps.contains(&alias_id) {
+            return Some(alias_id);
+        }
+
+        for dep in deps {
+            let mut visited = HashSet::default();
+            if self.alias_depends_on(*dep, alias_id, &mut visited) {
+                return Some(*dep);
+            }
+        }
+
+        None
+    }
+
+    fn alias_depends_on(
+        &self,
+        source: SymbolId,
+        target: SymbolId,
+        visited: &mut HashSet<SymbolId>,
+    ) -> bool {
+        if source == target {
+            return true;
+        }
+
+        if !visited.insert(source) {
+            return false;
+        }
+
+        if let Some(children) = self.alias_dependencies.get(&source) {
+            if children.contains(&target) {
+                return true;
+            }
+            for child in children {
+                if self.alias_depends_on(*child, target, visited) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn instantiate_type_alias(
+        &mut self,
+        alias_id: SymbolId,
+        type_arg_nodes: &Vec<Node>,
+        type_param_map: &HashMap<String, Ty>,
+        span: &CodeSpan,
+    ) -> Result<Ty, ()> {
+        let alias_info = if let Some(info) = self.type_aliases.get(&alias_id) {
+            info.clone()
+        } else {
+            self.errors.push(Diagnostic {
+                primary: DiagnosticMsg {
+                    message: "Attempted to use an undefined type alias".into(),
+                    span: span.clone(),
+                    file: self.current_file.clone(),
+                    err_type: DiagnosticMsgType::TypeAliasExpansionFailure,
+                },
+                notes: vec![],
+                hints: vec![
+                    "Ensure the type alias is defined before it is used, or import it from the correct module.".into(),
+                ],
+            });
+            return Err(());
+        };
+
+        if alias_info.params.len() != type_arg_nodes.len() {
+            let alias_name = self
+                .symbols
+                .symbol_names
+                .get(&alias_id)
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".into());
+
+            self.errors.push(Diagnostic {
+                primary: DiagnosticMsg {
+                    message: format!(
+                        "Type alias '{}' expects {} type argument(s), but {} were provided",
+                        alias_name,
+                        alias_info.params.len(),
+                        type_arg_nodes.len()
+                    ),
+                    span: span.clone(),
+                    file: self.current_file.clone(),
+                    err_type: DiagnosticMsgType::TypeAliasArityMismatch,
+                },
+                notes: vec![],
+                hints: vec![format!(
+                    "Supply {} type argument(s) when using '{}'.",
+                    alias_info.params.len(),
+                    alias_name
+                )],
+            });
+            return Err(());
+        }
+
+        let mut arg_types = Vec::new();
+        for arg in type_arg_nodes {
+            arg_types.push(self.type_from_node_with_params(arg, type_param_map)?);
+        }
+
+        let mut subst_map: HashMap<TypeVar, Ty> = HashMap::default();
+        for (var, ty) in alias_info.bound_vars.iter().zip(arg_types.into_iter()) {
+            subst_map.insert(*var, ty);
+        }
+
+        let substitution = Substitution(subst_map);
+        Ok(substitution.apply(&alias_info.body))
+    }
+
     fn type_from_node_with_params(
         &mut self,
         node: &Node,
@@ -1578,7 +1837,15 @@ impl<'a> TypecheckContext<'a> {
                 };
 
                 if let Some(symbol_id) = symbol_id {
-                    if type_vars.is_empty() {
+                    if self.type_aliases.contains_key(&symbol_id) {
+                        let alias_ty = self.instantiate_type_alias(
+                            symbol_id,
+                            type_vars,
+                            type_param_map,
+                            &node.span,
+                        )?;
+                        ok(alias_ty)
+                    } else if type_vars.is_empty() {
                         ok(Ty::new(TyKind::Concrete(symbol_id)))
                     } else {
                         let mut args = Vec::new();
@@ -2112,6 +2379,22 @@ impl<'a> TypecheckContext<'a> {
                 }
                 Ok(s)
             }
+            (Ctor(id1, args1), Ctor(id2, args2))
+                if args1.len() == args2.len()
+                    && ((t1.literal
+                        && *id1 == self.symbols.intrinsic_types[LIST]
+                        && *id2 == self.symbols.intrinsic_types[ARRAY])
+                        || (t2.literal
+                            && *id2 == self.symbols.intrinsic_types[LIST]
+                            && *id1 == self.symbols.intrinsic_types[ARRAY])) =>
+            {
+                let mut s = Substitution::new();
+                for (arg1, arg2) in args1.iter().zip(args2.iter()) {
+                    let s2 = self.unify(&s.apply(arg1), &s.apply(arg2))?;
+                    s = s.compose(&s2);
+                }
+                Ok(s)
+            }
 
             _ => Err(TypeError {
                 kind: TypeErrorKind::UnificationFail,
@@ -2308,22 +2591,36 @@ impl Substitution {
     fn apply(&self, t: &Ty) -> Ty {
         use TyKind::*;
         match &t.kind {
-            Var(a) => self.0.get(a).cloned().unwrap_or(Ty::new(Var(*a))),
+            Var(a) => self.0.get(a).cloned().unwrap_or_else(|| {
+                let mut ty = Ty::new(Var(*a));
+                ty.literal = t.literal;
+                ty
+            }),
             Fn(arg, ret) => {
                 let new_arg = self.apply(arg);
                 let new_ret = self.apply(ret);
-                Ty::new(Fn(Box::new(new_arg), Box::new(new_ret)))
+                let mut ty = Ty::new(Fn(Box::new(new_arg), Box::new(new_ret)));
+                ty.literal = t.literal;
+                ty
             }
             Tuple(types) => {
                 let new_types = types.iter().map(|ty| self.apply(ty)).collect();
-                Ty::new(Tuple(new_types))
+                let mut ty = Ty::new(Tuple(new_types));
+                ty.literal = t.literal;
+                ty
             }
             Ctor(name, args) => {
                 let new_args = args.iter().map(|arg| self.apply(arg)).collect();
-                Ty::new(Ctor(*name, new_args))
+                let mut ty = Ty::new(Ctor(*name, new_args));
+                ty.literal = t.literal;
+                ty
             }
             Concrete(_) => t.clone(),
-            Nocrypt(t) => Ty::new(Nocrypt(Box::new(self.apply(t)))),
+            Nocrypt(t_inner) => {
+                let mut ty = Ty::new(Nocrypt(Box::new(self.apply(t_inner))));
+                ty.literal = t.literal;
+                ty
+            }
         }
     }
 
