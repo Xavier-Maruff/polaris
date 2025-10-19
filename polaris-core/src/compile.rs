@@ -1,6 +1,7 @@
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::desugar::desugar_pass;
+use crate::effect::{EffectInfo, effect_pass};
 use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
 use crate::parse::parse;
 use crate::symbol::{SymbolContext, symbol_pass};
@@ -27,6 +28,7 @@ pub struct CompileContext {
     pub warnings: Vec<Diagnostic>,
     pub passes: Vec<Pass>,
     pub type_info: TypeInfo,
+    pub effect_info: EffectInfo,
 }
 
 impl Default for CompileConfig {
@@ -54,8 +56,10 @@ impl CompileContext {
                 ("Symbol resolution", symbol_pass),
                 ("Dependencies", dependency_pass),
                 ("Typechecking", typecheck_pass),
+                ("Effects", effect_pass),
             ],
             type_info: TypeInfo::default(),
+            effect_info: EffectInfo::default(),
         }
     }
 
@@ -65,6 +69,7 @@ impl CompileContext {
         self.packages.extend(other.packages);
         self.symbols.merge(other.symbols);
         self.type_info = other.type_info;
+        self.effect_info = other.effect_info;
     }
 
     pub fn ingest_source(&mut self, package: String, module: String, file: String, source: String) {

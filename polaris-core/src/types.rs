@@ -186,12 +186,13 @@ impl<'a> TypecheckContext<'a> {
         }
 
         self.type_info.type_env = self.type_env.clone();
-        self.debug_type_env("Final type env".into(), &self.type_env);
-        self.print_monomorphised_fns();
+        //self.debug_type_env("Final type env".into(), &self.type_env);
+        //self.print_monomorphised_fns();
 
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn print_monomorphised_fns(&self) {
         let type_info = &*self.type_info;
         println!("\nMonomorphised functions:");
@@ -214,6 +215,7 @@ impl<'a> TypecheckContext<'a> {
         println!("\n");
     }
 
+    #[allow(dead_code)]
     fn debug_type_env(&self, title: String, env: &TypeEnv) {
         let type_info = &*self.type_info;
         println!("{}", title);
@@ -503,7 +505,10 @@ impl<'a> TypecheckContext<'a> {
 
             //not doing full algo_w for fn decls at top level, instead just getting generic types
             NodeKind::FnDecl {
-                args, return_type, ..
+                args,
+                return_type,
+                pure: _,
+                ..
             } => {
                 let mut arg_types = Vec::new();
 
@@ -762,6 +767,17 @@ impl<'a> TypecheckContext<'a> {
 
                     let mut fn_type = return_ty;
                     let mut accumulated_secret = fn_type.require_secret;
+                    if arg_types.is_empty() {
+                        let mut void_fn = Ty::new(TyKind::Fn(
+                            Box::new(Ty::new(TyKind::Concrete(
+                                self.symbols.intrinsic_types[VOID],
+                            ))),
+                            Box::new(fn_type),
+                        ));
+                        accumulated_secret = accumulated_secret || void_fn.require_secret;
+                        void_fn.require_secret = accumulated_secret;
+                        fn_type = void_fn;
+                    }
                     for arg_type in arg_types.into_iter().rev() {
                         accumulated_secret = accumulated_secret || arg_type.require_secret;
                         let mut new_fn = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
@@ -1463,17 +1479,7 @@ impl<'a> TypecheckContext<'a> {
                     }
 
                     let t1 = if nocrypt && !matches!(t1.kind, TyKind::Nocrypt(_)) {
-                        let inner_origin = t1.secret_origin.clone();
-                        let mut nocrypt_ty = Ty {
-                            kind: TyKind::Nocrypt(Box::new(t1)),
-                            literal: false,
-                            require_secret: true,
-                            secret_origin: inner_origin.clone(),
-                        };
-                        if nocrypt_ty.secret_origin.is_none() {
-                            nocrypt_ty.secret_origin = implicit_origin.clone();
-                        }
-                        nocrypt_ty
+                        Ty::wrap_nocrypt_deep(t1)
                     } else {
                         t1
                     };
@@ -1981,7 +1987,7 @@ impl<'a> TypecheckContext<'a> {
             } => {
                 let ok = |a| {
                     if *nocrypt {
-                        Ok(Ty::new(TyKind::Nocrypt(Box::new(a))))
+                        Ok(Ty::wrap_nocrypt_deep(a))
                     } else {
                         Ok(a)
                     }
@@ -2656,6 +2662,10 @@ impl Ty {
         }
     }
 
+    pub fn requires_secret(&self) -> bool {
+        !self.nocryptable()
+    }
+
     fn mark_secret(&mut self, span: &CodeSpan) {
         if !self.require_secret {
             self.require_secret = true;
@@ -2676,9 +2686,9 @@ impl Ty {
         let mut outer = Ty::new(TyKind::Nocrypt(Box::new(inner)));
         if let TyKind::Nocrypt(ref boxed) = outer.kind {
             outer.literal = boxed.literal;
-            outer.require_secret = boxed.require_secret;
-            outer.secret_origin = boxed.secret_origin.clone();
         }
+        outer.require_secret = false;
+        outer.secret_origin = None;
         outer
     }
 

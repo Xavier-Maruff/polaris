@@ -86,6 +86,8 @@ impl DesugarContext {
                                 warnings: node.warnings.clone(),
                                 errors: node.errors.clone(),
                                 ty: node.ty.clone(),
+                                effect: node.effect.clone(),
+                                branch_strategy: node.branch_strategy.clone(),
                             };
                         }
                     }

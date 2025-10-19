@@ -59,6 +59,7 @@ pub enum TokenVariant {
     Pub,
     Const,
     Nocrypt,
+    Pure,
     To,
     Match,
 
@@ -162,6 +163,7 @@ impl std::fmt::Display for TokenVariant {
             Match => write!(f, "match"),
             Assert => write!(f, "assert"),
             Nocrypt => write!(f, "nocrypt"),
+            Pure => write!(f, "pure"),
             Comment(s) => match s {
                 (text, true) => write!(f, "/*{}*/", text),
                 (text, false) => write!(f, "//{}", text),

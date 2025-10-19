@@ -1,5 +1,6 @@
 use crate::{
     diagnostic::Diagnostic,
+    effect::{BranchStrategy, Effect},
     parse::{CodeSpan, token::TokenVariant},
     symbol::{SymbolContext, SymbolId},
     types::Ty,
@@ -13,6 +14,8 @@ pub struct Node {
     pub warnings: Vec<Diagnostic>,
     pub symbol_id: Option<SymbolId>,
     pub ty: Option<Ty>,
+    pub effect: Option<Effect>,
+    pub branch_strategy: Option<BranchStrategy>,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +64,7 @@ pub enum NodeKind {
     FnDecl {
         public: bool,
         host: bool,
+        pure: bool,
         symbol: String,
         return_type: Option<Box<Node>>,
         // (symbol, optional type, span)
@@ -193,6 +197,8 @@ impl Node {
             errors: vec![],
             warnings: vec![],
             ty: None,
+            effect: None,
+            branch_strategy: None,
         }
     }
 
@@ -297,15 +303,18 @@ impl NodeKind {
                     elements.iter().map(|elem| elem.render(symbols)).collect();
                 format!("({})", elem_strs.join(", "))
             }
-            FnDecl { symbol, host, .. } => {
+            FnDecl {
+                symbol, host, pure, ..
+            } => {
                 let host = if *host { "harness " } else { "" };
+                let pure_kw = if *pure { "pure " } else { "" };
 
                 if let Some(id) = symbol_id {
                     if let Some(sym) = symbols.symbol_names.get(&id) {
-                        return format!("{}fn {}", host, sym);
+                        return format!("{}{}fn {}", pure_kw, host, sym);
                     }
                 }
-                format!("{}fn {}", host, symbol)
+                format!("{}{}fn {}", pure_kw, host, symbol)
             }
             ConstDecl { symbol, .. } => symbol.render(symbols),
             Expr { expr } => expr.render(symbols),

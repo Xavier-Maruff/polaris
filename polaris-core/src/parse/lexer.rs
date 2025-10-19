@@ -286,6 +286,7 @@ impl Lexer {
                 "pub" => TokenVariant::Pub,
                 "const" => TokenVariant::Const,
                 "nocrypt" => TokenVariant::Nocrypt,
+                "pure" => TokenVariant::Pure,
                 "match" => TokenVariant::Match,
                 _ => TokenVariant::Ident(ident_str),
             },

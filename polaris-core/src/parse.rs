@@ -297,7 +297,9 @@ impl<'a> ParseContext<'a> {
         is_pub: bool,
     ) -> Result<(), ()> {
         let n = match self.curr_tok.variant {
-            TokenVariant::Harness | TokenVariant::Fn => self.parse_func_decl(node, lexer, is_pub),
+            TokenVariant::Harness | TokenVariant::Fn | TokenVariant::Pure => {
+                self.parse_func_decl(node, lexer, is_pub)
+            }
             TokenVariant::Type => self.parse_type_decl(node, lexer, is_pub),
             TokenVariant::Const => self.parse_const_decl(node, lexer, is_pub),
             //or directive - todo
@@ -1276,12 +1278,22 @@ impl<'a> ParseContext<'a> {
         public: bool,
     ) -> Result<Node, ()> {
         let start_span = self.curr_tok.span.start;
-        let harness = if matches!(self.curr_tok.variant, TokenVariant::Harness) {
-            wrap_err!(node, self.advance(lexer));
-            true
-        } else {
-            false
-        };
+        let mut harness = false;
+        let mut pure = false;
+
+        loop {
+            match self.curr_tok.variant {
+                TokenVariant::Harness if !harness => {
+                    wrap_err!(node, self.advance(lexer));
+                    harness = true;
+                }
+                TokenVariant::Pure if !pure => {
+                    wrap_err!(node, self.advance(lexer));
+                    pure = true;
+                }
+                _ => break,
+            }
+        }
 
         wrap_err!(node, self.expect(lexer, TokenVariant::Fn));
         let symbol = self.parse_ident(node, lexer, false)?;
@@ -1366,6 +1378,7 @@ impl<'a> ParseContext<'a> {
             NodeKind::FnDecl {
                 public,
                 host: harness,
+                pure,
                 symbol,
                 return_type,
                 args,
