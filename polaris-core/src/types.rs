@@ -75,6 +75,8 @@ pub enum TyKind {
 pub struct Ty {
     kind: TyKind,
     literal: bool,
+    require_secret: bool,
+    secret_origin: Option<CodeSpan>,
 }
 
 #[derive(Clone, Debug)]
@@ -442,10 +444,14 @@ impl<'a> TypecheckContext<'a> {
                                             .insert(label.clone().unwrap(), field_type.clone());
                                     }
 
-                                    curried_type = Ty::new(TyKind::Fn(
-                                        Box::new(field_type),
+                                    let prev_secret = curried_type.require_secret;
+                                    let mut new_fn = Ty::new(TyKind::Fn(
+                                        Box::new(field_type.clone()),
                                         Box::new(curried_type),
                                     ));
+                                    new_fn.require_secret =
+                                        prev_secret || field_type.require_secret;
+                                    curried_type = new_fn;
                                 }
 
                                 env.insert(
@@ -517,18 +523,25 @@ impl<'a> TypecheckContext<'a> {
                 };
 
                 let mut fn_type = ret_type;
+                let mut accumulated_secret = fn_type.require_secret;
 
-                if arg_types.len() == 0 {
-                    fn_type = Ty::new(TyKind::Fn(
+                if arg_types.is_empty() {
+                    let mut void_fn = Ty::new(TyKind::Fn(
                         Box::new(Ty::new(TyKind::Concrete(
                             self.symbols.intrinsic_types[VOID],
                         ))),
                         Box::new(fn_type),
                     ));
+                    accumulated_secret = accumulated_secret || void_fn.require_secret;
+                    void_fn.require_secret = accumulated_secret;
+                    fn_type = void_fn;
                 }
 
                 for arg_type in arg_types.into_iter().rev() {
-                    fn_type = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
+                    accumulated_secret = accumulated_secret || arg_type.require_secret;
+                    let mut new_fn = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
+                    new_fn.require_secret = accumulated_secret;
+                    fn_type = new_fn;
                 }
 
                 //inefficient, should refactor
@@ -688,21 +701,28 @@ impl<'a> TypecheckContext<'a> {
                     };
 
                     let mut fn_type = final_return_type.1;
+                    let mut accumulated_secret = fn_type.require_secret;
 
-                    if arg_types.len() == 0 {
-                        fn_type = Ty::new(TyKind::Fn(
+                    if arg_types.is_empty() {
+                        let mut void_fn = Ty::new(TyKind::Fn(
                             Box::new(Ty::new(TyKind::Concrete(
                                 self.symbols.intrinsic_types[VOID],
                             ))),
                             Box::new(fn_type),
                         ));
+                        accumulated_secret = accumulated_secret || void_fn.require_secret;
+                        void_fn.require_secret = accumulated_secret;
+                        fn_type = void_fn;
                     }
 
                     for arg_type in arg_types.into_iter().rev() {
-                        fn_type = Ty::new(TyKind::Fn(
+                        accumulated_secret = accumulated_secret || arg_type.require_secret;
+                        let mut new_fn = Ty::new(TyKind::Fn(
                             Box::new(final_return_type.0.apply(&arg_type)),
                             Box::new(fn_type),
                         ));
+                        new_fn.require_secret = accumulated_secret;
+                        fn_type = new_fn;
                     }
 
                     //actually just updating prior generic declaration
@@ -741,8 +761,12 @@ impl<'a> TypecheckContext<'a> {
                     };
 
                     let mut fn_type = return_ty;
+                    let mut accumulated_secret = fn_type.require_secret;
                     for arg_type in arg_types.into_iter().rev() {
-                        fn_type = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
+                        accumulated_secret = accumulated_secret || arg_type.require_secret;
+                        let mut new_fn = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
+                        new_fn.require_secret = accumulated_secret;
+                        fn_type = new_fn;
                     }
 
                     Ok((Substitution::new(), fn_type))
@@ -892,10 +916,13 @@ impl<'a> TypecheckContext<'a> {
                     env = final_env;
                 }
 
-                let ty = Ty::new_literal(TyKind::Ctor(
+                let mut ty = Ty::new(TyKind::Ctor(
                     self.symbols.intrinsic_types[MAP],
-                    vec![key_type, value_type],
+                    vec![key_type.clone(), value_type.clone()],
                 ));
+                ty.literal = key_type.literal && value_type.literal;
+                ty.merge_secret_from(&key_type);
+                ty.merge_secret_from(&value_type);
 
                 Ok((Substitution::new(), ty))
             }
@@ -1009,18 +1036,28 @@ impl<'a> TypecheckContext<'a> {
                 let mut current_env = env.clone();
 
                 let mut is_literal = true;
+                let mut require_secret = false;
+                let mut secret_origin = None;
                 for elem in elements {
                     let (s, t) = self.algo_w(&mut current_env, elem)?;
                     subst = subst.compose(&s);
                     current_env = subst.apply_env(&current_env);
                     let t = subst.apply(&t);
+
                     is_literal = is_literal && t.literal;
+                    if t.require_secret && secret_origin.is_none() {
+                        secret_origin = t.secret_origin.clone();
+                    }
+                    require_secret = require_secret || t.require_secret;
+
                     types.push(t);
                 }
 
                 let ty = Ty {
                     kind: TyKind::Tuple(types.clone()),
                     literal: is_literal,
+                    require_secret,
+                    secret_origin,
                 };
 
                 Ok((subst, ty))
@@ -1043,6 +1080,9 @@ impl<'a> TypecheckContext<'a> {
                     let mut elem_type = subst.apply(&t1);
 
                     let mut is_literal = true;
+                    let mut require_secret = elem_type.require_secret;
+                    let mut secret_origin = elem_type.secret_origin.clone();
+
                     for elem in elements.iter_mut().skip(1) {
                         let (s, t) = self.algo_w(&mut current_env, elem)?;
                         let s2 = self.unify(&subst.apply(&elem_type), &s.apply(&t));
@@ -1056,6 +1096,10 @@ impl<'a> TypecheckContext<'a> {
                         elem_type = subst.apply(&elem_type);
 
                         is_literal = is_literal && elem_type.literal;
+                        if elem_type.require_secret && secret_origin.is_none() {
+                            secret_origin = elem_type.secret_origin.clone();
+                        }
+                        require_secret = require_secret || elem_type.require_secret;
                     }
 
                     let mut ty = Ty::new(TyKind::Ctor(
@@ -1063,6 +1107,10 @@ impl<'a> TypecheckContext<'a> {
                         vec![elem_type],
                     ));
                     ty.literal = is_literal;
+                    ty.require_secret = require_secret;
+                    if ty.require_secret {
+                        ty.secret_origin = secret_origin;
+                    }
 
                     Ok((subst, ty))
                 }
@@ -1182,21 +1230,31 @@ impl<'a> TypecheckContext<'a> {
                     arg_types.into_iter().map(|(_, ty)| ty).collect()
                 };
 
-                let return_type = self.fresh_type_var();
-                let mut expected_fn_type = return_type.clone();
+                let mut return_type = self.fresh_type_var();
+                return_type.require_secret = return_type.require_secret
+                    || arg_types.iter().any(|arg_type| arg_type.require_secret);
 
-                if arg_types.len() == 0 {
-                    expected_fn_type = Ty::new(TyKind::Fn(
+                let mut expected_fn_type = return_type.clone();
+                let mut accumulated_secret = expected_fn_type.require_secret;
+
+                if arg_types.is_empty() {
+                    let mut void_fn = Ty::new(TyKind::Fn(
                         Box::new(Ty::new(TyKind::Concrete(
                             self.symbols.intrinsic_types[VOID],
                         ))),
                         Box::new(expected_fn_type),
                     ));
+                    accumulated_secret = accumulated_secret || void_fn.require_secret;
+                    void_fn.require_secret = accumulated_secret;
+                    expected_fn_type = void_fn;
                 }
 
                 for arg_type in arg_types.into_iter().rev() {
-                    expected_fn_type =
+                    accumulated_secret = accumulated_secret || arg_type.require_secret;
+                    let mut new_fn =
                         Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(expected_fn_type)));
+                    new_fn.require_secret = accumulated_secret;
+                    expected_fn_type = new_fn;
                 }
 
                 let s_unify = self.unify(&subst.apply(&callee_type), &expected_fn_type);
@@ -1256,7 +1314,10 @@ impl<'a> TypecheckContext<'a> {
                 let op_map = op_map.unwrap();
 
                 if let Some(result_type) = op_map.get(&(left_type.clone(), right_type.clone())) {
-                    Ok((s3, result_type.clone()))
+                    let mut ty = result_type.clone();
+                    ty.merge_secret_from(&left_type);
+                    ty.merge_secret_from(&right_type);
+                    Ok((s3, ty))
                 } else {
                     let allowed_combinations: Vec<_> = op_map
                         .iter()
@@ -1277,7 +1338,9 @@ impl<'a> TypecheckContext<'a> {
                         }
                     }
 
-                    if let Some((final_subst, result_type)) = found_result {
+                    if let Some((final_subst, mut result_type)) = found_result {
+                        result_type.merge_secret_from(&left_type);
+                        result_type.merge_secret_from(&right_type);
                         Ok((final_subst, result_type))
                     } else {
                         self.bind_err_ctx(
@@ -1319,7 +1382,9 @@ impl<'a> TypecheckContext<'a> {
                 let op_map = op_map.unwrap();
 
                 if let Some(result_type) = op_map.get(&t) {
-                    Ok((s, result_type.clone()))
+                    let mut result_type = result_type.clone();
+                    result_type.merge_secret_from(&t);
+                    Ok((s, result_type))
                 } else {
                     let allowed_types: Vec<_> = op_map
                         .iter()
@@ -1335,7 +1400,8 @@ impl<'a> TypecheckContext<'a> {
                         }
                     }
 
-                    if let Some((final_subst, result_type)) = found_result {
+                    if let Some((final_subst, mut result_type)) = found_result {
+                        result_type.merge_secret_from(&t);
                         Ok((final_subst, result_type))
                     } else {
                         self.bind_err_ctx(
@@ -1384,18 +1450,56 @@ impl<'a> TypecheckContext<'a> {
                     let final_subst = s1.compose(&s2);
 
                     let nocrypt = matches!(expected_type.kind, TyKind::Nocrypt(_));
+                    let implicit_require_secret = t1.require_secret;
+                    let implicit_origin = t1.secret_origin.clone();
 
                     let mut t1 = s2.apply(&expected_type);
                     t1.literal = false;
+                    if implicit_require_secret {
+                        t1.require_secret = true;
+                        if t1.secret_origin.is_none() {
+                            t1.secret_origin = implicit_origin.clone();
+                        }
+                    }
 
                     let t1 = if nocrypt && !matches!(t1.kind, TyKind::Nocrypt(_)) {
-                        Ty {
+                        let inner_origin = t1.secret_origin.clone();
+                        let mut nocrypt_ty = Ty {
                             kind: TyKind::Nocrypt(Box::new(t1)),
                             literal: false,
+                            require_secret: true,
+                            secret_origin: inner_origin.clone(),
+                        };
+                        if nocrypt_ty.secret_origin.is_none() {
+                            nocrypt_ty.secret_origin = implicit_origin.clone();
                         }
+                        nocrypt_ty
                     } else {
                         t1
                     };
+
+                    if nocrypt && implicit_require_secret {
+                        let mut diag = Diagnostic::new(DiagnosticMsg {
+                            message: "Cannot assign outcome of secret branch expression to nocrypt binding. Remove 'nocrypt' annotation or ensure all branches are non-secret.".into(),
+                            span: node.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeMismatch,
+                        });
+
+                        if let Some(origin_span) =
+                            implicit_origin.or_else(|| t1.secret_origin.clone())
+                        {
+                            diag.add_note(DiagnosticMsg {
+                                message: "This value is secret, meaning any bindings that depend on it must also be secret.".into(),
+                                span: origin_span,
+                                file: self.current_file.clone(),
+                                err_type: DiagnosticMsgType::TypeMismatch,
+                            });
+                        }
+
+                        self.errors.push(diag);
+                        return Err(());
+                    }
 
                     (final_subst, t1)
                 } else {
@@ -1417,7 +1521,15 @@ impl<'a> TypecheckContext<'a> {
                 let mut subst = s1;
                 let mut t_expr = subst.apply(&t_expr);
 
+                if !t_expr.nocryptable() {
+                    t_expr.mark_secret(&expr.span);
+                } else {
+                    t_expr.require_secret = false;
+                    t_expr.secret_origin = None;
+                }
+
                 let mut t_match = self.fresh_type_var();
+                t_match.require_secret = t_expr.require_secret;
 
                 for (patterns, arm_expr) in arms {
                     let mut arm_env = subst.apply_env(env);
@@ -1443,7 +1555,11 @@ impl<'a> TypecheckContext<'a> {
                     subst = subst.compose(&s_unify);
 
                     t_match = subst.apply(&t_match);
+                    let arm_type = subst.apply(&t_arm);
+                    t_match.merge_secret_from(&arm_type);
                 }
+
+                t_match.merge_secret_from(&t_expr);
 
                 Ok((subst, t_match))
             }
@@ -1453,8 +1569,13 @@ impl<'a> TypecheckContext<'a> {
                 then_branch,
                 else_branch,
             } => {
-                let (s1, _cond_type) = self.algo_w(env, condition)?;
+                let (s1, mut _cond_type) = self.algo_w(env, condition)?;
                 let mut env1 = s1.apply_env(env);
+
+                let cond_requires_secret = !_cond_type.nocryptable();
+                if cond_requires_secret {
+                    _cond_type.mark_secret(&condition.span);
+                }
 
                 //condition must be bool
                 let s_cond = self.unify(
@@ -1479,7 +1600,7 @@ impl<'a> TypecheckContext<'a> {
                 let s3 = s1.compose(&s2);
                 let mut env2 = s3.apply_env(&env1);
 
-                if let Some(else_expr) = else_branch {
+                let ret = if let Some(else_expr) = else_branch {
                     let (s4, else_type) = self.algo_w(&mut env2, else_expr)?;
                     let s5 = self.unify(&s3.apply(&then_type), &s4.apply(&else_type));
                     let s5 = self.bind_err_ctx(
@@ -1488,10 +1609,22 @@ impl<'a> TypecheckContext<'a> {
                         Some(("Then and else branch types do not match".into(), vec![])),
                     )?;
                     let final_subst = s3.compose(&s4).compose(&s5);
-                    Ok((final_subst, s5.apply(&s4.apply(&else_type))))
+                    let cond_ty = final_subst.apply(&_cond_type);
+                    let then_ty = final_subst.apply(&then_type);
+                    let else_ty = final_subst.apply(&else_type);
+                    let mut final_type = else_ty.clone();
+                    final_type.merge_secret_from(&cond_ty);
+                    final_type.merge_secret_from(&then_ty);
+                    final_type.merge_secret_from(&else_ty);
+                    Ok((final_subst, final_type))
                 } else {
-                    Ok((s3, then_type))
-                }
+                    let cond_ty = s3.apply(&_cond_type);
+                    let mut then_ty = s3.apply(&then_type);
+                    then_ty.merge_secret_from(&cond_ty);
+                    Ok((s3, then_ty))
+                };
+
+                ret
             }
 
             ExprKind::Block(statements) => {
@@ -1502,6 +1635,7 @@ impl<'a> TypecheckContext<'a> {
                     let mut current_env = env.clone();
                     let mut last_type = self.fresh_type_var();
                     let mut let_bound_vars = Vec::new();
+                    let mut require_secret = false;
 
                     for stmt in statements {
                         if let NodeKind::Expr {
@@ -1518,6 +1652,8 @@ impl<'a> TypecheckContext<'a> {
                             current_env = subst.apply_env(&current_env);
                             self.refresh_polymorphic_constructors(&mut current_env);
                             last_type = subst.apply(&t);
+
+                            require_secret = require_secret || last_type.require_secret;
                         }
                     }
 
@@ -1540,6 +1676,7 @@ impl<'a> TypecheckContext<'a> {
             } => {
                 let mut arg_types = Vec::new();
                 let mut new_env = env.clone();
+                let mut require_secret = false;
 
                 for (arg_pattern, arg_type, _) in args {
                     let arg_ty = if let Some(type_node) = arg_type {
@@ -1548,6 +1685,7 @@ impl<'a> TypecheckContext<'a> {
                         self.fresh_type_var()
                     };
                     arg_types.push(arg_ty.clone());
+                    require_secret = require_secret || arg_ty.require_secret;
 
                     if let NodeKind::Expr {
                         expr: ExprKind::Symbol { .. },
@@ -1585,11 +1723,15 @@ impl<'a> TypecheckContext<'a> {
                 };
 
                 let mut fn_type = final_return_type.1;
+                let mut accumulated_secret = fn_type.require_secret || require_secret;
                 for arg_type in arg_types.into_iter().rev() {
-                    fn_type = Ty::new(TyKind::Fn(
+                    accumulated_secret = accumulated_secret || arg_type.require_secret;
+                    let mut new_fn = Ty::new(TyKind::Fn(
                         Box::new(final_return_type.0.apply(&arg_type)),
                         Box::new(fn_type),
                     ));
+                    new_fn.require_secret = accumulated_secret;
+                    fn_type = new_fn;
                 }
 
                 Ok((final_return_type.0, fn_type))
@@ -1903,8 +2045,12 @@ impl<'a> TypecheckContext<'a> {
                 };
 
                 let mut fn_type = ret_type;
+                let mut accumulated_secret = fn_type.require_secret;
                 for arg_type in arg_types.into_iter().rev() {
-                    fn_type = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
+                    accumulated_secret = accumulated_secret || arg_type.require_secret;
+                    let mut new_fn = Ty::new(TyKind::Fn(Box::new(arg_type), Box::new(fn_type)));
+                    new_fn.require_secret = accumulated_secret;
+                    fn_type = new_fn;
                 }
 
                 Ok(fn_type)
@@ -2043,24 +2189,67 @@ impl<'a> TypecheckContext<'a> {
             match expr {
                 Symbol { .. } => {
                     if let Some(symbol_id) = pattern.symbol_id {
-                        if let Some(existing_scheme) = env.get(&symbol_id) {
-                            let s = self.unify(&existing_scheme.body, expected_type);
-                            return self.bind_err_ctx(
-                                s,
-                                pattern.span,
-                                Some(("Pattern variable types do not match".into(), vec![])),
-                            );
-                        } else {
-                            env.insert(
-                                symbol_id,
-                                Scheme {
-                                    bound_vars: vec![],
-                                    body: expected_type.clone(),
-                                },
-                            );
-                        }
+                        //zero-arg constructor pattern
+                        if self.symbols.type_constructors.contains_key(&symbol_id) {
+                            if let Some(constructor_scheme) = self.type_env.get(&symbol_id) {
+                                let constructor_type = constructor_scheme
+                                    .clone()
+                                    .instantiate(&mut self.type_var_counter);
 
-                        Ok(Substitution::new())
+                                let return_type =
+                                    self.get_constructor_return_type(&constructor_type);
+                                let (expected_core, _expect_nocrypt) = match &expected_type.kind {
+                                    TyKind::Nocrypt(inner) => (&**inner, true),
+                                    _ => (expected_type, false),
+                                };
+
+                                let s_unify = self.unify(&return_type, expected_core);
+                                let s_unify = self.bind_err_ctx(
+                                    s_unify,
+                                    pattern.span,
+                                    Some((
+                                        format!(
+                                            "Constructor pattern {} does not match expected type {}",
+                                            self.symbols.symbol_names
+                                                .get(&symbol_id)
+                                                .cloned()
+                                                .unwrap_or_else(|| "<unknown>".into()),
+                                            expected_type.render(self)
+                                        ),
+                                        vec![],
+                                    )),
+                                )?;
+
+                                Ok(s_unify)
+                            } else {
+                                self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                    message: "Unknown constructor in pattern".into(),
+                                    span: pattern.span.clone(),
+                                    file: self.current_file.clone(),
+                                    err_type: DiagnosticMsgType::UndeclaredSymbol,
+                                }));
+                                Err(())
+                            }
+                        } else {
+                            if let Some(existing_scheme) = env.get(&symbol_id) {
+                                let s = self.unify(&existing_scheme.body, expected_type);
+                                return self.bind_err_ctx(
+                                    s,
+                                    pattern.span,
+                                    Some(("Pattern variable types do not match".into(), vec![])),
+                                );
+                            } else {
+                                env.insert(
+                                    symbol_id,
+                                    Scheme {
+                                        bound_vars: vec![],
+                                        body: expected_type.clone(),
+                                    },
+                                );
+                            }
+
+                            Ok(Substitution::new())
+                        }
                     } else {
                         self.errors.push(Diagnostic::new(DiagnosticMsg {
                             message: "Pattern variable without symbol id".to_string(),
@@ -2180,7 +2369,12 @@ impl<'a> TypecheckContext<'a> {
                                 let return_type =
                                     self.get_constructor_return_type(&constructor_type);
 
-                                let s_unify = self.unify(&return_type, expected_type);
+                                let (expected_core, expect_nocrypt) = match &expected_type.kind {
+                                    TyKind::Nocrypt(inner) => (&**inner, true),
+                                    _ => (expected_type, false),
+                                };
+
+                                let s_unify = self.unify(&return_type, expected_core);
                                 let s_unify = self.bind_err_ctx(s_unify, pattern.span, Some((format!(
                                     "Constructor pattern {} does not match expected type {}",
                                     name,
@@ -2188,8 +2382,17 @@ impl<'a> TypecheckContext<'a> {
                                 ), vec![])))?;
 
                                 let arg_types = self.get_constructor_arg_types(&constructor_type);
-                                let instantiated_arg_types: Vec<Ty> =
-                                    arg_types.iter().map(|ty| s_unify.apply(ty)).collect();
+                                let instantiated_arg_types: Vec<Ty> = arg_types
+                                    .iter()
+                                    .map(|ty| {
+                                        let inst = s_unify.apply(ty);
+                                        if expect_nocrypt {
+                                            Ty::wrap_nocrypt_deep(inst)
+                                        } else {
+                                            inst
+                                        }
+                                    })
+                                    .collect();
 
                                 if args.len() != instantiated_arg_types.len() {
                                     self.errors.push(Diagnostic::new(DiagnosticMsg {
@@ -2439,6 +2642,8 @@ impl Ty {
         Ty {
             kind,
             literal: false,
+            require_secret: false,
+            secret_origin: None,
         }
     }
 
@@ -2446,7 +2651,71 @@ impl Ty {
         Ty {
             kind,
             literal: true,
+            require_secret: false,
+            secret_origin: None,
         }
+    }
+
+    fn mark_secret(&mut self, span: &CodeSpan) {
+        if !self.require_secret {
+            self.require_secret = true;
+            self.secret_origin = Some(span.clone());
+        }
+    }
+
+    fn merge_secret_from(&mut self, other: &Ty) {
+        if other.require_secret {
+            self.require_secret = true;
+            if self.secret_origin.is_none() {
+                self.secret_origin = other.secret_origin.clone();
+            }
+        }
+    }
+
+    fn wrap_nocrypt(inner: Ty) -> Ty {
+        let mut outer = Ty::new(TyKind::Nocrypt(Box::new(inner)));
+        if let TyKind::Nocrypt(ref boxed) = outer.kind {
+            outer.literal = boxed.literal;
+            outer.require_secret = boxed.require_secret;
+            outer.secret_origin = boxed.secret_origin.clone();
+        }
+        outer
+    }
+
+    fn wrap_nocrypt_deep(inner: Ty) -> Ty {
+        if matches!(inner.kind, TyKind::Nocrypt(_)) {
+            return inner;
+        }
+
+        let Ty {
+            kind,
+            literal,
+            require_secret,
+            secret_origin,
+        } = inner;
+
+        let kind = match kind {
+            TyKind::Fn(arg, ret) => TyKind::Fn(
+                Box::new(Ty::wrap_nocrypt_deep(*arg)),
+                Box::new(Ty::wrap_nocrypt_deep(*ret)),
+            ),
+            TyKind::Tuple(types) => {
+                TyKind::Tuple(types.into_iter().map(Ty::wrap_nocrypt_deep).collect())
+            }
+            TyKind::Ctor(id, args) => {
+                TyKind::Ctor(id, args.into_iter().map(Ty::wrap_nocrypt_deep).collect())
+            }
+            other => other,
+        };
+
+        let rebuilt = Ty {
+            kind,
+            literal,
+            require_secret,
+            secret_origin,
+        };
+
+        Ty::wrap_nocrypt(rebuilt)
     }
 
     fn free_type_vars(&self) -> HashSet<TypeVar> {
@@ -2623,6 +2892,8 @@ impl Substitution {
             Var(a) => self.0.get(a).cloned().unwrap_or_else(|| {
                 let mut ty = Ty::new(Var(*a));
                 ty.literal = t.literal;
+                ty.require_secret = t.require_secret;
+                ty.secret_origin = t.secret_origin.clone();
                 ty
             }),
             Fn(arg, ret) => {
@@ -2630,24 +2901,32 @@ impl Substitution {
                 let new_ret = self.apply(ret);
                 let mut ty = Ty::new(Fn(Box::new(new_arg), Box::new(new_ret)));
                 ty.literal = t.literal;
+                ty.require_secret = t.require_secret;
+                ty.secret_origin = t.secret_origin.clone();
                 ty
             }
             Tuple(types) => {
                 let new_types = types.iter().map(|ty| self.apply(ty)).collect();
                 let mut ty = Ty::new(Tuple(new_types));
                 ty.literal = t.literal;
+                ty.require_secret = t.require_secret;
+                ty.secret_origin = t.secret_origin.clone();
                 ty
             }
             Ctor(name, args) => {
                 let new_args = args.iter().map(|arg| self.apply(arg)).collect();
                 let mut ty = Ty::new(Ctor(*name, new_args));
                 ty.literal = t.literal;
+                ty.require_secret = t.require_secret;
+                ty.secret_origin = t.secret_origin.clone();
                 ty
             }
             Concrete(_) => t.clone(),
             Nocrypt(t_inner) => {
                 let mut ty = Ty::new(Nocrypt(Box::new(self.apply(t_inner))));
                 ty.literal = t.literal;
+                ty.require_secret = t.require_secret;
+                ty.secret_origin = t.secret_origin.clone();
                 ty
             }
         }

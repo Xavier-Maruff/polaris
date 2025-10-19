@@ -118,7 +118,7 @@ pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut Type
 
             let type_args = vec![ $( type_var_map[stringify!($params)].clone() ),*];
             let res_type = if type_args.is_empty() {
-                Ty::new(TyKind::Concrete(symbols.intrinsic_types[$type_name].clone()))
+                Ty::new_literal(TyKind::Concrete(symbols.intrinsic_types[$type_name].clone()))
             } else {
                 Ty::new(TyKind::Ctor(
                     symbols.intrinsic_types[$type_name].clone(),

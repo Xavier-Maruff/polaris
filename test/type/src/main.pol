@@ -93,3 +93,55 @@ pub fn check_pattern(val: Check(t)) {
         Ctor2 -> 0
     }
 }
+
+
+pub fn taint_analysis() {
+    let cond: Bool = True
+    //should not error, as True is a literal so its nocrypt status can be inferred
+    let b: nocrypt Int = if True { 12 } else { 0 }
+    //should error, as cond is known to be an encrypted value
+    //let c: nocrypt Int = if cond { 12 } else { 0 }
+    //should error due to second-level taint
+    //let d: nocrypt Int = if True { 12 } else { if cond { 0 } else { 5 }}
+
+
+   //shouldn't error, as branch condition is a literal, and unification should propagate nocrypt
+    let e: nocrypt Int = match Ctor1(12) {
+        Ctor1(v) -> v,
+        Ctor2 -> 0
+    }
+
+    //also shouldn't error, as f is not explicitly typed
+    let e: nocrypt Check(Int) = Ctor1(12)
+    let f = match e {
+        Ctor1(v) -> v,
+        Ctor2 -> 0
+    }
+
+    //should error, as match condition is tainted
+    //let cond: Check(Int) = Ctor1(12)
+    //let g: nocrypt Int = match cond {
+    //    Ctor1(v) -> v,
+    //    Ctor2 -> 0
+    //}
+
+    //should not error, as nocrypt should apply to all nested values
+    let cond: nocrypt Check(Check(Int)) = Ctor1(Ctor1(12))
+    let h: nocrypt Int = match cond {
+        Ctor1(inner) -> match inner {
+            Ctor1(v) -> v,
+            Ctor2 -> 0
+        },
+        Ctor2 -> 0
+    }
+
+    //should error, as nested condition is tainted
+    //let enc_bool: Bool = False
+    //let out: nocrypt Int = match cond {
+    //    Ctor1(inner) -> match enc_bool {
+    //        True -> 12,
+    //        False -> 0
+    //    },
+    //    Ctor2 -> 0
+    //}
+}
