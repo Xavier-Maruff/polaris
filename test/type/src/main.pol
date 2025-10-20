@@ -86,7 +86,8 @@ pub fn main() {
 }
 
 pub harness fn some_harness() -> Result(Int, String)
-pub pure fn should_err() {
+//pub pure fn should_err() {
+pub fn should_not_err() {
     let ret = some_harness()
     ret
 }

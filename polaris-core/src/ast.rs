@@ -202,6 +202,29 @@ impl Node {
         }
     }
 
+    pub fn from_node(other: &Node, kind: NodeKind) -> Self {
+        Self {
+            kind,
+            span: other.span.clone(),
+            symbol_id: other.symbol_id,
+            errors: other.errors.clone(),
+            warnings: other.warnings.clone(),
+            ty: other.ty.clone(),
+            effect: other.effect.clone(),
+            branch_strategy: other.branch_strategy,
+        }
+    }
+
+    pub fn with_symbol_id(mut self, symbol_id: SymbolId) -> Self {
+        self.symbol_id = Some(symbol_id);
+        self
+    }
+
+    pub fn with_type(mut self, ty: Ty) -> Self {
+        self.ty = Some(ty);
+        self
+    }
+
     pub fn all_errors(&self) -> Vec<Diagnostic> {
         let mut errs = vec![];
         self.collect_diagnostics(&mut errs, true);

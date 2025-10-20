@@ -11,8 +11,10 @@
 - All good for now
 
 ## Type system
+- Discard types
 
-- Taint analysis
+## Pattern matching
+- Everything, disjunctions, exhaustiveness, etc.
 
 ## IR
 

@@ -2,8 +2,10 @@ use crate::{
     ast::{ExprKind, Node, NodeKind},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
+    intrinsics::{BOOL, FALSE, TRUE, VOID},
     parse::CodeSpan,
     symbol::SymbolId,
+    types::{Ty, TyKind},
 };
 use rustc_hash::FxHashMap as HashMap;
 
@@ -460,49 +462,70 @@ impl<'a> EffectContext<'a> {
                 res.absorb(index_res);
                 res
             }
+            //really don't want to clone here but that is a problem for future me
             IfElse {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                let cond_res = self.effect_node(condition);
-                let mut res = cond_res.clone();
-                let then_res = self.effect_node(then_branch);
-                res.absorb(then_res.clone());
+                // if condition { then_branch } else { else_branch }
+                // ->
+                // match condition { True => then_branch, False => else_branch }
 
-                let cond_secret = condition
-                    .ty
-                    .as_ref()
-                    .map(|ty| ty.requires_secret())
-                    .unwrap_or(false);
-
-                let mut harness_branch = then_res.effect.is_harness();
-
-                if let Some(else_branch) = else_branch {
-                    let else_res = self.effect_node(else_branch);
-                    harness_branch |= else_res.effect.is_harness();
-                    res.absorb(else_res);
-                }
-
-                let strategy = if !cond_secret {
-                    BranchStrategy::Clear
-                } else if harness_branch {
-                    BranchStrategy::Harness
+                let else_node = if let Some(else_branch) = else_branch {
+                    else_branch.clone()
                 } else {
-                    BranchStrategy::Predicated
+                    //no else branch, must be unit
+                    Box::new(
+                        Node::new(
+                            NodeKind::Expr {
+                                expr: ExprKind::Symbol { name: VOID.into() },
+                            },
+                            condition.span.clone(),
+                        )
+                        .with_symbol_id(self.compile_ctx.symbols.intrinsic_symbols[VOID])
+                        .with_type(Ty::new(TyKind::Concrete(
+                            self.compile_ctx.symbols.intrinsic_types[VOID],
+                        ))),
+                    )
                 };
-                node.branch_strategy = Some(strategy);
 
-                if cond_secret && harness_branch {
-                    let cause = EffectResult::from_cause(
-                        Effect::HarnessEffect,
-                        condition.span.clone(),
-                        "secret condition drives harness behaviour",
-                    );
-                    res.absorb(cause);
-                }
+                let true_id = self.compile_ctx.symbols.intrinsic_symbols[TRUE];
+                let false_id = self.compile_ctx.symbols.intrinsic_symbols[FALSE];
+                let bool_ty = Ty::new(TyKind::Concrete(
+                    self.compile_ctx.symbols.intrinsic_types[BOOL],
+                ));
 
-                res
+                let true_pat = Node::new(
+                    NodeKind::Expr {
+                        expr: ExprKind::Symbol { name: TRUE.into() },
+                    },
+                    condition.span.clone(),
+                )
+                .with_symbol_id(true_id)
+                .with_type(bool_ty.clone());
+
+                let false_pat = Node::new(
+                    NodeKind::Expr {
+                        expr: ExprKind::Symbol { name: FALSE.into() },
+                    },
+                    condition.span.clone(),
+                )
+                .with_symbol_id(false_id)
+                .with_type(bool_ty);
+
+                let arms = vec![
+                    (vec![true_pat], *then_branch.clone()),
+                    (vec![false_pat], *else_node),
+                ];
+
+                *expr = Match {
+                    expr: condition.clone(),
+                    arms,
+                };
+
+                //just run on the new match expr
+                return self.effect_expr(node);
             }
             Match { expr, arms } => {
                 let cond_res = self.effect_node(expr);
