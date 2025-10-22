@@ -1,48 +1,64 @@
-
-type ADT(a) {
-    Ctor(val: a)
+type TestEnum {
+    Variant1(value: Int)
+    Variant2
+    Variant3(first: String, second: Bool)
 }
 
-fn main()  {
+fn test_basic_matching() -> Int {
     let x = 42
-
-    let #(a, b) = #(1, 2)
-    let #(first, second, third) = #(10, 20, 30)
-
-    let #(#(x1, y1), #(x2, y2)) = #(#(1, 2), #(3, 4))
-
-    let #(_, #(inner1, inner2, #(deep1, deep2))) = #(100, #(200, 300, #(400, 500)))
-
-    //should fail
-    //let [head, tail] = [1, 2, 3]
-    //let Some(value) = some_optional
-
-    let test_data = #(99, "test")
-    let result = match test_data {
-        #(a, b) -> a,
+    match x {
+        1 -> 10,
+        42 -> 100,
         _ -> 0
     }
+}
 
-    let result2 = match Some(None) {
-        Some(Some(val)) -> 1,
-        None -> 2
+fn test_tuple_destructuring() -> Int {
+    let pair = #(10, 20)
+    match pair {
+        #(a, b) -> a + b
     }
+}
 
-    let result3 = match [1, 2, 3] {
-        [first, second, ...] -> first + second,
-        [] -> 0
+fn test_option_matching(opt: Option(Int)) -> Int {
+    match opt {
+        Some(x) -> x * 2,
+        None -> -1
     }
+}
 
-    let empty_list_test = match [] {
-        [] -> 100,
-        [x, ...] -> 200
+fn test_nested_matching() -> String {
+    let nested = Some(#(True, 42))
+    match nested {
+        None -> "nothing",
+        Some(#(True, x)) -> "true case",
+        Some(#(False, x)) -> "false case"
     }
+}
 
-    let non_empty_list_test = match [1, 2, 3] {
+fn test_list_patterns() -> Int {
+    let numbers = [1, 2, 3]
+    match numbers {
         [] -> 0,
-        [a, b, c] -> a + b + c,
-        [first, ...rest] -> first
+        [single] -> single,
+        [first, second] -> first + second,
+        [first, ...rest] -> first * 10
     }
+}
 
-    result + result2 + result3 + empty_list_test + non_empty_list_test
+fn test_custom_enum(value: TestEnum) -> String {
+    match value {
+        Variant1(x) -> "variant1",
+        Variant2 -> "variant2",
+        Variant3(s, b) -> "variant3"
+    }
+}
+
+fn main() -> Int {
+    let basic = test_basic_matching()
+    let tuple_result = test_tuple_destructuring()
+    let option_result = test_option_matching(Some(5))
+    let list_result = test_list_patterns()
+
+    basic + tuple_result + option_result + list_result
 }

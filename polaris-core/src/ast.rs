@@ -2,6 +2,7 @@ use crate::{
     diagnostic::Diagnostic,
     effect::{BranchStrategy, Effect},
     parse::{CodeSpan, token::TokenVariant},
+    pattern::DecisionTree,
     symbol::{SymbolContext, SymbolId},
     types::Ty,
 };
@@ -16,6 +17,7 @@ pub struct Node {
     pub ty: Option<Ty>,
     pub effect: Option<Effect>,
     pub branch_strategy: Option<BranchStrategy>,
+    pub decision_tree: Option<DecisionTree>,
 }
 
 #[derive(Clone, Debug)]
@@ -199,6 +201,7 @@ impl Node {
             ty: None,
             effect: None,
             branch_strategy: None,
+            decision_tree: None,
         }
     }
 
@@ -212,6 +215,7 @@ impl Node {
             ty: other.ty.clone(),
             effect: other.effect.clone(),
             branch_strategy: other.branch_strategy,
+            decision_tree: other.decision_tree.clone(),
         }
     }
 

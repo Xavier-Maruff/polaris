@@ -1,0 +1,238 @@
+fn test_bool_exhaustive(flag: Bool) -> String {
+    match flag {
+        True -> "yes",
+        False -> "no"
+    }
+}
+
+fn test_option_exhaustive(opt: Option(Int)) -> Int {
+    match opt {
+        Some(x) -> x,
+        None -> 0
+    }
+}
+
+fn test_result_exhaustive(res: Result(Int, String)) -> Int {
+    match res {
+        Ok(x) -> x,
+        Err(_) -> -1
+    }
+}
+
+
+fn test_int_with_wildcard(x: Int) -> String {
+    match x {
+        1 -> "one",
+        2 -> "two",
+        42 -> "answer",
+        _ -> "other"
+    }
+}
+
+fn test_string_with_wildcard(name: String) -> String {
+    match name {
+        "Alice" -> "Hello Alice!",
+        "Bob" -> "Hi Bob!",
+        _ -> "Hello stranger!"
+    }
+}
+
+fn test_real_with_wildcard() -> String {
+    let pi = 3.14
+    match pi {
+        3.14 -> "pi",
+        2.71 -> "e",
+        _ -> "some number"
+    }
+}
+
+
+fn test_simple_tuple_exhaustive(pair: #(Bool, Bool)) -> String {
+    match pair {
+        #(True, True) -> "both true",
+        #(True, False) -> "true false",
+        #(False, True) -> "false true",
+        #(False, False) -> "both false"
+    }
+}
+
+fn test_mixed_tuple_exhaustive(data: #(Bool, Int)) -> String {
+    match data {
+        #(True, 1) -> "true one",
+        #(True, _) -> "true other",
+        #(False, _) -> "false anything"
+    }
+}
+
+fn test_nested_tuple_exhaustive(nested: #(#(Bool, Bool), Int)) -> String {
+    match nested {
+        #(#(True, True), 0) -> "true true zero",
+        #(#(True, True), _) -> "true true other",
+        #(#(_, _), _) -> "anything else"
+    }
+}
+
+
+fn test_nested_option_exhaustive(nested: Option(Option(Int))) -> String {
+    match nested {
+        None -> "outer none",
+        Some(None) -> "inner none",
+        Some(Some(x)) -> "nested value"
+    }
+}
+
+fn test_option_tuple_exhaustive(data: Option(#(Bool, Int))) -> String {
+    match data {
+        None -> "nothing",
+        Some(#(True, x)) -> "true with number",
+        Some(#(False, _)) -> "false with anything"
+    }
+}
+
+fn test_result_option_exhaustive(data: Result(Option(Int), String)) -> Int {
+    match data {
+        Ok(Some(x)) -> x,
+        Ok(None) -> 0,
+        Err(_) -> -1
+    }
+}
+
+
+fn test_list_patterns_exhaustive(list: List(Int)) -> String {
+    match list {
+        [] -> "empty",
+        [x] -> "single",
+        [x, y] -> "pair",
+        [x, y, z] -> "triple",
+        [_, ...] -> "longer list"
+    }
+}
+
+fn test_list_with_literals_exhaustive(list: List(Int)) -> String {
+    match list {
+        [] -> "empty",
+        [1] -> "single one",
+        [1, 2] -> "one two",
+        [x, ...] -> "starts with something else"
+    }
+}
+
+fn test_nested_list_exhaustive(nested: List(Option(Int))) -> String {
+    match nested {
+        [] -> "empty list",
+        [None, ...] -> "starts with none",
+        [Some(_), ...] -> "starts with some"
+    }
+}
+
+
+fn test_deeply_nested_exhaustive(complex: Option(Result(#(Bool, List(Int)), String))) -> String {
+    match complex {
+        None -> "no data",
+        Some(Err(_)) -> "error case",
+        Some(Ok(#(True, []))) -> "true empty",
+        Some(Ok(#(False, _))) -> "false anything"
+    }
+}
+
+fn test_multiple_constructors_exhaustive(data: Result(Option(Bool), Option(String))) -> String {
+    match data {
+        Ok(Some(True)) -> "ok some true",
+        Ok(Some(False)) -> "ok some false",
+        Ok(None) -> "ok none",
+        Err(Some(_)) -> "err some string",
+        Err(None) -> "err none"
+    }
+}
+
+
+fn test_wildcard_exhaustive(x: Int) -> String {
+    match x {
+        _ -> "matches everything"
+    }
+}
+
+fn test_binding_patterns_exhaustive(pair: #(Int, Bool)) -> Int {
+    match pair {
+        #(x, True) -> x + 1,
+        #(x, False) -> x - 1
+    }
+}
+
+fn test_mixed_bindings_exhaustive(opt: Option(#(Int, String))) -> String {
+    match opt {
+        None -> "nothing",
+        Some(#(num, str)) -> "got both"
+    }
+}
+
+type Color {
+    Red
+    Green
+    Blue
+}
+
+type Shape {
+    Circle(radius: Int)
+    Rectangle(width: Int, height: Int)
+    Triangle(base: Int, height: Int)
+}
+
+fn test_enum_exhaustive(color: Color) -> String {
+    match color {
+        Red -> "red",
+        Green -> "green",
+        Blue -> "blue"
+    }
+}
+
+fn test_adt_exhaustive(shape: Shape) -> Int {
+    match shape {
+        Circle(r) -> r * r * 3, // Approximate area
+        Rectangle(w, h) -> w * h,
+        Triangle(b, h) -> b * h / 2
+    }
+}
+
+fn test_nested_adt_exhaustive(data: Option(Shape)) -> String {
+    match data {
+        None -> "no shape",
+        Some(Circle(_)) -> "circular",
+        Some(Rectangle(_, _)) -> "rectangular",
+        Some(Triangle(_, _)) -> "triangular"
+    }
+}
+
+
+fn test_single_variant_exhaustive(opt: Option(Int)) -> String {
+    match opt {
+        Some(_) -> "has value",
+        None -> "empty"
+    }
+}
+
+fn test_overlapping_literals_exhaustive(x: Int) -> String {
+    match x {
+        1 -> "specific one",
+        2 -> "specific two",
+        _ -> "everything else"
+    }
+}
+
+fn test_guard_like_patterns_exhaustive(pair: #(Bool, Option(Int))) -> String {
+    match pair {
+        #(True, Some(_)) -> "true with value",
+        #(True, None) -> "true without value",
+        #(False, _) -> "false with anything"
+    }
+}
+
+
+fn main() {
+    let bool_result = test_bool_exhaustive(True)
+    let option_result = test_option_exhaustive(Some(42))
+    let tuple_result = test_simple_tuple_exhaustive(#(True, False))
+    let list_result = test_list_patterns_exhaustive([1, 2, 3])
+    let shape_result = test_adt_exhaustive(Circle(5))
+
+}

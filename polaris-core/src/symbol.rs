@@ -431,6 +431,57 @@ impl SymbolPassContext {
                     });
                     Err(())
                 }
+                IntLit(_) => {
+                    if in_match {
+                        Ok(HashMap::default())
+                    } else {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: "Integer literal patterns are not allowed in let bindings - only type-safe destructuring patterns like tuples are permitted".to_string(),
+                                file: self.current_file.clone(),
+                                span: symbol_node.span,
+                                err_type: DiagnosticMsgType::InvalidBindingPattern,
+                            },
+                            notes: vec![],
+                            hints: vec!["Consider using a variable pattern instead".to_string()],
+                        });
+                        Err(())
+                    }
+                }
+                RealLit { .. } => {
+                    if in_match {
+                        Ok(HashMap::default())
+                    } else {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: "Real literal patterns are not allowed in let bindings - only type-safe destructuring patterns like tuples are permitted".to_string(),
+                                file: self.current_file.clone(),
+                                span: symbol_node.span,
+                                err_type: DiagnosticMsgType::InvalidBindingPattern,
+                            },
+                            notes: vec![],
+                            hints: vec!["Consider using a variable pattern instead".to_string()],
+                        });
+                        Err(())
+                    }
+                }
+                StringLit(_) => {
+                    if in_match {
+                        Ok(HashMap::default())
+                    } else {
+                        self.errors.push(Diagnostic {
+                            primary: DiagnosticMsg {
+                                message: "String literal patterns are not allowed in let bindings - only type-safe destructuring patterns like tuples are permitted".to_string(),
+                                file: self.current_file.clone(),
+                                span: symbol_node.span,
+                                err_type: DiagnosticMsgType::InvalidBindingPattern,
+                            },
+                            notes: vec![],
+                            hints: vec!["Consider using a variable pattern instead".to_string()],
+                        });
+                        Err(())
+                    }
+                }
                 //todo: add binary op destructuring patterns
                 _ => {
                     let message = if in_match {

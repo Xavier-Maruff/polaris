@@ -1513,7 +1513,7 @@ impl<'a> TypecheckContext<'a> {
                     (s1, t1)
                 };
 
-                let s_pat = self.typecheck_pattern(env, symbols, &result.1)?;
+                let s_pat = self.typecheck_pattern(env, symbols, &result.1, false)?;
                 let final_subst = result.0.compose(&s_pat);
 
                 Ok((
@@ -1541,7 +1541,7 @@ impl<'a> TypecheckContext<'a> {
                     let mut arm_env = subst.apply_env(env);
 
                     for pattern in patterns {
-                        let s_pat = self.typecheck_pattern(&mut arm_env, pattern, &t_expr)?;
+                        let s_pat = self.typecheck_pattern(&mut arm_env, pattern, &t_expr, true)?;
                         subst = subst.compose(&s_pat);
                         t_expr = subst.apply(&t_expr);
                     }
@@ -2189,6 +2189,7 @@ impl<'a> TypecheckContext<'a> {
         env: &mut TypeEnv,
         pattern: &Node,
         expected_type: &Ty,
+        in_match: bool,
     ) -> Result<Substitution, ()> {
         if let NodeKind::Expr { expr } = &pattern.kind {
             use ExprKind::*;
@@ -2283,6 +2284,7 @@ impl<'a> TypecheckContext<'a> {
                                             env,
                                             node,
                                             &subst.apply(elem_type),
+                                            in_match,
                                         )?;
                                         subst = subst.compose(&s);
                                     }
@@ -2294,6 +2296,7 @@ impl<'a> TypecheckContext<'a> {
                                             env,
                                             node,
                                             &subst.apply(expected_type),
+                                            in_match,
                                         )?;
                                         subst = subst.compose(&s);
                                     }
@@ -2342,6 +2345,7 @@ impl<'a> TypecheckContext<'a> {
                                 env,
                                 element_pattern,
                                 &subst.apply(element_type),
+                                in_match,
                             )?;
                             subst = subst.compose(&s);
                         }
@@ -2423,6 +2427,7 @@ impl<'a> TypecheckContext<'a> {
                                         env,
                                         &arg_pattern.1,
                                         &s_args.apply(arg_type),
+                                        in_match,
                                     )?;
                                     s_args = s_args.compose(&s_arg);
                                 }
@@ -2457,9 +2462,87 @@ impl<'a> TypecheckContext<'a> {
                         Err(())
                     }
                 }
-                _ => {
+                IntLit(value) => {
+                    //int lit pattern - todo - add type coercion rules
+                    let int_type = Ty::new_literal(TyKind::Concrete(
+                        self.symbols.intrinsic_types[crate::intrinsics::INT],
+                    ));
+
+                    let s_unify = self.unify(&int_type, expected_type);
+                    self.bind_err_ctx(
+                        s_unify,
+                        pattern.span,
+                        Some((
+                            format!(
+                                "Integer literal {} does not match expected type {}",
+                                value,
+                                expected_type.render(self)
+                            ),
+                            vec![],
+                        )),
+                    )
+                }
+                RealLit { value, .. } => {
+                    let real_type = Ty::new_literal(TyKind::Concrete(
+                        self.symbols.intrinsic_types[crate::intrinsics::REAL],
+                    ));
+
+                    let s_unify = self.unify(&real_type, expected_type);
+                    self.bind_err_ctx(
+                        s_unify,
+                        pattern.span,
+                        Some((
+                            format!(
+                                "Real literal {} does not match expected type {}",
+                                value,
+                                expected_type.render(self)
+                            ),
+                            vec![],
+                        )),
+                    )
+                }
+                StringLit(value) => {
+                    let string_type = Ty::new_literal(TyKind::Concrete(
+                        self.symbols.intrinsic_types[crate::intrinsics::STRING],
+                    ));
+
+                    let s_unify = self.unify(&string_type, expected_type);
+                    self.bind_err_ctx(
+                        s_unify,
+                        pattern.span,
+                        Some((
+                            format!(
+                                "String literal \"{}\" does not match expected type {}",
+                                value,
+                                expected_type.render(self)
+                            ),
+                            vec![],
+                        )),
+                    )
+                }
+                //todo: add map literal patterns
+                MapLit(_) => {
+                    let message = if in_match {
+                        "Map literal patterns are not supported in match expressions".to_string()
+                    } else {
+                        "Map literal patterns are not supported in let bindings".to_string()
+                    };
                     self.errors.push(Diagnostic::new(DiagnosticMsg {
-                        message: "Unsupported pattern type in let binding".to_string(),
+                        message,
+                        span: pattern.span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::InvalidBindingPattern,
+                    }));
+                    Err(())
+                }
+                _ => {
+                    let message = if in_match {
+                        "Invalid pattern in match expression".to_string()
+                    } else {
+                        "Invalid pattern in let binding - only identifiers, tuples, and literals are allowed".to_string()
+                    };
+                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                        message,
                         span: pattern.span.clone(),
                         file: self.current_file.clone(),
                         err_type: DiagnosticMsgType::InvalidBindingPattern,
@@ -2468,8 +2551,13 @@ impl<'a> TypecheckContext<'a> {
                 }
             }
         } else {
+            let message = if in_match {
+                "Invalid pattern structure in match expression".to_string()
+            } else {
+                "Invalid pattern structure in let binding".to_string()
+            };
             self.errors.push(Diagnostic::new(DiagnosticMsg {
-                message: "Invalid pattern structure".to_string(),
+                message,
                 span: pattern.span.clone(),
                 file: self.current_file.clone(),
                 err_type: DiagnosticMsgType::InvalidBindingPattern,
@@ -2660,6 +2748,10 @@ impl Ty {
             require_secret: false,
             secret_origin: None,
         }
+    }
+
+    pub fn kind(&self) -> &TyKind {
+        &self.kind
     }
 
     pub fn requires_secret(&self) -> bool {

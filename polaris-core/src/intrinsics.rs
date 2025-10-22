@@ -126,6 +126,11 @@ pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut Type
                 ))
             };
 
+            symbols.type_constructors.insert(
+                symbols.intrinsic_symbols[$constructor].clone(),
+                symbols.intrinsic_types[$type_name].clone(),
+            );
+
             type_env.insert(
                 symbols.intrinsic_symbols[$constructor].clone(),
                 Scheme {
@@ -151,6 +156,10 @@ pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut Type
                 vec![ $( type_var_map[stringify!($params)].clone() ),*]
             ));
 
+            symbols.type_constructors.insert(
+                symbols.intrinsic_symbols[$constructor].clone(),
+                symbols.intrinsic_types[$type_name].clone(),
+            );
 
             //arg1 --> arg2 -> arg3 -> ... -> Type
             let mut curried = res_type;

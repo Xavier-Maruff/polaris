@@ -7,5 +7,6 @@ pub mod intrinsics;
 pub mod log;
 pub mod module;
 pub mod parse;
+pub mod pattern;
 pub mod symbol;
 pub mod types;

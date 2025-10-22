@@ -4,6 +4,7 @@ use crate::desugar::desugar_pass;
 use crate::effect::{EffectInfo, effect_pass};
 use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
 use crate::parse::parse;
+use crate::pattern::pattern_pass;
 use crate::symbol::{SymbolContext, symbol_pass};
 use crate::types::{TypeInfo, typecheck_pass};
 use crate::{diagnostic::Diagnostic, log};
@@ -57,6 +58,7 @@ impl CompileContext {
                 ("Dependencies", dependency_pass),
                 ("Typechecking", typecheck_pass),
                 ("Effects", effect_pass),
+                ("Pattern analysis", pattern_pass),
             ],
             type_info: TypeInfo::default(),
             effect_info: EffectInfo::default(),

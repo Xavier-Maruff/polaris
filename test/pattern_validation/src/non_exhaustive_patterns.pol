@@ -1,0 +1,80 @@
+
+// fn test_bool_missing_false(flag: Bool) -> String {
+//     match flag {
+//         True -> "yes"
+//     }
+// }
+
+// fn test_bool_missing_true(flag: Bool) -> String {
+//     match flag {
+//         False -> "no"
+//     }
+// }
+
+// fn test_option_missing_none(opt: Option(Int)) -> Int {
+//     match opt {
+//         Some(x) -> x
+//     }
+// }
+
+// fn test_option_missing_some(opt: Option(Int)) -> Int {
+//     match opt {
+//         None -> 0
+//     }
+// }
+
+// fn test_result_missing_err(res: Result(Int, String)) -> Int {
+//     match res {
+//         Ok(x) -> x
+//     }
+// }
+
+// fn test_result_missing_ok(res: Result(Int, String)) -> Int {
+//     match res {
+//         Err(_) -> -1
+//     }
+// }
+
+// fn test_int_missing_wildcard(x: Int) -> String {
+//     match x {
+//         1 -> "one",
+//         2 -> "two",
+//         42 -> "answer"
+//     }
+// }
+
+// fn test_string_missing_wildcard(name: String) -> String {
+//     match name {
+//         "Alice" -> "hello alice",
+//         "Bob" -> "hello bob"
+//     }
+// }
+
+// fn test_real_missing_wildcard(num: Real) -> String {
+//     match num {
+//         3.14 -> "pi",
+//         2.71 -> "e"
+//     }
+// }
+
+
+// fn test_tuple_missing_combinations(pair: #(Bool, Bool)) -> String {
+//     match pair {
+//         #(True, True) -> "both true",
+//         #(False, False) -> "both false"
+//     }
+// }
+
+// fn test_tuple_missing_wildcard(pair: #(Bool, Int)) -> String {
+//     match pair {
+//         #(True, 1) -> "true one",
+//         #(False, 2) -> "false two"
+//     }
+// }
+
+// fn test_nested_tuple_incomplete(nested: #(#(Bool, Bool), Bool)) -> String {
+//     match nested {
+//         #(#(True, True), True) -> "all true",
+//         #(#(False, False), False) -> "all false"
+//     }
+// }
