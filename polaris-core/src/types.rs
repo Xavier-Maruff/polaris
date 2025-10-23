@@ -2203,6 +2203,27 @@ impl<'a> TypecheckContext<'a> {
                                     .clone()
                                     .instantiate(&mut self.type_var_counter);
 
+                                let arg_types = self.get_constructor_arg_types(&constructor_type);
+                                if !arg_types.is_empty() {
+                                    let ctor_name = self
+                                        .symbols
+                                        .symbol_names
+                                        .get(&symbol_id)
+                                        .cloned()
+                                        .unwrap_or_else(|| "<unknown>".into());
+                                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                        message: format!(
+                                            "Constructor {} expects {} arguments but pattern has 0",
+                                            ctor_name,
+                                            arg_types.len()
+                                        ),
+                                        span: pattern.span.clone(),
+                                        file: self.current_file.clone(),
+                                        err_type: DiagnosticMsgType::TypeMismatch,
+                                    }));
+                                    return Err(());
+                                }
+
                                 let return_type =
                                     self.get_constructor_return_type(&constructor_type);
                                 let (expected_core, _expect_nocrypt) = match &expected_type.kind {
@@ -2520,6 +2541,37 @@ impl<'a> TypecheckContext<'a> {
                         )),
                     )
                 }
+                ListLit(elements) => match &expected_type.kind {
+                    TyKind::Ctor(ctor_id, type_args)
+                        if *ctor_id == self.symbols.intrinsic_types[crate::intrinsics::LIST] =>
+                    {
+                        let elem_type = &type_args[0];
+                        let mut subst = Substitution::new();
+
+                        for elem in elements {
+                            let s = self.typecheck_pattern(
+                                env,
+                                elem,
+                                &subst.apply(elem_type),
+                                in_match,
+                            )?;
+                            subst = subst.compose(&s);
+                        }
+                        Ok(subst)
+                    }
+                    _ => {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: format!(
+                                "Expected list type for list literal pattern, found {}",
+                                expected_type.render(&self)
+                            ),
+                            span: pattern.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeMismatch,
+                        }));
+                        Err(())
+                    }
+                },
                 //todo: add map literal patterns
                 MapLit(_) => {
                     let message = if in_match {
@@ -2567,10 +2619,11 @@ impl<'a> TypecheckContext<'a> {
     }
 
     fn get_constructor_return_type(&self, constructor_type: &Ty) -> Ty {
-        match &constructor_type.kind {
-            TyKind::Fn(_, ret) => ret.as_ref().clone(),
-            _ => constructor_type.clone(),
+        let mut current: &Ty = constructor_type;
+        while let TyKind::Fn(_, ret) = &current.kind {
+            current = ret.as_ref();
         }
+        current.clone()
     }
 
     fn get_constructor_arg_types(&self, constructor_type: &Ty) -> Vec<Ty> {

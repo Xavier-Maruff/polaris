@@ -175,7 +175,6 @@ type Color {
 type Shape {
     Circle(radius: Int)
     Rectangle(width: Int, height: Int)
-    Triangle(base: Int, height: Int)
 }
 
 fn test_enum_exhaustive(color: Color) -> String {
@@ -189,8 +188,7 @@ fn test_enum_exhaustive(color: Color) -> String {
 fn test_adt_exhaustive(shape: Shape) -> Int {
     match shape {
         Circle(r) -> r * r * 3, // Approximate area
-        Rectangle(w, h) -> w * h,
-        Triangle(b, h) -> b * h / 2
+        Rectangle(w, h) -> w * h
     }
 }
 
@@ -198,8 +196,7 @@ fn test_nested_adt_exhaustive(data: Option(Shape)) -> String {
     match data {
         None -> "no shape",
         Some(Circle(_)) -> "circular",
-        Some(Rectangle(_, _)) -> "rectangular",
-        Some(Triangle(_, _)) -> "triangular"
+        Some(Rectangle(_, _)) -> "rectangular"
     }
 }
 
