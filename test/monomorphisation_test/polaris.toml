@@ -1,0 +1,4 @@
+package = "monomorphisation_test"
+version = "0.1.0"
+
+path = "src"

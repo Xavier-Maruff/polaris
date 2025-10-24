@@ -103,7 +103,7 @@ struct TypeAliasInfo {
 }
 
 #[derive(Clone, Debug)]
-struct Substitution(HashMap<TypeVar, Ty>);
+pub struct Substitution(pub HashMap<TypeVar, Ty>);
 
 pub type TypeEnv = HashMap<SymbolId, Scheme>;
 
@@ -3020,7 +3020,7 @@ impl Scheme {
 }
 
 impl Substitution {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Substitution(HashMap::default())
     }
 
@@ -3037,7 +3037,7 @@ impl Substitution {
         Substitution(new_map)
     }
 
-    fn apply(&self, t: &Ty) -> Ty {
+    pub fn apply(&self, t: &Ty) -> Ty {
         use TyKind::*;
         match &t.kind {
             Var(a) => self.0.get(a).cloned().unwrap_or_else(|| {

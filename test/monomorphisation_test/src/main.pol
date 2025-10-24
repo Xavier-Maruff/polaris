@@ -1,0 +1,56 @@
+type Box(t) {
+    Box(value: t)
+}
+
+type Either(a, b) {
+    Left(a)
+    Right(b)
+}
+
+fn identity(x: a) -> a {
+    x
+}
+
+fn unwrap_or(opt: Option(a), default: a) -> a {
+    match opt {
+        Some(val) -> val,
+        None -> default,
+    }
+}
+
+fn make_pair(x: a, y: b) -> #(a, b) {
+    #(x, y)
+}
+
+fn swap(pair: #(a, b)) -> #(b, a) {
+    match pair {
+        #(x, y) -> #(y, x),
+    }
+}
+
+fn main() {
+    let int_id = identity(42)          // identity: Int -> Int
+    let str_id = identity("hello")     // identity: String -> String
+    let bool_id = identity(True)       // identity: Bool -> Bool
+
+    let opt_int = unwrap_or(Some(100), 0)           // unwrap_or: Option(Int), Int -> Int
+    let opt_str = unwrap_or(Some("yes"), "no")      // unwrap_or: Option(String), String -> String
+
+    let pair1 = make_pair(10, "test")               // make_pair: Int, String -> #(Int, String)
+    let pair2 = make_pair("foo", 20)                // make_pair: String, Int -> #(String, Int)
+    let pair3 = make_pair(True, False)              // make_pair: Bool, Bool -> #(Bool, Bool)
+
+    let swapped1 = swap(pair1)                      // swap: #(Int, String) -> #(String, Int)
+    let swapped2 = swap(pair2)                      // swap: #(String, Int) -> #(Int, String)
+
+    let nested = identity(make_pair(1, 2))          // identity: #(Int, Int) -> #(Int, Int)
+
+    let box_int = Box(value: 42)                    // Box: Int -> Box(Int)
+    let box_str = Box(value: "hello")               // Box: String -> Box(String)
+    let box_bool = Box(value: True)                 // Box: Bool -> Box(Bool)
+
+    let left_int = Left(10)                         // Left: Int -> Either(Int, b)
+    let right_str = Right("error")                  // Right: String -> Either(a, String)
+    let either1 = Left(100)                         // Left: Int -> Either(Int, b)
+    let either2 = Right(True)                       // Right: Bool -> Either(a, Bool)
+}
