@@ -1,0 +1,21 @@
+// Test closure capture with actual captured variables
+
+fn test_inline_closure() {
+    let x = 10
+    let y = 20
+    let adder = fn(z: Int) { x + y + z }
+}
+
+fn test_nested_scope() {
+    let outer = 5
+    let inner_result = {
+        let middle = 10
+        let closure = fn(param: Int) { outer + middle + param }
+        closure
+    }
+}
+
+fn main() {
+    test_inline_closure()
+    test_nested_scope()
+}

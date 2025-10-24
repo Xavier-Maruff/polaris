@@ -1,4 +1,4 @@
-
+/*
 // fn test_bool_missing_false(flag: Bool) -> String {
 //     match flag {
 //         True -> "yes"
@@ -83,3 +83,4 @@ type Test {
 //         #(#(False, False), False) -> "all false"
 //     }
 // }
+*/

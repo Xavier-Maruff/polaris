@@ -18,6 +18,7 @@ pub struct Node {
     pub effect: Option<Effect>,
     pub branch_strategy: Option<BranchStrategy>,
     pub decision_tree: Option<DecisionTree>,
+    pub capture_list: Option<Vec<SymbolId>>,
 }
 
 #[derive(Clone, Debug)]
@@ -201,6 +202,7 @@ impl Node {
             effect: None,
             branch_strategy: None,
             decision_tree: None,
+            capture_list: None,
         }
     }
 
@@ -215,6 +217,7 @@ impl Node {
             effect: other.effect.clone(),
             branch_strategy: other.branch_strategy,
             decision_tree: other.decision_tree.clone(),
+            capture_list: other.capture_list.clone(),
         }
     }
 

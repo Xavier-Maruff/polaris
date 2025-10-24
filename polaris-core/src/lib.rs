@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod closure;
 pub mod compile;
 pub mod desugar;
 pub mod diagnostic;
