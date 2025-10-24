@@ -4,11 +4,19 @@ type TestEnum {
     Variant3(first: String, second: Bool)
 }
 
+fn list_len(nums: List(Int)) -> Int {
+    match nums {
+        [] -> 0,
+        [_, ...tail] -> 1 + list_len(tail)
+    }
+}
+
 fn test_basic_matching() -> Int {
     let x = 42
-    match x {
-        1 -> 10,
-        42 -> 100,
+    match #(Variant1(12), x) {
+        #(Variant2, 1) -> 10,
+        #(Variant3(_, b), 42) -> 100,
+        #(Variant3(_, True), c) -> 50,
         _ -> 0
     }
 }
@@ -37,12 +45,30 @@ fn test_nested_matching() -> String {
 }
 
 fn test_list_patterns() -> Int {
-    let numbers = [1, 2, 3]
-    match numbers {
+    let numbers = [1, 2, 3, 4]
+    let binder_case = match numbers {
         [] -> 0,
         [single] -> single,
         [first, second] -> first + second,
-        [first, ...rest] -> first * 10
+        [first, second, third] -> first + second + third,
+        [first, second, ...rest] -> first + second + list_len(rest)
+    }
+
+    let shorter = [9, 10, 11]
+    let wildcard_case = match shorter {
+        [first, ...rest] -> first - list_len(rest),
+        [first, second, ...] -> first * second, // unreachable
+        _ -> 0
+    }
+
+    binder_case + wildcard_case
+}
+
+fn test_list_rest_binding(numbers: List(Int)) -> Int {
+    match numbers {
+        [first, ...rest] -> first + list_len(rest),
+        [first, second, ...rest] -> first + second + list_len(rest), // unreachable
+        [] -> 0
     }
 }
 
@@ -59,6 +85,8 @@ fn main() -> Int {
     let tuple_result = test_tuple_destructuring()
     let option_result = test_option_matching(Some(5))
     let list_result = test_list_patterns()
+    let list_rest_result = test_list_rest_binding([5, 6, 7])
+    let list_rest_single = test_list_rest_binding([8])
 
-    basic + tuple_result + option_result + list_result
+    basic + tuple_result + option_result + list_result + list_rest_result + list_rest_single
 }

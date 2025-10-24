@@ -118,7 +118,6 @@ pub enum BinaryOp {
 #[derive(Clone, Debug)]
 pub enum ListPatternElement {
     Element(Box<Node>),
-    Wildcard,
     Rest(Option<Box<Node>>),
 }
 
@@ -428,7 +427,6 @@ impl ExprKind {
                     .iter()
                     .map(|elem| match elem {
                         ListPatternElement::Element(node) => node.render(symbols),
-                        ListPatternElement::Wildcard => "_".to_string(),
                         ListPatternElement::Rest(Some(node)) => {
                             format!("...{}", node.render(symbols))
                         }
@@ -584,7 +582,6 @@ impl ExprKind {
                         ListPatternElement::Element(node) => {
                             node.collect_diagnostics(errs, collect_errors);
                         }
-                        ListPatternElement::Wildcard => {}
                         ListPatternElement::Rest(Some(node)) => {
                             node.collect_diagnostics(errs, collect_errors);
                         }

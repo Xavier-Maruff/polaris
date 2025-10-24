@@ -346,9 +346,6 @@ impl SymbolPassContext {
                                     mirror_symbols,
                                 )?);
                             }
-                            ListPatternElement::Wildcard => {
-                                //
-                            }
                             ListPatternElement::Rest(Some(node)) => {
                                 symbol_ids.extend(self.declare_binding(
                                     node,
@@ -791,9 +788,6 @@ impl SymbolPassContext {
                     match elem {
                         ListPatternElement::Element(node) => {
                             self.resolve_scoped_symbols(module_name, node, false);
-                        }
-                        ListPatternElement::Wildcard => {
-                            //
                         }
                         ListPatternElement::Rest(Some(node)) => {
                             self.resolve_scoped_symbols(module_name, node, false);

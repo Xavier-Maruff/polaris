@@ -782,7 +782,15 @@ impl<'a> ParseContext<'a> {
                     }
                     TokenVariant::Ident(name) if name == "_" => {
                         wrap_err!(node, self.advance(lexer));
-                        pattern_elements.push(ListPatternElement::Wildcard);
+                        pattern_elements.push(ListPatternElement::Element(Box::new(Node::new(
+                            NodeKind::Expr {
+                                expr: ExprKind::Discard,
+                            },
+                            CodeSpan {
+                                start: self.prev_tok.span.start,
+                                end: self.prev_tok.span.end,
+                            },
+                        ))));
                     }
                     _ => {
                         //regular element

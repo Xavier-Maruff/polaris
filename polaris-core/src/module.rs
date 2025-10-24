@@ -365,9 +365,6 @@ impl<'a> DependencyContext<'a> {
                                 logger,
                             );
                         }
-                        ListPatternElement::Wildcard => {
-                            // no symbols
-                        }
                         ListPatternElement::Rest(Some(node)) => {
                             DependencyContext::apply_symbol_substitutions(
                                 node,

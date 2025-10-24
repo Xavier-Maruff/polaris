@@ -2309,9 +2309,6 @@ impl<'a> TypecheckContext<'a> {
                                         )?;
                                         subst = subst.compose(&s);
                                     }
-                                    ListPatternElement::Wildcard => {
-                                        //
-                                    }
                                     ListPatternElement::Rest(Some(node)) => {
                                         let s = self.typecheck_pattern(
                                             env,
@@ -2653,7 +2650,6 @@ impl<'a> TypecheckContext<'a> {
                     ListPatternElement::Element(node) => {
                         matches!(&node.kind, NodeKind::Expr{expr} if self.is_nonexpansive(expr))
                     }
-                    ListPatternElement::Wildcard => true,
                     ListPatternElement::Rest(Some(node)) => {
                         matches!(&node.kind, NodeKind::Expr{expr} if self.is_nonexpansive(expr))
                     }

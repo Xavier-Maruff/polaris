@@ -146,9 +146,6 @@ impl DesugarContext {
                             ListPatternElement::Element(node) => {
                                 failed |= self.visit_node(node, failed).is_err();
                             }
-                            ListPatternElement::Wildcard => {
-                                //
-                            }
                             ListPatternElement::Rest(Some(node)) => {
                                 failed |= self.visit_node(node, failed).is_err();
                             }

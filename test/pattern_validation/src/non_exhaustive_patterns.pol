@@ -23,11 +23,11 @@
 //     }
 // }
 
-// fn test_result_missing_err(res: Result(Int, String)) -> Int {
-//     match res {
-//         Ok(x) -> x
-//     }
-// }
+ fn test_result_missing_err(res: Result(Int, String)) -> Int {
+     match res {
+         Ok(x) -> x
+     }
+ }
 
 // fn test_result_missing_ok(res: Result(Int, String)) -> Int {
 //     match res {
@@ -35,13 +35,13 @@
 //     }
 // }
 
-// fn test_int_missing_wildcard(x: Int) -> String {
-//     match x {
-//         1 -> "one",
-//         2 -> "two",
-//         42 -> "answer"
-//     }
-// }
+ fn test_int_missing_wildcard(x: Int) -> String {
+     match x {
+         1 -> "one",
+         2 -> "two",
+         42 -> "answer"
+     }
+ }
 
 // fn test_string_missing_wildcard(name: String) -> String {
 //     match name {
@@ -50,20 +50,25 @@
 //     }
 // }
 
-// fn test_real_missing_wildcard(num: Real) -> String {
-//     match num {
-//         3.14 -> "pi",
-//         2.71 -> "e"
-//     }
-// }
+ fn test_real_missing_wildcard(num: Real) -> String {
+     match num {
+         3.14 -> "pi",
+         2.71 -> "e"
+     }
+ }
 
+type Test {
+    VariantA
+    VariantB
+    VariantC
+}
 
-// fn test_tuple_missing_combinations(pair: #(Bool, Bool)) -> String {
-//     match pair {
-//         #(True, True) -> "both true",
-//         #(False, False) -> "both false"
-//     }
-// }
+ fn test_tuple_missing_combinations(pair: #(Bool, Test)) -> String {
+     match pair {
+         #(True, VariantA) -> "both true",
+         #(False, VariantB) -> "both false"
+     }
+ }
 
 // fn test_tuple_missing_wildcard(pair: #(Bool, Int)) -> String {
 //     match pair {
