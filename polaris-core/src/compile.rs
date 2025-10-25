@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap as HashMap;
 use crate::closure::closure_pass;
 use crate::desugar::desugar_pass;
 use crate::effect::{EffectInfo, effect_pass};
+use crate::lifetime::lifetime_pass;
 use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
 use crate::monomorphise::monomorphise_pass;
 use crate::parse::parse;
@@ -63,6 +64,7 @@ impl CompileContext {
                 ("Pattern analysis", pattern_pass),
                 ("Closure capture", closure_pass),
                 ("Monomorphisation", monomorphise_pass),
+                ("Lifetime analysis", lifetime_pass),
             ],
             type_info: TypeInfo::default(),
             effect_info: EffectInfo::default(),

@@ -1,0 +1,4 @@
+package = "lifetime_analysis"
+version = "0.1.0"
+
+path = "src"

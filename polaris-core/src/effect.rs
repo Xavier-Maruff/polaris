@@ -176,12 +176,22 @@ impl<'a> EffectContext<'a> {
             let sccs = self.compile_ctx.dependencies.sccs.clone();
             for scc in sccs {
                 for module_id in scc {
-                    if let Some(module) = self.compile_ctx.dependencies.modules.get(&module_id) {
+                    let mut cloned_ast = if let Some(module) =
+                        self.compile_ctx.dependencies.modules.get(&module_id)
+                    {
                         self.current_file = module.file.clone();
-                        let mut cloned_ast = module.ast.clone();
-                        if self.effect_module(&mut cloned_ast) {
-                            changed = true;
-                        }
+                        module.ast.clone()
+                    } else {
+                        continue;
+                    };
+
+                    if self.effect_module(&mut cloned_ast) {
+                        changed = true;
+                    }
+
+                    if let Some(module) = self.compile_ctx.dependencies.modules.get_mut(&module_id)
+                    {
+                        module.ast = cloned_ast;
                     }
                 }
             }

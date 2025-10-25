@@ -90,6 +90,9 @@ impl DesugarContext {
                                 branch_strategy: node.branch_strategy.clone(),
                                 decision_tree: node.decision_tree.clone(),
                                 capture_list: node.capture_list.clone(),
+                                use_semantics: node.use_semantics.clone(),
+                                alloc_strategy: node.alloc_strategy,
+                                parameter_semantics: node.parameter_semantics,
                             };
                         }
                     }

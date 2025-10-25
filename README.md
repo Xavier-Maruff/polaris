@@ -276,8 +276,7 @@ fn main() {
 
 ### Memory management
 
-Due to the need for immutability for Polaris' FHE optimisation pipeline, memory management is handled by the runtime. This also keeps the language simpler, and helps maintain the level of abstraction necessary for the actual atomic types implementations to be so decoupled from their standard counterparts that the language user has in their head (for example, integers are not integers, but massive polynomials - we don't wan't the user to have to think about memory management of a single integer though, things would get too crazy).
-The compiler and runtime use a combination of GC, reference counting, and lifetime analysis to handle allocations and frees, as well as secretly mutating data behind the scenes when a move is detected. For example:
+Due to the need for immutability for Polaris' FHE optimisation pipeline, memory management is handled by the compiler and runtime, rather than manually. Polaris uses a combination of static lifetime analysis and reference counting to manage memory without a GC, allocating bindings that share lifetimes via arenas where possible. Semantics-wise, Polaris does not allow the distinction between move/borrow/copy at the language level, but the compiler infers ownership semantics based on usage, and optimises away copies where possible.
 
 ```gleam
 fn add_1(val: Int) -> Int {
@@ -286,7 +285,7 @@ fn add_1(val: Int) -> Int {
 
 let my_arr: Array(Int) = [1, 2, 3]
 //array.apply_at is nominally pure, but the compiler will optimise this
-//to mutate the underlying array rather than copy
+//to mutate the underlying array via a move rather than copy
 let my_arr = my_arr |> array.apply_at(0, add_1)
 ```
 

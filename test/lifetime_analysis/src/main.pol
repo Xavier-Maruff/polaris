@@ -1,0 +1,19 @@
+fn test_nocrypt_binding() -> nocrypt Int {
+    let nc_value: nocrypt Int = 42
+    let nc_add: nocrypt Int = 10
+    let nc_result = nc_value + nc_add
+    nc_result
+}
+
+fn test_encrypted_binding() -> Int {
+    let enc_value: Int = 42
+    let enc_add: Int = 10
+    let enc_result = enc_value + enc_add
+    enc_result
+}
+
+fn main() -> Int {
+    let test1 = test_nocrypt_binding()
+    let test2 = test_encrypted_binding()
+    42
+}

@@ -61,4 +61,30 @@ mod tests {
 
         assert!(result.is_ok());
     }
+
+    #[tokio::test]
+    async fn lifetime_analysis() {
+        let args = BuildArgs {
+            directory: Some("../test/lifetime_analysis".into()),
+            profile: "dev".into(),
+            verbosity: 0,
+        };
+
+        let result = build_cmd::command(args).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn monomorphisation() {
+        let args = BuildArgs {
+            directory: Some("../test/monomorphisation".into()),
+            profile: "dev".into(),
+            verbosity: 0,
+        };
+
+        let result = build_cmd::command(args).await;
+
+        assert!(result.is_ok());
+    }
 }

@@ -5,6 +5,7 @@ pub mod desugar;
 pub mod diagnostic;
 pub mod effect;
 pub mod intrinsics;
+pub mod lifetime;
 pub mod log;
 pub mod module;
 pub mod monomorphise;

@@ -7,6 +7,27 @@ use crate::{
     types::Ty,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UseSemantics {
+    Copy,
+    Move,
+    Borrow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AllocationStrategy {
+    Stack,
+    Arena,
+    StaticFree,
+    RefCounted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParameterSemantics {
+    Owned,
+    Borrowed,
+}
+
 #[derive(Clone, Debug)]
 pub struct Node {
     pub kind: NodeKind,
@@ -19,6 +40,9 @@ pub struct Node {
     pub branch_strategy: Option<BranchStrategy>,
     pub decision_tree: Option<DecisionTree>,
     pub capture_list: Option<Vec<SymbolId>>,
+    pub use_semantics: Option<UseSemantics>,
+    pub alloc_strategy: Option<AllocationStrategy>,
+    pub parameter_semantics: Option<ParameterSemantics>,
 }
 
 #[derive(Clone, Debug)]
@@ -203,6 +227,9 @@ impl Node {
             branch_strategy: None,
             decision_tree: None,
             capture_list: None,
+            use_semantics: None,
+            alloc_strategy: None,
+            parameter_semantics: None,
         }
     }
 
@@ -218,6 +245,9 @@ impl Node {
             branch_strategy: other.branch_strategy,
             decision_tree: other.decision_tree.clone(),
             capture_list: other.capture_list.clone(),
+            use_semantics: other.use_semantics.clone(),
+            alloc_strategy: other.alloc_strategy,
+            parameter_semantics: other.parameter_semantics,
         }
     }
 
