@@ -1361,16 +1361,44 @@ impl<'a> TypecheckContext<'a> {
                     ty.merge_secret_from(&left_type);
                     ty.merge_secret_from(&right_type);
 
+                    if left_type.literal && right_type.literal {
+                        ty.literal = true;
+                    }
+
                     //rewrap in nocrypt if was unwrapped
                     if left_is_nocrypt {
                         ty = Ty::wrap_nocrypt(ty);
                     }
                     Ok((s3, ty))
                 } else {
-                    let allowed_combinations: Vec<_> = op_map
+                    // both literals, use typevar to allow backward inference
+                    if left_type.literal && right_type.literal {
+                        let mut result_ty = self.fresh_type_var();
+                        result_ty.merge_secret_from(&left_type);
+                        result_ty.merge_secret_from(&right_type);
+
+                        if left_is_nocrypt {
+                            result_ty = Ty::wrap_nocrypt(result_ty);
+                        }
+
+                        return Ok((s3, result_ty));
+                    }
+
+                    let mut allowed_combinations: Vec<_> = op_map
                         .iter()
                         .map(|((l, r), result)| (l.clone(), r.clone(), result.clone()))
                         .collect();
+
+                    // prefer int over sized ints
+                    if left_type.literal || right_type.literal {
+                        use crate::intrinsics::INT;
+                        let int_id = self.symbols.intrinsic_types[INT];
+                        allowed_combinations.sort_by_key(|(l, r, _)| {
+                            let l_is_int = matches!(&l.kind, TyKind::Concrete(id) if *id == int_id);
+                            let r_is_int = matches!(&r.kind, TyKind::Concrete(id) if *id == int_id);
+                            if l_is_int && r_is_int { 0 } else { 1 }
+                        });
+                    }
 
                     let mut found_result = None;
 
@@ -1390,6 +1418,11 @@ impl<'a> TypecheckContext<'a> {
                     if let Some((final_subst, mut result_type)) = found_result {
                         result_type.merge_secret_from(&left_type);
                         result_type.merge_secret_from(&right_type);
+
+                        if left_type.literal && right_type.literal {
+                            result_type.literal = true;
+                        }
+
                         if left_is_nocrypt {
                             result_type = Ty::wrap_nocrypt(result_type);
                         }
@@ -1438,10 +1471,19 @@ impl<'a> TypecheckContext<'a> {
                     result_type.merge_secret_from(&t);
                     Ok((s, result_type))
                 } else {
-                    let allowed_types: Vec<_> = op_map
+                    let mut allowed_types: Vec<_> = op_map
                         .iter()
                         .map(|(ty, result)| (ty.clone(), result.clone()))
                         .collect();
+
+                    if t.literal {
+                        use crate::intrinsics::INT;
+                        let int_id = self.symbols.intrinsic_types[INT];
+                        allowed_types.sort_by_key(|(ty, _)| match &ty.kind {
+                            TyKind::Concrete(id) if *id == int_id => 0,
+                            _ => 1,
+                        });
+                    }
 
                     let mut found_result = None;
                     for (allowed_type, result_type) in allowed_types {
@@ -1482,10 +1524,19 @@ impl<'a> TypecheckContext<'a> {
                 expr: value_expr,
                 symbols,
             } => {
-                let (s1, mut t1) = self.algo_w(env, value_expr)?;
+                let (s1, t1) = self.algo_w(env, value_expr)?;
                 let result = if let Some(declared_type) = symbol_type {
                     let expected_type = self.type_from_node(declared_type.as_mut())?;
-                    let s2 = self.unify(&s1.apply(&t1), &expected_type);
+
+                    //literal coercion before unification
+                    let t1_for_unify = if t1.literal {
+                        self.coerce_literal_to_type(&t1, &expected_type)
+                            .unwrap_or(t1.clone())
+                    } else {
+                        t1.clone()
+                    };
+
+                    let s2 = self.unify(&s1.apply(&t1_for_unify), &expected_type);
                     let s2 = self.bind_err_ctx(
                         s2,
                         node.span,
@@ -1545,7 +1596,6 @@ impl<'a> TypecheckContext<'a> {
 
                     (final_subst, t1)
                 } else {
-                    t1.literal = false;
                     (s1, t1)
                 };
 
@@ -2702,6 +2752,51 @@ impl<'a> TypecheckContext<'a> {
         }
     }
 
+    fn coerce_literal_to_type(&self, literal_ty: &Ty, target_ty: &Ty) -> Option<Ty> {
+        use TyKind::*;
+
+        if !literal_ty.literal {
+            return None;
+        }
+
+        match (&literal_ty.kind, &target_ty.kind) {
+            //IntLit -> any numeric type
+            (Concrete(lit_id), Concrete(_))
+                if *lit_id == self.symbols.intrinsic_types[INT]
+                    && target_ty.is_integer_type(&self.symbols) =>
+            {
+                let mut result = target_ty.clone();
+                result.literal = false;
+                Some(result)
+            }
+
+            (Concrete(lit_id), Concrete(_))
+                if *lit_id == self.symbols.intrinsic_types[REAL]
+                    && target_ty.is_real_type(&self.symbols) =>
+            {
+                let mut result = target_ty.clone();
+                result.literal = false;
+                Some(result)
+            }
+
+            (Concrete(lit_id), Concrete(_))
+                if *lit_id == self.symbols.intrinsic_types[INT]
+                    && target_ty.is_real_type(&self.symbols) =>
+            {
+                let mut result = target_ty.clone();
+                result.literal = false;
+                Some(result)
+            }
+
+            //arbitrary nocrypt status
+            (_, Nocrypt(inner)) => self
+                .coerce_literal_to_type(literal_ty, inner)
+                .map(|coerced| Ty::wrap_nocrypt(coerced)),
+
+            _ => None,
+        }
+    }
+
     fn occurs(&mut self, a: TypeVar, t: &Ty) -> bool {
         use TyKind::*;
         match &t.kind {
@@ -2759,6 +2854,35 @@ impl<'a> TypecheckContext<'a> {
                 types: vec![t1.clone(), t2.clone()],
                 hints: vec!["Attempted to mix usage of encrypted and 'nocrypt' types - remove/add 'nocrypt' type modifiers to fix.".into()],
             }),
+
+
+            (Concrete(id1), Concrete(_id2))
+                if t1.literal
+                    && !t2.literal
+                    && *id1 == self.symbols.intrinsic_types[INT]
+                    && t2.is_integer_type(&self.symbols) =>
+            {
+                Ok(Substitution::new())
+            }
+
+            //literal real -> any real/fixed
+            (Concrete(id1), Concrete(_id2))
+                if t1.literal
+                    && !t2.literal
+                    && *id1 == self.symbols.intrinsic_types[REAL]
+                    && t2.is_real_type(&self.symbols) =>
+            {
+                Ok(Substitution::new())
+            }
+
+            (Concrete(id1), Concrete(id2))
+                if id1 == id2
+                    && (t1.literal || t2.literal)
+                    && !(t1.literal && t2.literal)
+                    && (t1.is_numeric_type(&self.symbols) || t2.is_numeric_type(&self.symbols)) =>
+            {
+                Ok(Substitution::new())
+            }
 
             (Tuple(types1), Tuple(types2)) if types1.len() == types2.len() => {
                 let mut s = Substitution::new();
@@ -2966,6 +3090,39 @@ impl Ty {
             Tuple(types) => types.iter().all(|ty| ty.nocryptable()),
             Ctor(_, args) => args.iter().all(|arg| arg.nocryptable()),
         }
+    }
+
+    fn is_integer_type(&self, symbols: &SymbolContext) -> bool {
+        use crate::intrinsics::{I8, I16, I32, I64, INT, U8, U16, U32, U64};
+        if let TyKind::Concrete(id) = &self.kind {
+            *id == symbols.intrinsic_types[INT]
+                || *id == symbols.intrinsic_types[I8]
+                || *id == symbols.intrinsic_types[U8]
+                || *id == symbols.intrinsic_types[I16]
+                || *id == symbols.intrinsic_types[U16]
+                || *id == symbols.intrinsic_types[I32]
+                || *id == symbols.intrinsic_types[U32]
+                || *id == symbols.intrinsic_types[I64]
+                || *id == symbols.intrinsic_types[U64]
+        } else {
+            false
+        }
+    }
+
+    fn is_real_type(&self, symbols: &SymbolContext) -> bool {
+        use crate::intrinsics::{FIXED1, FIXED2, FIXED4, REAL};
+        if let TyKind::Concrete(id) = &self.kind {
+            *id == symbols.intrinsic_types[REAL]
+                || *id == symbols.intrinsic_types[FIXED1]
+                || *id == symbols.intrinsic_types[FIXED2]
+                || *id == symbols.intrinsic_types[FIXED4]
+        } else {
+            false
+        }
+    }
+
+    fn is_numeric_type(&self, symbols: &SymbolContext) -> bool {
+        self.is_integer_type(symbols) || self.is_real_type(symbols)
     }
 
     fn fn_args(&self) -> Vec<Ty> {

@@ -1,0 +1,4 @@
+package = "literal_coercion"
+version = "0.1.0"
+
+path = "src"

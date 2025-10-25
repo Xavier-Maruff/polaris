@@ -1,0 +1,105 @@
+fn test_i8() -> I8 {
+    let x: I8 = 42
+    x
+}
+
+fn test_u8() -> U8 {
+    let y: U8 = 255
+    y
+}
+
+fn test_i16() -> I16 {
+    let z: I16 = 1000
+    z
+}
+
+fn test_i32() -> I32 {
+    let a: I32 = 50000
+    a
+}
+
+fn test_i64() -> I64 {
+    let b: I64 = 1000000
+    b
+}
+
+fn test_real() -> Real {
+    let r: Real = 3.14
+    r
+}
+
+fn test_fixed1() -> Fixed1 {
+    let f1: Fixed1 = 1.5
+    f1
+}
+
+fn test_fixed2() -> Fixed2 {
+    let f2: Fixed2 = 2.25
+    f2
+}
+
+fn test_fixed4() -> Fixed4 {
+    let f4: Fixed4 = 4.125
+    f4
+}
+
+fn test_int_to_real() -> Real {
+    let ir: Real = 42
+    ir
+}
+
+fn test_int_to_fixed1() -> Fixed1 {
+    let if1: Fixed1 = 10
+    if1
+}
+
+fn test_int_to_fixed2() -> Fixed2 {
+    let if2: Fixed2 = 20
+    if2
+}
+
+fn test_literal_in_expr() -> I32 {
+    let a: I32 = 10
+    let b: I32 = 20
+    a + b
+}
+
+fn test_mixed_fixed() -> Fixed2 {
+    let x: Fixed2 = 1.5
+    let y: Fixed2 = 2
+    x + y
+}
+
+fn test_inference_i16() -> I16 {
+    let a = 12
+    let b: I16 = 32
+    a + b
+}
+
+fn test_inference_fixed2() -> Fixed2 {
+    let x = 1.5
+    let y: Fixed2 = 2.5
+    x + y
+}
+
+fn test_inference_chain() -> I32 {
+    let a = 10
+    let b = 20
+    let c: I32 = a + b
+    c
+}
+
+fn main() -> Int {
+    let t1 = test_i8()
+    let t2 = test_u8()
+    let t3 = test_i16()
+    let t4 = test_real()
+    let t5 = test_fixed1()
+    let t6 = test_int_to_real()
+    let t7 = test_literal_in_expr()
+    let t8 = test_mixed_fixed()
+    let t9 = test_inference_i16()
+    let t10 = test_inference_fixed2()
+    let t11 = test_inference_chain()
+    42
+}

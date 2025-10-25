@@ -87,4 +87,17 @@ mod tests {
 
         assert!(result.is_ok());
     }
+
+    #[tokio::test]
+    async fn literal_coercion() {
+        let args = BuildArgs {
+            directory: Some("../test/literal_coercion".into()),
+            profile: "dev".into(),
+            verbosity: 0,
+        };
+
+        let result = build_cmd::command(args).await;
+
+        assert!(result.is_ok());
+    }
 }
