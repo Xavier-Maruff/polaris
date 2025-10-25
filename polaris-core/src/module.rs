@@ -84,14 +84,21 @@ impl<'a> DependencyContext<'a> {
                 //get real ids for each imported symbol, create substitution map
                 for (imported_module, (local_module_id, symbols)) in imports.iter() {
                     let mut map = HashMap::default();
-                    let exports = self.symbols.exports.get(imported_module).unwrap();
-                    for export_name in symbols.iter() {
-                        let export_id = exports.get(export_name);
-                        //not going to error here, will be caught during substitution visitor
-                        //where code span info is available
-                        if let Some(export_id) = export_id {
-                            map.insert(export_name.clone(), export_id.clone());
+
+                    if let Some(exports) = self.symbols.exports.get(imported_module) {
+                        for export_name in symbols.iter() {
+                            let export_id = exports.get(export_name);
+                            //not going to error here, will be caught during substitution visitor
+                            //where code span info is available
+                            if let Some(export_id) = export_id {
+                                map.insert(export_name.clone(), export_id.clone());
+                            }
                         }
+                    } else {
+                        self.logger.error(&format!(
+                            "Module '{}' imported by '{}' has no exports (module may not exist or has no public members)",
+                            imported_module, module_id
+                        ));
                     }
 
                     subs.insert(local_module_id.clone(), map);
@@ -100,12 +107,19 @@ impl<'a> DependencyContext<'a> {
                 //everything again for types because I am dumb
                 for (imported_module, (local_module_id, symbols)) in type_imports.iter() {
                     let mut map = HashMap::default();
-                    let exports = self.symbols.type_exports.get(imported_module).unwrap();
-                    for export_name in symbols.iter() {
-                        let export_id = exports.get(export_name);
-                        if let Some(export_id) = export_id {
-                            map.insert(export_name.clone(), export_id.clone());
+
+                    if let Some(exports) = self.symbols.type_exports.get(imported_module) {
+                        for export_name in symbols.iter() {
+                            let export_id = exports.get(export_name);
+                            if let Some(export_id) = export_id {
+                                map.insert(export_name.clone(), export_id.clone());
+                            }
                         }
+                    } else {
+                        self.logger.error(&format!(
+                            "Module '{}' imported by '{}' has no type exports (module may not exist or has no public types)",
+                            imported_module, module_id
+                        ));
                     }
 
                     subs.entry(local_module_id.clone())
@@ -401,25 +415,28 @@ impl<'a> DependencyContext<'a> {
 
             Symbol { name, .. } => {
                 if let Some(symbol_id) = node.symbol_id {
-                    if let Some(sub) = subs.get(&symbol_id).and_then(|m| m.get(name)) {
-                        logger.debug(&format!(
-                            "Substituting expr symbol '{}' (id {}) with imported symbol id {}",
-                            name, symbol_id, sub
-                        ));
-                        node.symbol_id = Some(*sub);
-                    } else {
-                        //should probably replace node with an error node?
-                        errors.push(Diagnostic {
-                            primary: DiagnosticMsg {
-                                message: format!("Module does not export a member {}", name),
-                                err_type: DiagnosticMsgType::UndefinedVariable,
-                                span: node.span.clone(),
-                                file: current_file.clone(),
-                            },
-                            hints: vec![],
-                            notes: vec![],
-                        });
+                    //check if imported module alias
+                    if let Some(export_map) = subs.get(&symbol_id) {
+                        if let Some(sub) = export_map.get(name) {
+                            logger.debug(&format!(
+                                "Substituting expr symbol '{}' (id {}) with imported symbol id {}",
+                                name, symbol_id, sub
+                            ));
+                            node.symbol_id = Some(*sub);
+                        } else {
+                            errors.push(Diagnostic {
+                                primary: DiagnosticMsg {
+                                    message: format!("Module does not export a member {}", name),
+                                    err_type: DiagnosticMsgType::UndefinedVariable,
+                                    span: node.span.clone(),
+                                    file: current_file.clone(),
+                                },
+                                hints: vec![],
+                                notes: vec![],
+                            });
+                        }
                     }
+                    // else: symbol_id not in subs map - it's a regular local symbol, no substitution needed
                 }
             }
 
