@@ -1314,6 +1314,31 @@ impl<'a> TypecheckContext<'a> {
                 let left_type = s3.apply(&t1);
                 let right_type = s3.apply(&t2);
 
+                let (left_is_nocrypt, left_unwrapped) = match &left_type.kind {
+                    TyKind::Nocrypt(inner) => (true, (**inner).clone()),
+                    _ => (false, left_type.clone()),
+                };
+                let (right_is_nocrypt, right_unwrapped) = match &right_type.kind {
+                    TyKind::Nocrypt(inner) => (true, (**inner).clone()),
+                    _ => (false, right_type.clone()),
+                };
+
+                if left_is_nocrypt != right_is_nocrypt {
+                    self.bind_err_ctx(
+                        Err(TypeError {
+                            kind: TypeErrorKind::UnificationFail,
+                            types: vec![left_type.clone(), right_type.clone()],
+                            hints: vec!["Attempted to mix usage of encrypted and 'nocrypt' types - remove/add 'nocrypt' type modifiers to fix.".into()],
+                        }),
+                        node.span,
+                        Some((
+                            format!("Binary op '{}' is not valid for operands of types '{}' and '{}'", op, left_type.render(self), right_type.render(self)),
+                            vec![],
+                        )),
+                    )?;
+                    return Err(());
+                }
+
                 let op_map = self.accepting_binops.get(op);
                 if op_map.is_none() {
                     self.bind_err_ctx(
@@ -1329,10 +1354,17 @@ impl<'a> TypecheckContext<'a> {
                 }
                 let op_map = op_map.unwrap();
 
-                if let Some(result_type) = op_map.get(&(left_type.clone(), right_type.clone())) {
+                if let Some(result_type) =
+                    op_map.get(&(left_unwrapped.clone(), right_unwrapped.clone()))
+                {
                     let mut ty = result_type.clone();
                     ty.merge_secret_from(&left_type);
                     ty.merge_secret_from(&right_type);
+
+                    //rewrap in nocrypt if was unwrapped
+                    if left_is_nocrypt {
+                        ty = Ty::wrap_nocrypt(ty);
+                    }
                     Ok((s3, ty))
                 } else {
                     let allowed_combinations: Vec<_> = op_map
@@ -1342,10 +1374,11 @@ impl<'a> TypecheckContext<'a> {
 
                     let mut found_result = None;
 
+                    //unify unwrapped
                     for (allowed_left, allowed_right, result_type) in allowed_combinations {
-                        if let Ok(s4) = self.unify(&left_type, &allowed_left) {
+                        if let Ok(s4) = self.unify(&left_unwrapped, &allowed_left) {
                             if let Ok(s5) =
-                                self.unify(&s4.apply(&right_type), &s4.apply(&allowed_right))
+                                self.unify(&s4.apply(&right_unwrapped), &s4.apply(&allowed_right))
                             {
                                 let final_subst = s3.compose(&s4).compose(&s5);
                                 found_result = Some((final_subst, result_type));
@@ -1357,6 +1390,9 @@ impl<'a> TypecheckContext<'a> {
                     if let Some((final_subst, mut result_type)) = found_result {
                         result_type.merge_secret_from(&left_type);
                         result_type.merge_secret_from(&right_type);
+                        if left_is_nocrypt {
+                            result_type = Ty::wrap_nocrypt(result_type);
+                        }
                         Ok((final_subst, result_type))
                     } else {
                         self.bind_err_ctx(
@@ -2715,7 +2751,7 @@ impl<'a> TypecheckContext<'a> {
                 Ok(s1.compose(&s2))
             }
 
-            (Nocrypt(a), Nocrypt(b)) =>  self.unify(a, b),
+            (Nocrypt(a), Nocrypt(b)) => self.unify(a, b),
             (Nocrypt(a), _) if t2.nocryptable() => self.unify(a, t2),
             (_, Nocrypt(b)) if t1.nocryptable() => self.unify(t1, b),
             (Nocrypt(_), _) | (_, Nocrypt(_)) => Err(TypeError {
@@ -2736,7 +2772,11 @@ impl<'a> TypecheckContext<'a> {
             (Tuple(types1), Tuple(types2)) => Err(TypeError {
                 kind: TypeErrorKind::UnificationFail,
                 types: vec![t1.clone(), t2.clone()],
-                hints: vec![format!("These tuples are of different lengths - {} and {}.", types1.len(), types2.len())],
+                hints: vec![format!(
+                    "These tuples are of different lengths - {} and {}.",
+                    types1.len(),
+                    types2.len()
+                )],
             }),
 
             (Tuple(_), _) | (_, Tuple(_)) => Err(TypeError {
