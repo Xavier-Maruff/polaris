@@ -12,8 +12,26 @@ fn test_encrypted_binding() -> Int {
     enc_result
 }
 
+//arena reuse test
+fn test_sequential_usage() -> Int {
+    // bindings a, b should share arenas with d, e
+    let a: Int = 100
+    let b: Int = 200
+    let c = a + b
+
+    // c is used, a and b are now dead
+
+    // d, e can reuse arenas from a, b
+    let d: Int = 300
+    let e: Int = 400
+    let f = d + e
+
+    c + f
+}
+
 fn main() -> Int {
     let test1 = test_nocrypt_binding()
     let test2 = test_encrypted_binding()
+    let test3 = test_sequential_usage()
     42
 }

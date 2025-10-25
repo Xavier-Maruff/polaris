@@ -35,7 +35,8 @@ fn analyse_module(
     symbols: &crate::symbol::SymbolContext,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    visit_node(node, file, symbols, &mut diagnostics);
+    let mut arena_counter = 0;
+    visit_node(node, file, symbols, &mut diagnostics, &mut arena_counter);
     diagnostics
 }
 
@@ -44,11 +45,12 @@ fn visit_node(
     file: &str,
     symbols: &crate::symbol::SymbolContext,
     diagnostics: &mut Vec<Diagnostic>,
+    arena_counter: &mut usize,
 ) {
     match &mut node.kind {
         NodeKind::Module { children } => {
             for child in children {
-                visit_node(child, file, symbols, diagnostics);
+                visit_node(child, file, symbols, diagnostics, arena_counter);
             }
         }
         NodeKind::FnDecl {
@@ -56,7 +58,11 @@ fn visit_node(
             args,
             ..
         } => {
-            let mut ctx = AnalysisContext::new();
+            //base arena ID for func
+            let arena_id = *arena_counter;
+            *arena_counter += 1;
+
+            let mut ctx = AnalysisContext::new(arena_id);
 
             for (param_pattern, _, _) in args.iter() {
                 if let Some(symbol_id) = param_pattern.symbol_id {
@@ -67,6 +73,7 @@ fn visit_node(
             //last expr is in return position
             visit_expr(body, &mut ctx, true);
 
+            ctx.compute_arena_assignments(arena_id);
             emit_diagnostics(&ctx, file, symbols, diagnostics);
 
             annotate_params(args, &ctx);
@@ -83,6 +90,7 @@ struct AnalysisContext {
     current_order: usize,
     closure_escapes: HashMap<usize, bool>,
     symbol_spans: HashMap<SymbolId, CodeSpan>,
+    current_arena_id: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +101,8 @@ struct BindingData {
     shared_across_branches: bool,
     has_multiple_uses: bool,
     ty: Option<Ty>,
+    birth_order: usize,
+    arena_id: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -112,17 +122,21 @@ enum UseContext {
 }
 
 impl AnalysisContext {
-    fn new() -> Self {
+    fn new(arena_id: usize) -> Self {
         Self {
             bindings: HashMap::default(),
             use_sites: Vec::new(),
             current_order: 0,
             closure_escapes: HashMap::default(),
             symbol_spans: HashMap::default(),
+            current_arena_id: arena_id,
         }
     }
 
     fn record_binding(&mut self, symbol_id: SymbolId, ty: Option<Ty>) {
+        let birth_order = self.current_order;
+        self.current_order += 1;
+
         self.bindings.insert(
             symbol_id,
             BindingData {
@@ -132,6 +146,8 @@ impl AnalysisContext {
                 shared_across_branches: false,
                 has_multiple_uses: false,
                 ty,
+                birth_order,
+                arena_id: None,
             },
         );
     }
@@ -223,6 +239,91 @@ impl AnalysisContext {
 
         self.use_sites.extend(branch_ctx.use_sites.clone());
     }
+
+    // bindings with non-overlapping lifetimes can share the same arena
+    fn compute_arena_assignments(&mut self, base_arena_id: usize) {
+        #[derive(Debug)]
+        struct LifetimeInterval {
+            symbol_id: SymbolId,
+            birth: usize,
+            death: usize,
+        }
+
+        let mut intervals: Vec<LifetimeInterval> = Vec::new();
+
+        for (symbol_id, data) in &self.bindings {
+            //skip escaping bindings - no arena for you
+            if data.escapes_function || data.captured_by_escaping_closure {
+                continue;
+            }
+
+            let birth = data.birth_order;
+
+            let death = self
+                .use_sites
+                .iter()
+                .filter(|u| u.symbol_id == *symbol_id)
+                .map(|u| u.order)
+                .max()
+                .unwrap_or(birth);
+
+            intervals.push(LifetimeInterval {
+                symbol_id: *symbol_id,
+                birth,
+                death,
+            });
+        }
+
+        intervals.sort_by_key(|i| i.birth);
+
+        //greedy coloring
+        // arena id -> [symbol_ids]
+        let mut arena_assignments: Vec<Vec<usize>> = Vec::new(); // arena_id -> [symbol_ids]
+
+        for interval in intervals {
+            //currently occupied arenas at birth
+            let mut available_arena: Option<usize> = None;
+
+            for (arena_idx, arena_symbols) in arena_assignments.iter().enumerate() {
+                let is_free = arena_symbols.iter().all(|&other_symbol_id| {
+                    if let Some(other_data) = self.bindings.get(&other_symbol_id) {
+                        let other_death = self
+                            .use_sites
+                            .iter()
+                            .filter(|u| u.symbol_id == other_symbol_id)
+                            .map(|u| u.order)
+                            .max()
+                            .unwrap_or(other_data.birth_order);
+
+                        //no overlap
+                        other_death < interval.birth || other_data.birth_order > interval.death
+                    } else {
+                        true
+                    }
+                });
+
+                if is_free {
+                    available_arena = Some(arena_idx);
+                    break;
+                }
+            }
+
+            let arena_idx = if let Some(idx) = available_arena {
+                idx
+            } else {
+                //need a new arena if none available
+                let idx = arena_assignments.len();
+                arena_assignments.push(Vec::new());
+                idx
+            };
+
+            arena_assignments[arena_idx].push(interval.symbol_id);
+
+            if let Some(data) = self.bindings.get_mut(&interval.symbol_id) {
+                data.arena_id = Some(base_arena_id + arena_idx);
+            }
+        }
+    }
 }
 
 fn visit_expr(node: &Node, ctx: &mut AnalysisContext, is_return_position: bool) {
@@ -306,7 +407,8 @@ fn visit_expr(node: &Node, ctx: &mut AnalysisContext, is_return_position: bool) 
             ExprKind::Closure {
                 args, expr: body, ..
             } => {
-                let mut closure_ctx = AnalysisContext::new();
+                //inherit current arena ID
+                let mut closure_ctx = AnalysisContext::new(ctx.current_arena_id);
                 let closure_ptr = node as *const Node as usize;
 
                 for (arg_pattern, _, _) in args {
@@ -557,10 +659,10 @@ fn annotate(node: &mut Node, ctx: &AnalysisContext) {
             if let Some(symbol_id) = symbols.symbol_id {
                 Some(determine_allocation_strategy(symbol_id, &node.ty, ctx))
             } else {
-                determine_expr_allocation(node)
+                determine_expr_allocation(node, ctx)
             }
         } else {
-            determine_expr_allocation(node)
+            determine_expr_allocation(node, ctx)
         }
     } else {
         None
@@ -730,21 +832,24 @@ fn determine_allocation_strategy(
             return AllocationStrategy::StaticFree;
         }
 
+        //default to function level arena
+        let arena_id = data.arena_id.unwrap_or(ctx.current_arena_id);
+
         if data.has_multiple_uses {
-            return AllocationStrategy::Arena;
+            return AllocationStrategy::Arena(arena_id);
         }
 
         if !is_encrypted {
             return AllocationStrategy::Stack;
         } else {
-            return AllocationStrategy::Arena;
+            return AllocationStrategy::Arena(arena_id);
         }
     }
 
-    AllocationStrategy::Arena
+    AllocationStrategy::Arena(ctx.current_arena_id)
 }
 
-fn determine_expr_allocation(node: &Node) -> Option<AllocationStrategy> {
+fn determine_expr_allocation(node: &Node, ctx: &AnalysisContext) -> Option<AllocationStrategy> {
     let is_encrypted = node
         .ty
         .as_ref()
@@ -758,14 +863,14 @@ fn determine_expr_allocation(node: &Node) -> Option<AllocationStrategy> {
             | ExprKind::UnaryOp { .. }
             | ExprKind::TupleLit(_)
             | ExprKind::ListLit(_)
-            | ExprKind::MapLit(_) => Some(AllocationStrategy::Arena),
+            | ExprKind::MapLit(_) => Some(AllocationStrategy::Arena(ctx.current_arena_id)),
 
             //only stack allocate nocrypt
             ExprKind::IntLit(_) | ExprKind::StringLit(_) | ExprKind::RealLit { .. } => {
                 if !is_encrypted {
                     Some(AllocationStrategy::Stack)
                 } else {
-                    Some(AllocationStrategy::Arena)
+                    Some(AllocationStrategy::Arena(ctx.current_arena_id))
                 }
             }
             _ => None,

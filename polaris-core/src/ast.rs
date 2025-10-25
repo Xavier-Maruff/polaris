@@ -17,7 +17,8 @@ pub enum UseSemantics {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AllocationStrategy {
     Stack,
-    Arena,
+    //arena id
+    Arena(usize),
     StaticFree,
     RefCounted,
 }
