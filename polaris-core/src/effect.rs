@@ -298,7 +298,7 @@ impl<'a> EffectContext<'a> {
                             ),
                             span: node.span,
                             file: self.current_file.clone(),
-                            err_type: crate::diagnostic::DiagnosticMsgType::PerformanceWarning,
+                            err_type: crate::diagnostic::DiagnosticMsgType::ConstExprEffectful,
                         },
                     );
 
