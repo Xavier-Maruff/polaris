@@ -4,6 +4,7 @@ use crate::closure::closure_pass;
 use crate::desugar::desugar_pass;
 use crate::effect::{EffectInfo, effect_pass};
 use crate::lifetime::lifetime_pass;
+use crate::lowering_pmir::lowering_pmir_pass;
 use crate::module::{DepGraphContext, ModuleContext, ModuleId, dependency_pass};
 use crate::monomorphise::monomorphise_pass;
 use crate::parse::parse;
@@ -65,6 +66,7 @@ impl CompileContext {
                 ("Closure capture", closure_pass),
                 ("Monomorphisation", monomorphise_pass),
                 ("Lifetime analysis", lifetime_pass),
+                ("Lowering to PMIR", lowering_pmir_pass),
             ],
             type_info: TypeInfo::default(),
             effect_info: EffectInfo::default(),
