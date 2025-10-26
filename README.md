@@ -39,8 +39,8 @@ type Result(a, b) {
 //Test is a record, which is sugar for a product type
 type Test {
   Test(
-    name: String,
-    func: fn() -> Result(Void, String)
+    name: String(_),
+    func: fn() -> Result(Void, String(_))
   )
 }
 
@@ -209,14 +209,14 @@ Polaris has two intrinsic monadic types that come with a monad bind operator '?'
 
 ```gleam
 //will return None if arg == None, due to '?' monad binding
-fn opt_example(arg: Option(String)) -> Option(String) {
+fn opt_example(arg: Option(String(_))) -> Option(String(_)) {
   let t = arg?
   let t = t |> string.reverse
   Some(t)
 }
 
 //The monad binding will early return the Error type, so we are free to change the Ok type
-fn result_example(arg: Result(Int, String)) -> Result(String, String) {
+fn result_example(arg: Result(Int, String(_))) -> Result(String(_), String(_)) {
   let t = arg? |> int.to_string
   Ok(t)
 }
@@ -316,7 +316,7 @@ fn add_1(val: Int) -> Int {
   val + 1
 }
 
-let my_arr: Array(Int) = [1, 2, 3]
+let my_arr: Array(Int, 3) = [1, 2, 3]
 //array.apply_at is nominally pure, but the compiler will optimise this
 //to mutate the underlying array via a move rather than copy
 let my_arr = my_arr |> array.apply_at(0, add_1)
@@ -337,7 +337,7 @@ const some_const = 12
 const other_const = "hello"
 const clear_const: nocrypt Int = 42
 
-harness fn log_something(arg: String) -> Result(Void, String)
+harness fn log_something(arg: String(_)) -> Result(Void, String(_))
 
 fn some_pure_func(arg: Int) {
   arg + some_const
