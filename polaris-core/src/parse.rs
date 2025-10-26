@@ -1669,6 +1669,46 @@ impl<'a> ParseContext<'a> {
             }
             TokenVariant::Ident(ident) => {
                 let start_span = self.curr_tok.span.start;
+
+                if ident == "_" {
+                    wrap_err!(node, self.advance(lexer));
+
+                    if nocrypt {
+                        let discard_node = Node::new(
+                            NodeKind::Expr {
+                                expr: ExprKind::Discard,
+                            },
+                            CodeSpan {
+                                start: start_span,
+                                end: self.prev_tok.span.end,
+                            },
+                        );
+
+                        return Ok(Node::new(
+                            NodeKind::Type {
+                                nocrypt: true,
+                                parent_module: None,
+                                symbol: "_".to_string(),
+                                type_vars: vec![discard_node],
+                            },
+                            CodeSpan {
+                                start: start_span,
+                                end: self.prev_tok.span.end,
+                            },
+                        ));
+                    } else {
+                        return Ok(Node::new(
+                            NodeKind::Expr {
+                                expr: ExprKind::Discard,
+                            },
+                            CodeSpan {
+                                start: start_span,
+                                end: self.prev_tok.span.end,
+                            },
+                        ));
+                    }
+                }
+
                 wrap_err!(node, self.advance(lexer));
 
                 let (ident, parent_module) = if matches!(self.curr_tok.variant, TokenVariant::Dot) {

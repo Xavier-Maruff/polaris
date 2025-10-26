@@ -562,6 +562,16 @@ impl SymbolPassContext {
                 parent_module,
                 ..
             } => {
+                //special case for discard type var
+                if symbol == "_" && type_vars.len() == 1 {
+                    if let NodeKind::Expr {
+                        expr: ExprKind::Discard,
+                    } = &type_vars[0].kind
+                    {
+                        return;
+                    }
+                }
+
                 //resolve type vars
                 for ty in type_vars {
                     self.resolve_scoped_symbols(module_name, ty, true);

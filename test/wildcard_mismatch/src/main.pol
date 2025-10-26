@@ -1,0 +1,6 @@
+const bad_array: Array(String, _) = [1, 2, 3]
+const other_bad_array: Array(Int, _) = ["a", "b", "c"]
+
+fn main() {
+  bad_array[0]
+}

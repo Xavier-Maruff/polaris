@@ -1,0 +1,4 @@
+package = "wildcard_types"
+version = "0.1.0"
+
+path = "src"

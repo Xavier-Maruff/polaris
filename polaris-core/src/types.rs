@@ -2073,6 +2073,10 @@ impl<'a> TypecheckContext<'a> {
         type_param_map: &HashMap<String, Ty>,
     ) -> Result<Ty, ()> {
         let result = match &mut node.kind {
+            //discard in type pos - let compiler infer this part
+            NodeKind::Expr {
+                expr: ExprKind::Discard,
+            } => Ok(self.fresh_type_var()),
             //int lit in type pos - only for array sizes atm
             NodeKind::Expr {
                 expr: ExprKind::IntLit(n),
@@ -2102,6 +2106,16 @@ impl<'a> TypecheckContext<'a> {
                         Ok(a)
                     }
                 };
+
+                //discard type var -> fresh type var
+                if symbol == "_" && type_vars.len() == 1 {
+                    if let NodeKind::Expr {
+                        expr: ExprKind::Discard,
+                    } = &type_vars[0].kind
+                    {
+                        return ok(self.fresh_type_var());
+                    }
+                }
 
                 //check for type param or size variable first
                 if symbol.chars().next().map_or(false, |c| c.is_lowercase()) {

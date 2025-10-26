@@ -1,0 +1,25 @@
+fn make_array() -> Array(_, 3) {
+  [1, 2, 3]
+}
+
+const opt1: Option(_) = Some(42)
+
+fn first_element(arr: Array(_, n)) -> Int {
+  arr[0]
+}
+
+const my_arr: Array(_, _) = [1, 2, 3, 4, 5]
+const first = first_element(my_arr)
+
+fn test_let() -> Int {
+  let x: Array(Int, _) = [10, 20, 30]
+  x[0]
+}
+
+const a1 = first_element([1, 2])
+const a2 = first_element([1, 2, 3, 4])
+const a3 = first_element([1, 2, 3, 4, 5, 6])
+
+fn main() {
+  test_let()
+}

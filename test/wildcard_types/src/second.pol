@@ -1,0 +1,40 @@
+const test1: Array(Int, _) = [1, 2, 3, 4, 5]
+
+fn get_length(arr: Array(_, n)) -> Int {
+  0
+}
+
+fn make_pair() -> #(Int, _) {
+  #(42, True)
+}
+
+const nested: Array(#(_, Int), _) = [#(True, 1), #(False, 2)]
+
+fn identity(arr: Array(t, n)) -> Array(t, n) {
+  arr
+}
+
+const id_result: Array(Int, _) = identity([1, 2, 3])
+
+fn use_let() -> Int {
+  let x: Array(_, 4) = [10, 20, 30, 40]
+  x[0]
+}
+
+fn first(arr: Array(t, _)) -> t {
+  arr[0]
+}
+
+const chain1: Array(_, _) = [1, 2, 3]
+const chain2 = first(chain1)
+
+const explicit_size: Array(_, 7) = [1, 2, 3, 4, 5, 6, 7]
+
+const all_wild: Array(_, _) = [True, False, True]
+
+const tuple_wild1: #(Int, _, String) = #(1, True, "hello")
+const tuple_wild2: #(_, _, _) = #(1, 2, 3)
+
+fn main() {
+  chain2
+}
