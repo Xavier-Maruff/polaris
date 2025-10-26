@@ -1,0 +1,9 @@
+
+fn test_truncation_error() -> String(2) {
+    let s: String(2) = "hello"
+    s
+}
+
+fn main() {
+    test_truncation_error()
+}

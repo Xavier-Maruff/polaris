@@ -1,0 +1,4 @@
+package = "string_literal_padding"
+version = "0.1.0"
+
+path = "src"

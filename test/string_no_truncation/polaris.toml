@@ -1,0 +1,4 @@
+package = "string_no_truncation"
+version = "0.1.0"
+
+path = "src"

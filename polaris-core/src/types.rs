@@ -1113,7 +1113,47 @@ impl<'a> TypecheckContext<'a> {
 
                     for elem in elements.iter_mut().skip(1) {
                         let (s, t) = self.algo_w(&mut current_env, elem)?;
-                        let s2 = self.unify(&subst.apply(&elem_type), &s.apply(&t));
+                        let elem_t = s.apply(&t);
+
+                        //lift stirng lit to max size
+                        if let (TyKind::Ctor(id1, args1), TyKind::Ctor(id2, args2)) =
+                            (&elem_type.kind, &elem_t.kind)
+                        {
+                            if *id1 == self.symbols.intrinsic_types[crate::intrinsics::STRING]
+                                && *id2 == self.symbols.intrinsic_types[crate::intrinsics::STRING]
+                                && args1.len() == 1
+                                && args2.len() == 1
+                                && elem_type.literal
+                                && elem_t.literal
+                            {
+                                if let (TyKind::IntLiteral(n1), TyKind::IntLiteral(n2)) =
+                                    (&args1[0].kind, &args2[0].kind)
+                                {
+                                    if n1 != n2 {
+                                        let max_size = (*n1).max(*n2);
+                                        let mut lifted_type = Ty::new_literal(TyKind::Ctor(
+                                            *id1,
+                                            vec![Ty::new(TyKind::IntLiteral(max_size))],
+                                        ));
+                                        lifted_type.merge_secret_from(&elem_type);
+                                        lifted_type.merge_secret_from(&elem_t);
+                                        elem_type = lifted_type;
+
+                                        subst = subst.compose(&s);
+                                        current_env = subst.apply_env(&current_env);
+
+                                        is_literal = is_literal && elem_type.literal;
+                                        if elem_type.require_secret && secret_origin.is_none() {
+                                            secret_origin = elem_type.secret_origin.clone();
+                                        }
+                                        require_secret = require_secret || elem_type.require_secret;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+
+                        let s2 = self.unify(&subst.apply(&elem_type), &elem_t);
                         let s2 = self.bind_err_ctx(
                             s2,
                             elem.span,
@@ -2992,7 +3032,7 @@ impl<'a> TypecheckContext<'a> {
                 Some(result)
             }
 
-            //String(n) -> String(m) only if sizes match or target has type var for size
+            //String(n) -> String(m) - valid if n <= m (pad) or target has type var for size
             (Ctor(lit_id, lit_args), Ctor(target_id, target_args))
                 if *lit_id == self.symbols.intrinsic_types[crate::intrinsics::STRING]
                     && *target_id == self.symbols.intrinsic_types[crate::intrinsics::STRING] =>
@@ -3006,9 +3046,8 @@ impl<'a> TypecheckContext<'a> {
                             Some(result)
                         }
                         TyKind::IntLiteral(target_size) => {
-                            //concrete size, must match
                             if let TyKind::IntLiteral(lit_size) = &lit_args[0].kind {
-                                if lit_size == target_size {
+                                if lit_size <= target_size {
                                     let mut result = target_ty.clone();
                                     result.literal = false;
                                     Some(result)
@@ -3164,6 +3203,70 @@ impl<'a> TypecheckContext<'a> {
             }),
 
             (Ctor(id1, args1), Ctor(id2, args2)) if id1 == id2 && args1.len() == args2.len() => {
+                //allow string lit padding
+                if *id1 == self.symbols.intrinsic_types[crate::intrinsics::STRING]
+                    && args1.len() == 1
+                    && args2.len() == 1
+                {
+                    match (&args1[0].kind, &args2[0].kind) {
+                        (IntLiteral(n1), IntLiteral(n2)) => {
+                            if n1 != n2 {
+                                if t1.literal && t2.literal {
+                                    //lift to max size
+                                    let max_size = (*n1).max(*n2);
+                                    let mut result = Ty::new_literal(TyKind::Ctor(
+                                        *id1,
+                                        vec![Ty::new(TyKind::IntLiteral(max_size))],
+                                    ));
+                                    result.merge_secret_from(t1);
+                                    result.merge_secret_from(t2);
+
+                                    return Ok(Substitution::new());
+                                } else if t1.literal && !t2.literal {
+                                    if n1 <= n2 {
+                                        return Ok(Substitution::new());
+                                    } else {
+                                        return Err(TypeError {
+                                            kind: TypeErrorKind::UnificationFail,
+                                            types: vec![t1.clone(), t2.clone()],
+                                            hints: vec![format!(
+                                                "Cannot truncate string literal of length {} to fit type String({})",
+                                                n1, n2
+                                            )],
+                                        });
+                                    }
+                                } else if !t1.literal && t2.literal {
+                                    if n2 <= n1 {
+                                        return Ok(Substitution::new());
+                                    } else {
+                                        return Err(TypeError {
+                                            kind: TypeErrorKind::UnificationFail,
+                                            types: vec![t1.clone(), t2.clone()],
+                                            hints: vec![format!(
+                                                "Cannot truncate string literal of length {} to fit type String({})",
+                                                n2, n1
+                                            )],
+                                        });
+                                    }
+                                } else {
+                                    //not literal -> size mismatch
+                                    return Err(TypeError {
+                                        kind: TypeErrorKind::UnificationFail,
+                                        types: vec![t1.clone(), t2.clone()],
+                                        hints: vec![format!(
+                                            "String sizes do not match: String({}) != String({})",
+                                            n1, n2
+                                        )],
+                                    });
+                                }
+                            }
+                        }
+                        _ => {
+                            //
+                        }
+                    }
+                }
+
                 let mut s = Substitution::new();
                 for (arg1, arg2) in args1.iter().zip(args2.iter()) {
                     let s2 = self.unify(&s.apply(arg1), &s.apply(arg2))?;

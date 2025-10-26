@@ -1,0 +1,39 @@
+fn test_explicit_padding() -> String(10) {
+    let s: String(10) = "test"
+    s
+}
+
+fn test_array_string_literals() -> Array(String(5), 4) {
+    let arr = ["a", "hi", "test", "hello"]
+    arr
+}
+
+fn test_mixed_string_assignment() -> #(String(8), String(8)) {
+    let s1: String(8) = "short"
+    #(s1, "other")
+}
+
+fn test_exact_match() -> String(5) {
+    let s: String(5) = "hello"
+    s
+}
+
+fn test_array_with_single_char() -> Array(String(6), 3) {
+    ["x", "test", "longer"]
+}
+
+fn test_nested_strings() -> #(String(10), Array(String(7), 2)) {
+    let single: String(10) = "short"
+    let arr = ["a", "medium"]
+    #(single, arr)
+}
+
+fn main() -> String(4) {
+    let t1 = test_explicit_padding()
+    let t2 = test_array_string_literals()
+    let t3 = test_mixed_string_assignment()
+    let t4 = test_exact_match()
+    let t5 = test_array_with_single_char()
+    let t6 = test_nested_strings()
+    "done"
+}
