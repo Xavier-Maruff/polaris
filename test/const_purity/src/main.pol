@@ -1,0 +1,21 @@
+
+fn pure_add(a: Int, b: Int) -> Int {
+    a + b
+}
+
+harness fn get_input() -> Int
+harness pure fn get_config() -> Int
+
+const valid_const: Int = pure_add(1, 2)
+const invalid_const1: Int = get_input()
+
+const invalid_const2: Int = get_config()
+fn calls_harness() -> Int {
+    get_input()
+}
+
+const invalid_const3: Int = calls_harness()
+
+fn main() {
+    valid_const
+}

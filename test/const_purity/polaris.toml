@@ -1,0 +1,4 @@
+package = "const_purity"
+version = "0.1.0"
+
+path = "src"

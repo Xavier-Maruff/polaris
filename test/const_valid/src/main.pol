@@ -1,0 +1,22 @@
+fn pure_add(a: Int, b: Int) -> Int {
+    a + b
+}
+
+fn pure_multiply(a: Int, b: Int) -> Int {
+    a * b
+}
+
+const valid1: Int = 42
+const valid2: Int = pure_add(10, 20)
+const valid3: Int = pure_multiply(3, 4)
+const valid4: Int = pure_add(valid1, valid2)
+
+fn compute() -> Int {
+    pure_add(1, pure_multiply(2, 3))
+}
+
+const valid5: Int = compute()
+
+fn main() {
+    valid5
+}

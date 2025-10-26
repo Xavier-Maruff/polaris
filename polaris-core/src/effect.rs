@@ -275,9 +275,45 @@ impl<'a> EffectContext<'a> {
 
                 false
             }
-            NodeKind::ConstDecl { expr, .. } => {
+            NodeKind::ConstDecl { expr, symbol, .. } => {
                 let result = self.effect_node(expr);
                 node.effect = Some(result.effect);
+
+                //cannot run harness functions in const declarations
+                if result.effect.is_harness() {
+                    let const_name = if let NodeKind::Expr {
+                        expr: ExprKind::Symbol { name },
+                    } = &symbol.kind
+                    {
+                        name.clone()
+                    } else {
+                        "<unnamed>".to_string()
+                    };
+
+                    let mut diagnostic = crate::diagnostic::Diagnostic::new(
+                        crate::diagnostic::DiagnosticMsg {
+                            message: format!(
+                                "Const '{}' cannot call harness functions - const values must be compile-time evaluable",
+                                const_name
+                            ),
+                            span: node.span,
+                            file: self.current_file.clone(),
+                            err_type: crate::diagnostic::DiagnosticMsgType::PerformanceWarning,
+                        },
+                    );
+
+                    if let Some(cause) = &result.cause {
+                        diagnostic.add_hint(format!("Harness function called: {}", cause.message));
+                    }
+
+                    diagnostic.add_hint(
+                        "Const declarations can only use pure functions or FHE operations"
+                            .to_string(),
+                    );
+
+                    self.compile_ctx.errors.push(diagnostic);
+                }
+
                 false
             }
             NodeKind::Expr { .. } => {

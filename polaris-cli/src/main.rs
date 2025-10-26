@@ -50,4 +50,5 @@ mod tests {
     build_test!(array_sizing, "../test/array_sizing");
     build_test!(size_polymorphism, "../test/size_polymorphism");
     build_test!(wildcard_types, "../test/wildcard_types");
+    build_test!(const_effect, "../test/const_valid");
 }
