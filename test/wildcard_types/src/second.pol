@@ -32,7 +32,7 @@ const explicit_size: Array(_, 7) = [1, 2, 3, 4, 5, 6, 7]
 
 const all_wild: Array(_, _) = [True, False, True]
 
-const tuple_wild1: #(Int, _, String) = #(1, True, "hello")
+const tuple_wild1: #(Int, _, String(_)) = #(1, True, "hello")
 const tuple_wild2: #(_, _, _) = #(1, 2, 3)
 
 fn main() {

@@ -48,12 +48,14 @@ define_intrinsic_types! {
     FIXED2 => "Fixed2",
     FIXED4 => "Fixed4",
     BOOL => "Bool",
+    //todo: coerce string literals to max length if in array in literal coercion
     STRING => "String",
+    DYNAMIC_STRING => "DynamicString",
     CHAR => "Char",
     RESULT => "Result",
     OPTION => "Option",
     ARRAY => "Array",
-    LIST => "List",
+    DYNAMIC_ARRAY => "DynamicArray",
     MAP => "Map",
 }
 
@@ -202,7 +204,8 @@ pub fn create_intrinsic_type_env(symbols: &mut SymbolContext, counter: &mut Type
     decl_ctor!(BOOL(), TRUE);
     decl_ctor!(BOOL(), FALSE);
 
-    decl_concrete!(STRING);
+    decl_concrete!(DYNAMIC_STRING);
+    decl_concrete!(DYNAMIC_ARRAY);
     decl_concrete!(CHAR);
 
     decl_ctor!(OPTION(t), SOME(t));
@@ -289,14 +292,29 @@ pub fn create_intrinsic_binops(
     real_kind!(FIXED2);
     real_kind!(FIXED4);
 
-    add_binop!((STRING, BinaryOp::Add, STRING) => STRING);
-    add_binop!((CHAR, BinaryOp::Add, CHAR) => STRING);
-    add_binop!((STRING, BinaryOp::Add, CHAR) => STRING);
-    add_binop!((CHAR, BinaryOp::Add, STRING) => STRING);
-    add_binop!((STRING, BinaryOp::Equal, STRING) => BOOL);
-    add_binop!((CHAR, BinaryOp::Equal, CHAR) => BOOL);
-    add_binop!((STRING, BinaryOp::NotEqual, STRING) => BOOL);
-    add_binop!((CHAR, BinaryOp::NotEqual, CHAR) => BOOL);
+    let string_t1 = Ty::new(TyKind::Ctor(
+        symbols.intrinsic_types[STRING].clone(),
+        vec![Ty::new(TyKind::Var(usize::MAX))],
+    ));
+    let string_t2 = Ty::new(TyKind::Ctor(
+        symbols.intrinsic_types[STRING].clone(),
+        vec![Ty::new(TyKind::Var(usize::MAX - 1))],
+    ));
+    let dynamic_string = env[&symbols.intrinsic_types[DYNAMIC_STRING]].body.clone();
+    let char_ty = env[&symbols.intrinsic_types[CHAR]].body.clone();
+    let bool_ty = env[&symbols.intrinsic_types[BOOL]].body.clone();
+
+    //need to think more about whether this should be allowed
+    //and how it should be implemented under FHE in the VM
+    add_binop!((string_t1.clone(), BinaryOp::Add, string_t2.clone()) => dynamic_string.clone());
+    add_binop!((char_ty.clone(), BinaryOp::Add, char_ty.clone()) => dynamic_string.clone());
+    add_binop!((string_t1.clone(), BinaryOp::Add, char_ty.clone()) => dynamic_string.clone());
+    add_binop!((char_ty.clone(), BinaryOp::Add, string_t1.clone()) => dynamic_string.clone());
+
+    add_binop!((string_t1.clone(), BinaryOp::Equal, string_t2.clone()) => bool_ty.clone());
+    add_binop!((char_ty.clone(), BinaryOp::Equal, char_ty.clone()) => bool_ty.clone());
+    add_binop!((string_t1.clone(), BinaryOp::NotEqual, string_t2.clone()) => bool_ty.clone());
+    add_binop!((char_ty.clone(), BinaryOp::NotEqual, char_ty.clone()) => bool_ty);
 
     add_binop!((BOOL, BinaryOp::And, BOOL) => BOOL);
     add_binop!((BOOL, BinaryOp::Or, BOOL) => BOOL);

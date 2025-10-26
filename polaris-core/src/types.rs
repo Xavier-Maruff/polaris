@@ -6,7 +6,7 @@ use crate::{
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
     intrinsics::{
-        ARRAY, BOOL, INT, LIST, MAP, REAL, STRING, VOID, create_intrinsic_binops,
+        ARRAY, BOOL, INT, MAP, REAL, STRING, VOID, create_intrinsic_binops,
         create_intrinsic_type_env, create_intrinsic_unary_ops,
     },
     module::DepGraphContext,
@@ -885,10 +885,16 @@ impl<'a> TypecheckContext<'a> {
                 Substitution::new(),
                 Ty::new_literal(TyKind::Concrete(self.symbols.intrinsic_types[REAL])),
             )),
-            ExprKind::StringLit(_) => Ok((
-                Substitution::new(),
-                Ty::new_literal(TyKind::Concrete(self.symbols.intrinsic_types[STRING])),
-            )),
+            ExprKind::StringLit(s) => {
+                let string_len = s.len();
+                Ok((
+                    Substitution::new(),
+                    Ty::new_literal(TyKind::Ctor(
+                        self.symbols.intrinsic_types[STRING],
+                        vec![Ty::new(TyKind::IntLiteral(string_len))],
+                    )),
+                ))
+            }
             ExprKind::MapLit(map) => {
                 let mut key_type = self.fresh_type_var();
                 let mut value_type = self.fresh_type_var();
@@ -2135,6 +2141,32 @@ impl<'a> TypecheckContext<'a> {
                     self.symbols.intrinsic_types.get(symbol.as_str()).cloned()
                 };
 
+                //special case: DynamicString and DynamicArray must be nocrypt
+                if let Some(id) = symbol_id {
+                    if id == self.symbols.intrinsic_types[crate::intrinsics::DYNAMIC_STRING]
+                        && !*nocrypt
+                    {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: "DynamicString must be annotated with 'nocrypt' - dynamic-sized strings cannot exist in FHE context".to_string(),
+                            span: node.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeMismatch,
+                        }));
+                        return Err(());
+                    }
+                    if id == self.symbols.intrinsic_types[crate::intrinsics::DYNAMIC_ARRAY]
+                        && !*nocrypt
+                    {
+                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                            message: "DynamicArray must be annotated with 'nocrypt' - dynamic-sized arrays cannot exist in FHE context".to_string(),
+                            span: node.span.clone(),
+                            file: self.current_file.clone(),
+                            err_type: DiagnosticMsgType::TypeMismatch,
+                        }));
+                        return Err(());
+                    }
+                }
+
                 if let Some(symbol_id) = symbol_id {
                     if self.type_aliases.contains_key(&symbol_id) {
                         let alias_ty = self.instantiate_type_alias(
@@ -2445,14 +2477,58 @@ impl<'a> TypecheckContext<'a> {
                 Discard => Ok(Substitution::new()),
                 ListPattern(elements) => {
                     use crate::ast::ListPatternElement;
+
+                    // list patterns work on both Array(t, n) and DynamicArray(t)
                     match &expected_type.kind {
-                        TyKind::Ctor(ctor_id, type_args)
-                            if *ctor_id == self.symbols.intrinsic_types[LIST] =>
+                        TyKind::Ctor(id, args)
+                            if *id == self.symbols.intrinsic_types[crate::intrinsics::ARRAY] =>
                         {
-                            let elem_type = &type_args[0];
+                            // check that pattern matches array size
+                            if args.len() != 2 {
+                                self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                    message: "Array type must have exactly 2 parameters"
+                                        .to_string(),
+                                    span: pattern.span.clone(),
+                                    file: self.current_file.clone(),
+                                    err_type: DiagnosticMsgType::TypeMismatch,
+                                }));
+                                return Err(());
+                            }
+
+                            let elem_type = &args[0];
+                            let size_ty = &args[1];
+
+                            let mut prefix_count = 0;
+                            let mut has_rest = false;
+
+                            for elem in elements.iter() {
+                                match elem {
+                                    ListPatternElement::Element(_) => prefix_count += 1,
+                                    ListPatternElement::Rest(_) => has_rest = true,
+                                }
+                            }
+
+                            //must match exact size if no rest pattern
+                            if !has_rest {
+                                if let TyKind::IntLiteral(size) = &size_ty.kind {
+                                    if *size != prefix_count {
+                                        self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                            message: format!(
+                                                "List pattern has {} elements but Array has size {}",
+                                                prefix_count, size
+                                            ),
+                                            span: pattern.span.clone(),
+                                            file: self.current_file.clone(),
+                                            err_type: DiagnosticMsgType::TypeMismatch,
+                                        }));
+                                        return Err(());
+                                    }
+                                }
+                            }
+
                             let mut subst = Substitution::new();
 
-                            for elem in elements {
+                            for elem in elements.iter() {
                                 match elem {
                                     ListPatternElement::Element(node) => {
                                         let s = self.typecheck_pattern(
@@ -2463,11 +2539,25 @@ impl<'a> TypecheckContext<'a> {
                                         )?;
                                         subst = subst.compose(&s);
                                     }
-                                    ListPatternElement::Rest(Some(node)) => {
+                                    ListPatternElement::Rest(Some(rest_node)) => {
+                                        let rest_size = if let TyKind::IntLiteral(n) = &size_ty.kind
+                                        {
+                                            Ty::new(TyKind::IntLiteral(n - prefix_count))
+                                        } else {
+                                            let fresh_var =
+                                                fresh_type_var_id(&mut self.type_var_counter);
+                                            Ty::new(TyKind::SizeVar(fresh_var))
+                                        };
+
+                                        let rest_type = Ty::new(TyKind::Ctor(
+                                            self.symbols.intrinsic_types[crate::intrinsics::ARRAY],
+                                            vec![elem_type.clone(), rest_size],
+                                        ));
+
                                         let s = self.typecheck_pattern(
                                             env,
-                                            node,
-                                            &subst.apply(expected_type),
+                                            rest_node,
+                                            &subst.apply(&rest_type),
                                             in_match,
                                         )?;
                                         subst = subst.compose(&s);
@@ -2477,13 +2567,68 @@ impl<'a> TypecheckContext<'a> {
                                     }
                                 }
                             }
+
+                            Ok(subst)
+                        }
+                        TyKind::Ctor(id, args)
+                            if *id
+                                == self.symbols.intrinsic_types
+                                    [crate::intrinsics::DYNAMIC_ARRAY] =>
+                        {
+                            // no size checking needed
+                            if args.len() != 1 {
+                                self.errors.push(Diagnostic::new(DiagnosticMsg {
+                                    message: "DynamicArray type must have exactly 1 parameter"
+                                        .to_string(),
+                                    span: pattern.span.clone(),
+                                    file: self.current_file.clone(),
+                                    err_type: DiagnosticMsgType::TypeMismatch,
+                                }));
+                                return Err(());
+                            }
+
+                            let elem_type = &args[0];
+                            let mut subst = Substitution::new();
+
+                            for elem in elements.iter() {
+                                match elem {
+                                    ListPatternElement::Element(node) => {
+                                        let s = self.typecheck_pattern(
+                                            env,
+                                            node,
+                                            &subst.apply(elem_type),
+                                            in_match,
+                                        )?;
+                                        subst = subst.compose(&s);
+                                    }
+                                    ListPatternElement::Rest(Some(rest_node)) => {
+                                        let rest_type = Ty::new(TyKind::Ctor(
+                                            self.symbols.intrinsic_types
+                                                [crate::intrinsics::DYNAMIC_ARRAY],
+                                            vec![elem_type.clone()],
+                                        ));
+
+                                        let s = self.typecheck_pattern(
+                                            env,
+                                            rest_node,
+                                            &subst.apply(&rest_type),
+                                            in_match,
+                                        )?;
+                                        subst = subst.compose(&s);
+                                    }
+                                    ListPatternElement::Rest(None) => {
+                                        //
+                                    }
+                                }
+                            }
+
                             Ok(subst)
                         }
                         _ => {
                             self.errors.push(Diagnostic::new(DiagnosticMsg {
                                 message: format!(
-                                    "Expected list type for list pattern, found {}",
-                                    expected_type.render(&self)
+                                    "List pattern can only be used with Array or DynamicArray types, found {}",
+                                    expected_type.render(self)
                                 ),
                                 span: pattern.span.clone(),
                                 file: self.current_file.clone(),
@@ -2674,8 +2819,10 @@ impl<'a> TypecheckContext<'a> {
                     )
                 }
                 StringLit(value) => {
-                    let string_type = Ty::new_literal(TyKind::Concrete(
+                    let string_len = value.len();
+                    let string_type = Ty::new_literal(TyKind::Ctor(
                         self.symbols.intrinsic_types[crate::intrinsics::STRING],
+                        vec![Ty::new(TyKind::IntLiteral(string_len))],
                     ));
 
                     let s_unify = self.unify(&string_type, expected_type);
@@ -2692,37 +2839,15 @@ impl<'a> TypecheckContext<'a> {
                         )),
                     )
                 }
-                ListLit(elements) => match &expected_type.kind {
-                    TyKind::Ctor(ctor_id, type_args)
-                        if *ctor_id == self.symbols.intrinsic_types[crate::intrinsics::LIST] =>
-                    {
-                        let elem_type = &type_args[0];
-                        let mut subst = Substitution::new();
-
-                        for elem in elements {
-                            let s = self.typecheck_pattern(
-                                env,
-                                elem,
-                                &subst.apply(elem_type),
-                                in_match,
-                            )?;
-                            subst = subst.compose(&s);
-                        }
-                        Ok(subst)
-                    }
-                    _ => {
-                        self.errors.push(Diagnostic::new(DiagnosticMsg {
-                            message: format!(
-                                "Expected list type for list literal pattern, found {}",
-                                expected_type.render(&self)
-                            ),
-                            span: pattern.span.clone(),
-                            file: self.current_file.clone(),
-                            err_type: DiagnosticMsgType::TypeMismatch,
-                        }));
-                        Err(())
-                    }
-                },
+                ListLit(_elements) => {
+                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                        message: "List literal patterns are no longer supported - use array patterns instead".to_string(),
+                        span: pattern.span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::TypeMismatch,
+                    }));
+                    Err(())
+                }
                 //todo: add map literal patterns
                 MapLit(_) => {
                     let message = if in_match {
@@ -2854,6 +2979,51 @@ impl<'a> TypecheckContext<'a> {
                 let mut result = target_ty.clone();
                 result.literal = false;
                 Some(result)
+            }
+
+            //String(n) -> DynamicString
+            (Ctor(lit_id, _), Concrete(target_id))
+                if *lit_id == self.symbols.intrinsic_types[crate::intrinsics::STRING]
+                    && *target_id
+                        == self.symbols.intrinsic_types[crate::intrinsics::DYNAMIC_STRING] =>
+            {
+                let mut result = target_ty.clone();
+                result.literal = false;
+                Some(result)
+            }
+
+            //String(n) -> String(m) only if sizes match or target has type var for size
+            (Ctor(lit_id, lit_args), Ctor(target_id, target_args))
+                if *lit_id == self.symbols.intrinsic_types[crate::intrinsics::STRING]
+                    && *target_id == self.symbols.intrinsic_types[crate::intrinsics::STRING] =>
+            {
+                if target_args.len() == 1 && lit_args.len() == 1 {
+                    match &target_args[0].kind {
+                        TyKind::Var(_) | TyKind::SizeVar(_) => {
+                            //target polymorphic in size, allow coercion
+                            let mut result = target_ty.clone();
+                            result.literal = false;
+                            Some(result)
+                        }
+                        TyKind::IntLiteral(target_size) => {
+                            //concrete size, must match
+                            if let TyKind::IntLiteral(lit_size) = &lit_args[0].kind {
+                                if lit_size == target_size {
+                                    let mut result = target_ty.clone();
+                                    result.literal = false;
+                                    Some(result)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
             }
 
             //arbitrary nocrypt status
@@ -3002,19 +3172,6 @@ impl<'a> TypecheckContext<'a> {
                 Ok(s)
             }
 
-            //cannot coerce between Array and List
-            (Ctor(id1, _), Ctor(id2, _))
-                if (*id1 == self.symbols.intrinsic_types[LIST]
-                    && *id2 == self.symbols.intrinsic_types[ARRAY])
-                || (*id1 == self.symbols.intrinsic_types[ARRAY]
-                    && *id2 == self.symbols.intrinsic_types[LIST]) =>
-            {
-                Err(TypeError {
-                    kind: TypeErrorKind::UnificationFail,
-                    types: vec![t1.clone(), t2.clone()],
-                    hints: vec!["Array and List are different types. Arrays have fixed size known at compile time, while Lists are dynamically sized.".into()],
-                })
-            }
 
             _ => Err(TypeError {
                 kind: TypeErrorKind::UnificationFail,
@@ -3099,7 +3256,15 @@ impl Ty {
                 TyKind::Tuple(types.into_iter().map(Ty::wrap_nocrypt_deep).collect())
             }
             TyKind::Ctor(id, args) => {
-                TyKind::Ctor(id, args.into_iter().map(Ty::wrap_nocrypt_deep).collect())
+                //only wrap type args, not size vars
+                let wrapped_args = args
+                    .into_iter()
+                    .map(|arg| match arg.kind {
+                        TyKind::IntLiteral(_) | TyKind::SizeVar(_) => arg,
+                        _ => Ty::wrap_nocrypt_deep(arg),
+                    })
+                    .collect();
+                TyKind::Ctor(id, wrapped_args)
             }
             other => other,
         };

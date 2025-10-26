@@ -1,15 +1,16 @@
 type TestEnum {
     Variant1(value: Int)
     Variant2
-    Variant3(first: String, second: Bool)
+    Variant3(first: nocrypt DynamicString, second: Bool)
 }
 
-fn list_len(nums: List(Int)) -> Int {
-    match nums {
-        [] -> 0,
-        [_, ...tail] -> 1 + list_len(tail)
-    }
-}
+// List type has been removed - use Array instead
+// fn list_len(nums: List(Int)) -> Int {
+//     match nums {
+//         [] -> 0,
+//         [_, ...tail] -> 1 + list_len(tail)
+//     }
+// }
 
 fn test_basic_matching() -> Int {
     let x: I16 = 42
@@ -35,11 +36,11 @@ fn test_option_matching(opt: Option(Int)) -> Int {
     }
 }
 
-fn test_nested_matching() -> String {
+fn test_nested_matching() -> String(10) {
     let nested = Some(#(True, 42))
     match nested {
-        None -> "nothing",
-        Some(#(True, x)) -> "true case",
+        None -> "nothing!!!",
+        Some(#(True, x)) -> "true case!",
         Some(#(False, x)) -> "false case"
     }
 }
@@ -56,15 +57,16 @@ fn test_array_access() -> I8 {
     first + second + short_first + short_second
 }
 
-fn test_list_rest_binding(numbers: List(Int)) -> Int {
-    match numbers {
-        [first, ...rest] -> first + list_len(rest),
-        [first, second, ...rest] -> first + second + list_len(rest), // unreachable
-        [] -> 0
-    }
-}
+// List patterns no longer supported - List type has been removed
+// fn test_list_rest_binding(numbers: List(Int)) -> Int {
+//     match numbers {
+//         [first, ...rest] -> first + list_len(rest),
+//         [first, second, ...rest] -> first + second + list_len(rest), // unreachable
+//         [] -> 0
+//     }
+// }
 
-fn test_custom_enum(value: TestEnum) -> String {
+fn test_custom_enum(value: TestEnum) -> String(8) {
     match value {
         Variant1(x) -> "variant1",
         Variant2 -> "variant2",

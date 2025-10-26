@@ -9,11 +9,11 @@ type Field(a) {
 }
 
 type Other {
-    Other(val: nocrypt String)
+    Other(val: nocrypt String(_))
 }
 
 type AliasInt = Int
-type AliasResult(a) = Result(a, String)
+type AliasResult(a) = Result(a, String(_))
 type AliasField = Field(Int)
 type WrappedAlias(a, n) = #(AliasResult(a), Array(a, n))
 
@@ -24,7 +24,7 @@ pub fn check_inference(arg) {
     b
 }
 
-pub fn label_test(str: t, int: Int, tuple: #(String, Int)) {
+pub fn label_test(str: t, int: Int, tuple: #(String(_), Int)) {
     #(str, int)
 }
 
@@ -33,8 +33,8 @@ pub fn alias_passthrough(val: AliasResult(t)) -> AliasResult(t) {
 }
 
 pub fn main() {
-    let b: nocrypt String = "test"
-    let a: nocrypt String = b
+    let b: String(_) = "test"
+    let a: String(_) = b
     a |> check_inference
     check_inference(arg: a)
     check_inference(12)
@@ -44,12 +44,12 @@ pub fn main() {
     let b = 12
     let d = Ctor1(val: b)
 
-    let map: Map(String, Int) = #{"key": 12, "key2": 12}
+    let map: Map(String(4), Int) = #{"key1": 12, "key2": 12}
 
     let closure: fn(Int) -> Int = fn (x: Int) -> Int { x + 1 }
     let closure = fn (a) {Ctor1(val: a)}
     let ret = closure(b)
-    let other_ret = fn (x: nocrypt String) { Ctor1(x) } (a)
+    let other_ret = fn (x: String(_)) { Ctor1(x) } (a)
 
     let some = Some(12)
     let unwrapped = some?
@@ -85,7 +85,7 @@ pub fn main() {
     out
 }
 
-pub harness fn some_harness() -> Result(Int, String)
+pub harness fn some_harness() -> Result(Int, String(_))
 //pub pure fn should_err() {
 pub fn should_not_err() {
     let ret = some_harness()

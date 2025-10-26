@@ -73,7 +73,7 @@ Void
 // Default integer type - pretty narrow, but necessary
 Int = I16
 //Other integer widths - implemented as multi-limb U/I16 under the hood
-I8, U8, U16, I32, U32, I64, U64
+I8, U8, I16, U16, I32, U32, I64, U64
 //Approx. real numbers - for exact values use fixed
 Real
 //Fixed-point real numbers - scaled integers under the hood
@@ -86,15 +86,20 @@ Bool
 //Not mutable (like all in Polaris), but the compiler will
 //optimise away redundant copies
 Array(t, n)
-//Classic linked cons-list
-List(t)
+//Dynamic-sized array - can only be used with 'nocrypt' annotation
+//Cannot exist in FHE context due to dynamic sizing constraints
+DynamicArray(t)
 //Hash map
+//to be migrated to static Map(#(k, v), n)
 Map(k, v)
 //Tuple
 #(a, b, ...)
 
-//UTF-8 string - wrapper over Array(U8)
-String
+//Static-sized string, polymorphic over size
+String(n)
+//Dynamic-sized string - can only be used with 'nocrypt' annotation
+//Cannot exist in FHE context due to dynamic sizing constraints
+DynamicString
 //Unicode code point - non-compact representation, ~ U64
 Char
 
@@ -114,24 +119,51 @@ let b: Real = 3.141
 let c: Fixed2(Int) = 3.14
 let d: Bool = True
 let e: Array(Int, 3) = [1, 2, 3]
-let f: List(Int) = [1, 2, 3]
-let g: Map(String, Int) = #{
+let f: nocrypt DynamicArray(Int) = [1, 2, 3]  // DynamicArray must be nocrypt
+let g: Map(String(5), Int) = #{
   "key_1": 1,
   "key_2": 2
 }
 let h: #(Int, Int) = #(1, 2)
-let i: String = "my_string"
-let j: Char = "a"
+let i: String(_) = "my_string"  // String literal inferred as String(9)
+let j: nocrypt DynamicString = "dynamic"  // DynamicString must be nocrypt
+let k: Char = "a"
 //closure literal
-let k: fn(Int) -> Int = fn(a) { a + 1 }
+let l: fn(Int) -> Int = fn(a) { a + 1 }
 ```
 
-> [!NOTE]
-> Any implicit numeric conversions or narrowings will result in a compiler error, and this includes literals. This is because type coercion is expensive under homomorphic encryption, and involves switching schemes in most cases. To convert a value to a different numeric type, use the relevant intrinsic conversion function, e.g. `int.to_real`, `fixed2.to_int`, etc.
+#### Recursive Types and Nocrypt
+
+Recursive data structures (like linked lists, trees, etc.) must be annotated with `nocrypt` because they leak structural information through pointer traversal in FHE contexts. You can build custom recursive types using `Option` for nullable references:
+
+```gleam
+// Linked list using recursive Option type
+type LinkedList(t) {
+    Node(
+      value: t,
+      next: nocrypt Option(LinkedList(t))
+    )
+}
+
+// Binary tree
+type Tree(t) {
+    Leaf
+    Branch(
+      value: t,
+      left: nocrypt Option(Tree(t)),
+      right: nocrypt Option(Tree(t))
+    )
+}
+
+// Usage example
+let list = Node(value: 1, next: Some(Node(value: 2, next: None)))
+```
+
+For collections of encrypted data, use `Array(t, n)` with compile-time known sizes.
 
 ### Bindings
 
-Polaris is an immutable language, as this allows for certain important FHE optimisations. You can declare bindings like so:
+Polaris is an immutable language, as this allows for certain properties required for computation under homomorphic encryption. You can declare bindings like so:
 
 ```gleam
 let my_binding = some_func()
@@ -233,7 +265,7 @@ type MyNumericType {
 }
 
 let unwrapped = match some_value {
-  Thing1(x) -> x |> fixed2.to_real
+  Thing1(x) -> x |> fixed2.to_real,
   Thing2(x) -> x
 }
 ```
@@ -312,21 +344,10 @@ fn some_pure_func(arg: Int) {
 }
 
 //use intrinsic array.reduce which maps directly to a VM op
-fn sum_array_opt(arr: Array(Int)) -> Int {
+fn sum_array_opt(arr: Array(Int, n)) -> Int {
   arr |> array.reduce(fn(a, b) { a + b }, 0)
 }
 
-//manual tail recursive sum
-fn sum_array_rec(arr: Array(Int)) -> Int {
-  arr |> sum_array_internal(0)
-}
-
-fn sum_array_internal(arr: Array(Int), acc: Int) -> Int {
-  match arr {
-    [] -> acc
-    [first, ...rest] -> rest |> sum_array_internal(acc + first)
-  }
-}
 
 
 fn main() {
