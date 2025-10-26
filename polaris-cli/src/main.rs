@@ -23,81 +23,31 @@ async fn main() {
 mod tests {
     use crate::{build_cmd, cli::BuildArgs};
 
-    #[tokio::test]
-    async fn imports() {
-        let args = BuildArgs {
-            directory: Some("../test/imports".into()),
-            profile: "dev".into(),
-            verbosity: 0,
+    macro_rules! build_test {
+        ($name:ident, $path:expr) => {
+            #[tokio::test]
+            async fn $name() {
+                let args = BuildArgs {
+                    directory: Some($path.into()),
+                    profile: "dev".into(),
+                    verbosity: 0,
+                };
+
+                let result = build_cmd::command(args).await;
+
+                assert!(result.is_ok());
+            }
         };
-
-        let result = build_cmd::command(args).await;
-
-        assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn types() {
-        let args = BuildArgs {
-            directory: Some("../test/type".into()),
-            profile: "dev".into(),
-            verbosity: 0,
-        };
-
-        let result = build_cmd::command(args).await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn pattern_validation() {
-        let args = BuildArgs {
-            directory: Some("../test/pattern_validation".into()),
-            profile: "dev".into(),
-            verbosity: 0,
-        };
-
-        let result = build_cmd::command(args).await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn lifetime_analysis() {
-        let args = BuildArgs {
-            directory: Some("../test/lifetime_analysis".into()),
-            profile: "dev".into(),
-            verbosity: 0,
-        };
-
-        let result = build_cmd::command(args).await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn monomorphisation() {
-        let args = BuildArgs {
-            directory: Some("../test/monomorphisation".into()),
-            profile: "dev".into(),
-            verbosity: 0,
-        };
-
-        let result = build_cmd::command(args).await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn literal_coercion() {
-        let args = BuildArgs {
-            directory: Some("../test/literal_coercion".into()),
-            profile: "dev".into(),
-            verbosity: 0,
-        };
-
-        let result = build_cmd::command(args).await;
-
-        assert!(result.is_ok());
-    }
+    build_test!(imports, "../test/imports");
+    build_test!(types, "../test/type");
+    build_test!(pattern_validation, "../test/pattern_validation");
+    build_test!(lifetime_analysis, "../test/lifetime_analysis");
+    build_test!(monomorphisation, "../test/monomorphisation");
+    build_test!(literal_coercion, "../test/literal_coercion");
+    build_test!(closures, "../test/closure");
+    build_test!(array_sizing, "../test/array_sizing");
+    build_test!(size_polymorphism, "../test/size_polymorphism");
+    build_test!(wildcard_types, "../test/wildcard_types");
 }

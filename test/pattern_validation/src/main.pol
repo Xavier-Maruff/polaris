@@ -11,7 +11,7 @@ fn list_len(nums: List(Int)) -> Int {
     }
 }
 
-fn test_basic_matching() -> I16 {
+fn test_basic_matching() -> Int {
     let x: I16 = 42
     match #(Variant1(12), x) {
         #(Variant2, 1) -> 10,
@@ -21,14 +21,14 @@ fn test_basic_matching() -> I16 {
     }
 }
 
-fn test_tuple_destructuring() -> I16 {
+fn test_tuple_destructuring() -> Int {
     let pair = #(10, 20)
     match pair {
         #(a, b) -> a + b
     }
 }
 
-fn test_option_matching(opt: Option(I16)) -> I16 {
+fn test_option_matching(opt: Option(Int)) -> Int {
     match opt {
         Some(x) -> x * 2,
         None -> -1
@@ -44,12 +44,12 @@ fn test_nested_matching() -> String {
     }
 }
 
-fn test_array_access() -> I16 {
-    let numbers: Array(I16, 4) = [1, 2, 3, 4]
+fn test_array_access() -> I8 {
+    let numbers: Array(I8, 4) = [1, 2, 3, 4]
     let first = numbers[0]
     let second = numbers[1]
 
-    let shorter: Array(I16, 3) = [9, 10, 11]
+    let shorter: Array(I8, 3) = [9, 10, 11]
     let short_first = shorter[0]
     let short_second = shorter[1]
 
@@ -72,11 +72,10 @@ fn test_custom_enum(value: TestEnum) -> String {
     }
 }
 
-fn main() -> I16 {
+fn main() -> Int {
     let basic = test_basic_matching()
     let tuple_result = test_tuple_destructuring()
     let option_result = test_option_matching(Some(5))
-    let array_result = test_array_access()
 
-    basic + tuple_result + option_result + array_result
+    basic + tuple_result + option_result
 }

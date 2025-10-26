@@ -2264,11 +2264,37 @@ impl<'a> TypecheckContext<'a> {
 
                     //check for prior decl, if exists, unify
                     let scheme = if let Some(existing_scheme) = env.get(&symbol_id) {
-                        let s = self
-                            .unify(&existing_scheme.body, ty)
-                            .expect("Failed to unify function declaration with prior declaration");
-                        let new_type = s.apply(ty);
-                        Scheme::generalise(env, &new_type)
+                        match self.unify(&existing_scheme.body, ty) {
+                            Ok(s) => {
+                                let new_type = s.apply(ty);
+                                Scheme::generalise(env, &new_type)
+                            }
+                            Err(err) => {
+                                let fn_name = if let NodeKind::FnDecl { symbol, .. } = &node.kind {
+                                    symbol.clone()
+                                } else {
+                                    "<unknown>".to_string()
+                                };
+
+                                let mut diagnostic = Diagnostic::new(DiagnosticMsg {
+                                    message: format!(
+                                        "Function '{}' has incompatible type with prior declaration",
+                                        fn_name
+                                    ),
+                                    span: node.span.clone(),
+                                    file: self.current_file.clone(),
+                                    err_type: DiagnosticMsgType::TypeMismatch,
+                                });
+                                diagnostic.add_hint(format!(
+                                    "Expected type: {}",
+                                    existing_scheme.body.render(self)
+                                ));
+                                diagnostic.add_hint(format!("Found type: {}", ty.render(self)));
+                                diagnostic.add_hint(format!("Unification error: {:?}", err));
+                                self.errors.push(diagnostic);
+                                return;
+                            }
+                        }
                     } else {
                         scheme
                     };
