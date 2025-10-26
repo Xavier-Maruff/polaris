@@ -1,0 +1,27 @@
+fn get_first(arr: Array(t, n)) -> t {
+  arr[0]
+}
+
+fn increment_all(arr: Array(Int, n)) -> Array(Int, n) {
+  arr
+}
+
+const small_arr: Array(Int, 3) = [1, 2, 3]
+const large_arr: Array(Int, 10) = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+const first_small = get_first(small_arr)
+const first_large = get_first(large_arr)
+
+const incremented_small = increment_all(small_arr)
+const incremented_large = increment_all(large_arr)
+
+fn array_length(arr: Array(t, n)) -> Int {
+  0
+}
+
+const len1 = array_length(small_arr)
+const len2 = array_length(large_arr)
+
+fn main() {
+  first_small
+}

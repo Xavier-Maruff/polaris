@@ -69,6 +69,10 @@ pub enum TyKind {
     Ctor(SymbolId, Vec<Ty>),
     //nocrypt ty
     Nocrypt(Box<Ty>),
+    //int lit as a type (only for array sizes atm)
+    IntLiteral(usize),
+    //size var for parametric sizes
+    SizeVar(TypeVar),
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Eq)]
@@ -1080,13 +1084,15 @@ impl<'a> TypecheckContext<'a> {
             }
 
             ExprKind::ListLit(elements) => {
+                let array_size = elements.len();
+
                 if elements.is_empty() {
                     let elem_type = self.fresh_type_var();
                     Ok((
                         Substitution::new(),
                         Ty::new_literal(TyKind::Ctor(
-                            self.symbols.intrinsic_types[LIST],
-                            vec![elem_type],
+                            self.symbols.intrinsic_types[ARRAY],
+                            vec![elem_type, Ty::new(TyKind::IntLiteral(0))],
                         )),
                     ))
                 } else {
@@ -1105,7 +1111,7 @@ impl<'a> TypecheckContext<'a> {
                         let s2 = self.bind_err_ctx(
                             s2,
                             elem.span,
-                            Some(("List element type mismatch".into(), vec![])),
+                            Some(("Array element type mismatch".into(), vec![])),
                         )?;
                         subst = subst.compose(&s).compose(&s2);
                         current_env = subst.apply_env(&current_env);
@@ -1119,8 +1125,8 @@ impl<'a> TypecheckContext<'a> {
                     }
 
                     let mut ty = Ty::new(TyKind::Ctor(
-                        self.symbols.intrinsic_types[LIST],
-                        vec![elem_type],
+                        self.symbols.intrinsic_types[ARRAY],
+                        vec![elem_type, Ty::new(TyKind::IntLiteral(array_size))],
                     ));
                     ty.literal = is_literal;
                     ty.require_secret = require_secret;
@@ -1919,6 +1925,8 @@ impl<'a> TypecheckContext<'a> {
         use TyKind::*;
         match &ty.kind {
             Var(_) => {}
+            IntLiteral(_) => {}
+            SizeVar(_) => {}
             Concrete(id) => {
                 if *id == alias_symbol_id || self.type_aliases.contains_key(id) {
                     deps.insert(*id);
@@ -2065,6 +2073,22 @@ impl<'a> TypecheckContext<'a> {
         type_param_map: &HashMap<String, Ty>,
     ) -> Result<Ty, ()> {
         let result = match &mut node.kind {
+            //int lit in type pos - only for array sizes atm
+            NodeKind::Expr {
+                expr: ExprKind::IntLit(n),
+            } => {
+                if *n < 0 {
+                    self.errors.push(Diagnostic::new(DiagnosticMsg {
+                        message: format!("Array size must be non-negative, got {}", n),
+                        span: node.span.clone(),
+                        file: self.current_file.clone(),
+                        err_type: DiagnosticMsgType::TypeMismatch,
+                    }));
+                    Err(())
+                } else {
+                    Ok(Ty::new(TyKind::IntLiteral(*n as usize)))
+                }
+            }
             NodeKind::Type {
                 type_vars,
                 symbol,
@@ -2079,11 +2103,15 @@ impl<'a> TypecheckContext<'a> {
                     }
                 };
 
-                //check for type param first
+                //check for type param or size variable first
                 if symbol.chars().next().map_or(false, |c| c.is_lowercase()) {
                     if let Some(param_ty) = type_param_map.get(symbol) {
                         return ok(param_ty.clone());
                     }
+                    // if it's not in the type param map and we're in a context where
+                    // a size is expected (inside Array type args), create a fresh size variable
+                    // for now, creating fresh type variable and let context determine
+                    // if it should be a size variable
                     return ok(self.fresh_type_var());
                 }
 
@@ -2801,9 +2829,11 @@ impl<'a> TypecheckContext<'a> {
         use TyKind::*;
         match &t.kind {
             Var(b) => a == *b,
+            SizeVar(b) => a == *b,
             Fn(arg, ret) => self.occurs(a, arg) || self.occurs(a, ret),
             Ctor(_, args) | Tuple(args) => args.iter().any(|arg| self.occurs(a, arg)),
             Concrete(_) => false,
+            IntLiteral(_) => false,
             Nocrypt(t) => self.occurs(a, t),
         }
     }
@@ -2839,6 +2869,20 @@ impl<'a> TypecheckContext<'a> {
             (_, Var(b)) => self.bind(*b, t1),
 
             (Concrete(a), Concrete(b)) if a == b => Ok(Substitution::new()),
+
+            (SizeVar(a), SizeVar(b)) if a == b => Ok(Substitution::new()),
+            (SizeVar(a), _) => self.bind(*a, t2),
+            (_, SizeVar(b)) => self.bind(*b, t1),
+
+            (IntLiteral(n1), IntLiteral(n2)) if n1 == n2 => Ok(Substitution::new()),
+            (IntLiteral(n1), IntLiteral(n2)) => Err(TypeError {
+                kind: TypeErrorKind::UnificationFail,
+                types: vec![t1.clone(), t2.clone()],
+                hints: vec![format!(
+                    "Array sizes do not match: {} != {}",
+                    n1, n2
+                )],
+            }),
 
             (Fn(arg1, ret1), Fn(arg2, ret2)) => {
                 let s1 = self.unify(arg1, arg2)?;
@@ -2909,7 +2953,6 @@ impl<'a> TypecheckContext<'a> {
                 hints: vec!["One of these is a tuple, and the other is not.".into()],
             }),
 
-            //todo: this might not be right - len check?
             (Ctor(id1, args1), Ctor(id2, args2)) if id1 == id2 && args1.len() == args2.len() => {
                 let mut s = Substitution::new();
                 for (arg1, arg2) in args1.iter().zip(args2.iter()) {
@@ -2918,21 +2961,19 @@ impl<'a> TypecheckContext<'a> {
                 }
                 Ok(s)
             }
-            (Ctor(id1, args1), Ctor(id2, args2))
-                if args1.len() == args2.len()
-                    && ((t1.literal
-                        && *id1 == self.symbols.intrinsic_types[LIST]
-                        && *id2 == self.symbols.intrinsic_types[ARRAY])
-                        || (t2.literal
-                            && *id2 == self.symbols.intrinsic_types[LIST]
-                            && *id1 == self.symbols.intrinsic_types[ARRAY])) =>
+
+            //cannot coerce between Array and List
+            (Ctor(id1, _), Ctor(id2, _))
+                if (*id1 == self.symbols.intrinsic_types[LIST]
+                    && *id2 == self.symbols.intrinsic_types[ARRAY])
+                || (*id1 == self.symbols.intrinsic_types[ARRAY]
+                    && *id2 == self.symbols.intrinsic_types[LIST]) =>
             {
-                let mut s = Substitution::new();
-                for (arg1, arg2) in args1.iter().zip(args2.iter()) {
-                    let s2 = self.unify(&s.apply(arg1), &s.apply(arg2))?;
-                    s = s.compose(&s2);
-                }
-                Ok(s)
+                Err(TypeError {
+                    kind: TypeErrorKind::UnificationFail,
+                    types: vec![t1.clone(), t2.clone()],
+                    hints: vec!["Array and List are different types. Arrays have fixed size known at compile time, while Lists are dynamically sized.".into()],
+                })
             }
 
             _ => Err(TypeError {
@@ -3041,6 +3082,11 @@ impl Ty {
                 set.insert(*a);
                 set
             }
+            SizeVar(a) => {
+                let mut set = HashSet::default();
+                set.insert(*a);
+                set
+            }
             Fn(arg, ret) => {
                 let mut set = arg.free_type_vars();
                 set.extend(ret.free_type_vars());
@@ -3061,6 +3107,7 @@ impl Ty {
                 set
             }
             Concrete(_) => HashSet::default(),
+            IntLiteral(_) => HashSet::default(),
             Nocrypt(t) => t.free_type_vars(),
         }
     }
@@ -3085,7 +3132,7 @@ impl Ty {
         use TyKind::*;
         match &self.kind {
             Nocrypt(_) => true,
-            Var(_) | Concrete(_) => self.literal,
+            Var(_) | Concrete(_) | IntLiteral(_) | SizeVar(_) => self.literal,
             Fn(arg, ret) => arg.nocryptable() && ret.nocryptable(),
             Tuple(types) => types.iter().all(|ty| ty.nocryptable()),
             Ctor(_, args) => args.iter().all(|arg| arg.nocryptable()),
@@ -3140,6 +3187,8 @@ impl Ty {
         use TyKind::*;
         match &self.kind {
             Var(a) => format!("T{}", a),
+            IntLiteral(n) => format!("{}", n),
+            SizeVar(n) => format!("N{}", n),
             Concrete(id) => ctx
                 .symbols
                 .symbol_names
@@ -3244,6 +3293,13 @@ impl Substitution {
                 ty.secret_origin = t.secret_origin.clone();
                 ty
             }),
+            SizeVar(a) => self.0.get(a).cloned().unwrap_or_else(|| {
+                let mut ty = Ty::new(SizeVar(*a));
+                ty.literal = t.literal;
+                ty.require_secret = t.require_secret;
+                ty.secret_origin = t.secret_origin.clone();
+                ty
+            }),
             Fn(arg, ret) => {
                 let new_arg = self.apply(arg);
                 let new_ret = self.apply(ret);
@@ -3270,6 +3326,7 @@ impl Substitution {
                 ty
             }
             Concrete(_) => t.clone(),
+            IntLiteral(_) => t.clone(),
             Nocrypt(t_inner) => {
                 let mut ty = Ty::new(Nocrypt(Box::new(self.apply(t_inner))));
                 ty.literal = t.literal;

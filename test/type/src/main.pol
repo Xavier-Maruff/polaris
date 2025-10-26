@@ -15,7 +15,7 @@ type Other {
 type AliasInt = Int
 type AliasResult(a) = Result(a, String)
 type AliasField = Field(Int)
-type WrappedAlias(a) = #(AliasResult(a), Array(a))
+type WrappedAlias(a, n) = #(AliasResult(a), Array(a, n))
 
 
 pub fn check_inference(arg) {
@@ -71,7 +71,7 @@ pub fn main() {
     let alias_result: AliasResult(Int) = Ok(alias_val)
     let alias_field: AliasField = Field(val: alias_val)
     let _alias_field_val = alias_field.val
-    let alias_tuple: WrappedAlias(Int) = #(alias_result, [alias_val])
+    let alias_tuple: WrappedAlias(Int, 1) = #(alias_result, [alias_val])
     let alias_passthrough_fn: fn(AliasResult(Int)) -> AliasResult(Int) = alias_passthrough
     let alias_passthrough_result = alias_passthrough_fn(alias_result)
     let _nocrypt_alias_passthrough: AliasResult(nocrypt AliasInt) = Ok(nocrypt_alias)

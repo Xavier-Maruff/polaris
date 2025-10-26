@@ -81,10 +81,11 @@ Fixed1(t), Fixed2(t), Fixed4(t)
 //Boolean
 Bool
 
-//Heap-allocated dynamic array, indexable
+//Heap-allocated static array, indexable
+//Size is part of the type and checked at compile time
 //Not mutable (like all in Polaris), but the compiler will
 //optimise away redundant copies
-Array(t)
+Array(t, n)
 //Classic linked cons-list
 List(t)
 //Hash map
@@ -112,7 +113,7 @@ let a: Int = 314
 let b: Real = 3.141
 let c: Fixed2(Int) = 3.14
 let d: Bool = True
-let e: Array(Int) = [1, 2, 3]
+let e: Array(Int, 3) = [1, 2, 3]
 let f: List(Int) = [1, 2, 3]
 let g: Map(String, Int) = #{
   "key_1": 1,

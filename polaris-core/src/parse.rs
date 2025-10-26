@@ -1595,6 +1595,27 @@ impl<'a> ParseContext<'a> {
         };
 
         match self.curr_tok.variant.clone() {
+            TokenVariant::IntLit(_) => {
+                if nocrypt {
+                    node.add_error(Diagnostic {
+                        primary: DiagnosticMsg {
+                            message: "The 'nocrypt' modifier cannot be applied to integer literals in type position"
+                                .to_string(),
+                            span: CodeSpan {
+                                start: self.curr_tok.span.start,
+                                end: self.curr_tok.span.end,
+                            },
+                            file: lexer.file.clone(),
+                            err_type: DiagnosticMsgType::UnexpectedToken,
+                        },
+                        notes: vec![],
+                        hints: vec!["Remove the 'nocrypt' modifier.".to_string()],
+                    });
+                    return Err(());
+                }
+
+                self.parse_int_literal(node, lexer)
+            }
             TokenVariant::Fn => {
                 if nocrypt {
                     node.add_error(Diagnostic {

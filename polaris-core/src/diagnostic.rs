@@ -85,6 +85,7 @@ pub enum DiagnosticMsgType {
     TypeAliasExpansionFailure,
     Unimplemented,
     PerformanceWarning,
+    ExcessiveMonomorphisation,
 }
 
 pub fn code(c: &DiagnosticMsgType) -> &'static str {
@@ -127,6 +128,7 @@ pub fn code(c: &DiagnosticMsgType) -> &'static str {
         TypeAliasExpansionFailure => "ET0033",
         Unimplemented => "EC0027", // todo
         PerformanceWarning => "WW0002",
+        ExcessiveMonomorphisation => "WW0003",
     }
 }
 

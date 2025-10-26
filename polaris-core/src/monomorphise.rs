@@ -3,9 +3,13 @@ use rustc_hash::FxHashMap as HashMap;
 use crate::{
     ast::{ExprKind, Node, NodeKind},
     compile::CompileContext,
+    diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
+    module::DepGraphContext,
     symbol::SymbolId,
     types::{Scheme, Substitution, Ty, TypeVar},
 };
+
+const WARN_MONOMORPH_MAX: usize = 50;
 
 #[derive(Clone, Debug, Default)]
 pub struct MonomorphiseInfo {
@@ -23,6 +27,31 @@ pub fn monomorphise_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 
     for (_module_id, module) in ctx.dependencies.modules.iter() {
         collect_poly_fn_defs(&module.ast, &ctx.type_info.type_env, &mut poly_fn_defs);
+    }
+
+    //track for warnings
+    let mut instance_counts: HashMap<SymbolId, usize> = HashMap::default();
+    for (_new_id, (orig_id, _concrete_type)) in &monomorphisations {
+        *instance_counts.entry(*orig_id).or_insert(0) += 1;
+    }
+
+    for (orig_id, count) in &instance_counts {
+        if *count > WARN_MONOMORPH_MAX {
+            if let Some(fn_node) = poly_fn_defs.get(orig_id) {
+                let fn_name = get_function_name(fn_node);
+                ctx.warnings.push(Diagnostic::new(
+                    DiagnosticMsg {
+                        message: format!(
+                            "Function '{}' has been monomorphised {} times (threshold: {}). Your binary may be mega large.",
+                            fn_name, count, WARN_MONOMORPH_MAX
+                        ),
+                        span: fn_node.span.clone(),
+                        file: get_function_file(fn_node, &ctx.dependencies),
+                        err_type: DiagnosticMsgType::ExcessiveMonomorphisation,
+                    },
+                ));
+            }
+        }
     }
 
     let mut new_fn_nodes: Vec<(String, Node)> = Vec::new();
@@ -95,6 +124,25 @@ fn add_fn_to_module(module_node: &mut Node, fn_node: Node) {
     }
 }
 
+fn get_function_name(fn_node: &Node) -> String {
+    if let NodeKind::FnDecl { symbol, .. } = &fn_node.kind {
+        symbol.clone()
+    } else {
+        "<unknown>".to_string()
+    }
+}
+
+fn get_function_file(fn_node: &Node, deps: &DepGraphContext) -> String {
+    if let Some(symbol_id) = fn_node.symbol_id {
+        for (_module_id, module) in deps.modules.iter() {
+            if contains_fn_def(&module.ast, symbol_id) {
+                return module.file.clone();
+            }
+        }
+    }
+    "<unknown>".to_string()
+}
+
 fn build_substitution(scheme: &Scheme, concrete_type: &Ty) -> Result<Substitution, ()> {
     let mut subst_map = HashMap::default();
     collect_type_var_mappings(&scheme.body, concrete_type, &mut subst_map);
@@ -111,6 +159,15 @@ fn collect_type_var_mappings(
     match (scheme_ty.kind(), concrete_ty.kind()) {
         (TyKind::Var(tv), _) => {
             mappings.insert(*tv, concrete_ty.clone());
+        }
+        (TyKind::SizeVar(sv), TyKind::IntLiteral(_)) => {
+            mappings.insert(*sv, concrete_ty.clone());
+        }
+        (TyKind::SizeVar(sv), TyKind::SizeVar(_)) => {
+            mappings.insert(*sv, concrete_ty.clone());
+        }
+        (TyKind::IntLiteral(_), TyKind::IntLiteral(_)) => {
+            //already matches
         }
         (TyKind::Fn(s_arg, s_ret), TyKind::Fn(c_arg, c_ret)) => {
             collect_type_var_mappings(s_arg.as_ref(), c_arg.as_ref(), mappings);

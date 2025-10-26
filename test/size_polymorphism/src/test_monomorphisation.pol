@@ -1,0 +1,23 @@
+fn double_array(arr: Array(Int, n)) -> Array(Int, n) {
+  arr
+}
+
+const arr3: Array(Int, 3) = [1, 2, 3]
+const doubled3 = double_array(arr3)
+
+const arr5: Array(Int, 5) = [1, 2, 3, 4, 5]
+const doubled5 = double_array(arr5)
+
+const arr10: Array(Int, 10) = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const doubled10 = double_array(arr10)
+
+fn get_element(arr: Array(t, n), idx: Int) -> t {
+  arr[0]
+}
+
+const int_elem = get_element([1, 2, 3], 0)
+const bool_elem = get_element([True, False], 0)
+
+fn main() {
+  int_elem
+}
