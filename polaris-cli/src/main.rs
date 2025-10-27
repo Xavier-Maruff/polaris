@@ -51,4 +51,5 @@ mod tests {
     build_test!(size_polymorphism, "../test/size_polymorphism");
     build_test!(wildcard_types, "../test/wildcard_types");
     build_test!(const_effect, "../test/const_valid");
+    build_test!(string_lit_padding, "../test/string_literal_padding");
 }

@@ -88,11 +88,12 @@ pub enum TypeKind {
     U64,
     Real,
     Array(Box<Type>, usize),
-    Map(Box<Type>, Box<Type>),
-    String,
+    String(usize),
+    DynamicArray(Box<Type>),
+    DynamicString,
     Char,
     ADT(SymbolId),
-    //todo: how to handle map and tuple
+    Tuple(Vec<Type>),
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +104,8 @@ pub enum RValue {
     Str(String),
     Char(String),
     Array(Vec<RValue>),
-    Register(RegisterId),
+    RegisterContents(RegisterId),
+    Tuple(Vec<RValue>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +127,7 @@ pub struct BasicBlock {
 pub struct Instruction {
     pub dest: RegisterId,
     pub op: Op,
+    pub noise_budget: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,10 +136,8 @@ pub enum Terminator {
         target: BlockId,
         args: Vec<RegisterId>,
     },
-    Return {
-        values: Vec<RegisterId>,
-    },
-    If {
+    Return(RegisterId),
+    NCBranch {
         cond: RValue,
         then_block: BlockId,
         else_block: BlockId,
@@ -146,24 +147,29 @@ pub enum Terminator {
 /// very first-draft stab at ops
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
+    //allocation
     ArenaAlloc {
         size: RValue,
     },
     ArenaFree {
         arena: RegisterId,
     },
+
+    //calls
     Call {
         fn_id: SymbolId,
         args: Vec<RegisterId>,
     },
+    HarnessCall {
+        fn_id: SymbolId,
+        args: Vec<RegisterId>,
+    },
+
+    //branching
     DecideBranch {
         decision_id: DecisionId,
         arg: RegisterId,
         blocks: Vec<(RValue, BlockId)>,
-    },
-    HarnessCall {
-        fn_id: SymbolId,
-        args: Vec<RegisterId>,
     },
     HarnessDecideBranch {
         decision_id: DecisionId,
@@ -175,28 +181,51 @@ pub enum Op {
         _1: RValue,
         _0: RValue,
     },
-    EncExtractField {
+
+    //adts
+    EncADTExtractField {
         base: RegisterId,
         field_index: usize,
     },
-    EncReplaceField {
-        base: RegisterId,
-        field_index: usize,
-        new_value: RValue,
-    },
-    ExtractField {
-        base: RegisterId,
-        field_index: usize,
-    },
-    ReplaceField {
+    EncADTReplaceField {
         base: RegisterId,
         field_index: usize,
         new_value: RValue,
     },
-    ADTConstruct {
+    EncADTExtractTag {
+        base: RegisterId,
+    },
+    NCADTExtractField {
+        base: RegisterId,
+        field_index: usize,
+    },
+    NCADTReplaceField {
+        base: RegisterId,
+        field_index: usize,
+        new_value: RValue,
+    },
+    NCADTExtractTag {
+        base: RegisterId,
+    },
+
+    EncADTConstruct {
         adt_id: SymbolId,
         variant_tag: usize,
         field_values: Vec<RValue>,
+    },
+    NCADTConstruct {
+        adt_id: SymbolId,
+        variant_tag: usize,
+        field_values: Vec<RValue>,
+    },
+
+    //tuples
+    TupleConstruct {
+        elements: Vec<RValue>,
+    },
+    TupleExtract {
+        base: RegisterId,
+        index: usize,
     },
 
     //arithmetic shizzle
@@ -209,6 +238,7 @@ pub enum Op {
     EncAddU32(RValue, RValue),
     EncAddU64(RValue, RValue),
     EncAddReal(RValue, RValue),
+
     EncSubI8(RValue, RValue),
     EncSubI16(RValue, RValue),
     EncSubI32(RValue, RValue),
@@ -218,6 +248,7 @@ pub enum Op {
     EncSubU32(RValue, RValue),
     EncSubU64(RValue, RValue),
     EncSubReal(RValue, RValue),
+
     EncMulI8(RValue, RValue),
     EncMulI16(RValue, RValue),
     EncMulI32(RValue, RValue),
@@ -227,7 +258,34 @@ pub enum Op {
     EncMulU32(RValue, RValue),
     EncMulU64(RValue, RValue),
     EncMulReal(RValue, RValue),
+
+    //these are disallowed for all actual ints
+    //only for fixed-points as scaled ints
+    EncDivI8(RValue, RValue),
+    EncDivI16(RValue, RValue),
+    EncDivI32(RValue, RValue),
+    EncDivI64(RValue, RValue),
+    EncDivU8(RValue, RValue),
+    EncDivU16(RValue, RValue),
+    EncDivU32(RValue, RValue),
+    EncDivU64(RValue, RValue),
     EncDivReal(RValue, RValue),
+
+    EncNegI8(RValue),
+    EncNegI16(RValue),
+    EncNegI32(RValue),
+    EncNegI64(RValue),
+    EncNegReal(RValue),
+
+    EncModI8(RValue, RValue),
+    EncModI16(RValue, RValue),
+    EncModI32(RValue, RValue),
+    EncModI64(RValue, RValue),
+    EncModU8(RValue, RValue),
+    EncModU16(RValue, RValue),
+    EncModU32(RValue, RValue),
+    EncModU64(RValue, RValue),
+
     //currently not bit-width specific, will probably need to be later
     //i'll see how the VM impl goes
     NCAddInt(RValue, RValue),
@@ -239,27 +297,132 @@ pub enum Op {
     NCMulInt(RValue, RValue),
     NCMulUInt(RValue, RValue),
     NCMulReal(RValue, RValue),
+    NCDivInt(RValue, RValue),
+    NCDivUInt(RValue, RValue),
     NCDivReal(RValue, RValue),
+    NCModInt(RValue, RValue),
+    NCModUInt(RValue),
+    NCNegInt(RValue),
+    NCNegReal(RValue),
+
+    //comparison - will expand later for perf if needed
+    EncEqI8(RValue, RValue),
+    EncEqI16(RValue, RValue),
+    EncEqI32(RValue, RValue),
+    EncEqI64(RValue, RValue),
+    EncEqU8(RValue, RValue),
+    EncEqU16(RValue, RValue),
+    EncEqU32(RValue, RValue),
+    EncEqU64(RValue, RValue),
+    EncEqReal(RValue, RValue),
+    EncLtI8(RValue, RValue),
+    EncLtI16(RValue, RValue),
+    EncLtI32(RValue, RValue),
+    EncLtI64(RValue, RValue),
+    EncLtU8(RValue, RValue),
+    EncLtU16(RValue, RValue),
+    EncLtU32(RValue, RValue),
+    EncLtU64(RValue, RValue),
+    EncLtReal(RValue, RValue),
+
+    //again just abtracting bit-width for now
+    NCEqInt(RValue, RValue),
+    NCEqUInt(RValue, RValue),
+    NCEqReal(RValue, RValue),
+    NCLtInt(RValue, RValue),
+    NCLtUInt(RValue, RValue),
+    NCLtReal(RValue, RValue),
+
+    //todo: bitwise ops
 
     //static array ops
     //just a first pass, will need to expand
-    ArrayLen(RegisterId),
-    ArrayGet {
+    //encrypted string ops map to these
+    EncArrayConstructZeroed {
+        element_type: Type,
+        len: usize,
+    },
+    EncArrayLen(RegisterId),
+    //requires nocrypt index
+    EncArrayGet {
         base: RegisterId,
         index: RValue,
     },
-    ArrayUpdateElement {
+    //allows encrypted index
+    EncArrayObliviousGet {
+        base: RegisterId,
+        index: RValue,
+    },
+    EncArrayUpdateElement {
         base: RegisterId,
         index: RValue,
         value: RValue,
     },
-    ArrayConstruct {
+    EncArrayConstruct {
         element_type: Type,
         elements: Vec<RValue>,
         len: usize,
     },
-    //cons list ops
-    //todo
+    EncArrayCmpEq {
+        a: RegisterId,
+        b: RegisterId,
+    },
+    EncArrayReduce {
+        base: RegisterId,
+        initial: RValue,
+        func: SymbolId,
+    },
+    EncArrayMap {
+        base: RegisterId,
+        func: SymbolId,
+    },
+    //not certain of implementation yet, need to consider doability
+    EncArrayFilter {
+        base: RegisterId,
+        func: SymbolId,
+    },
+    //not sorting concat yet, as unsure of implementation
+
+    //dynamic data structures
+    NCDynArrayConstruct {
+        element_type: Type,
+    },
+    NCDynArrayLen(RegisterId),
+    NCDynArrayGet {
+        base: RegisterId,
+        index: RValue,
+    },
+    NCDynArrayUpdateElement {
+        base: RegisterId,
+        index: RValue,
+        value: RValue,
+    },
+    NCDynArrayPush {
+        base: RegisterId,
+        value: RValue,
+    },
+    NCDynArrayPop(RegisterId),
+    NCDynArrayCmpEq {
+        a: RegisterId,
+        b: RegisterId,
+    },
+    NCDynArrayConcat {
+        a: RegisterId,
+        b: RegisterId,
+    },
+
+    NCDynStringConstruct {
+        capacity: RValue,
+    },
+    NCDynStringLen(RegisterId),
+    NCDynStringConcat {
+        a: RegisterId,
+        b: RegisterId,
+    },
+    NCDynStringEq {
+        a: RegisterId,
+        b: RegisterId,
+    },
 }
 
 impl PartialEq for RValue {
@@ -271,7 +434,7 @@ impl PartialEq for RValue {
             (RValue::Str(a), RValue::Str(b)) => a == b,
             (RValue::Char(a), RValue::Char(b)) => a == b,
             (RValue::Array(a), RValue::Array(b)) => a == b,
-            (RValue::Register(a), RValue::Register(b)) => a == b,
+            (RValue::RegisterContents(a), RValue::RegisterContents(b)) => a == b,
             _ => false,
         }
     }
