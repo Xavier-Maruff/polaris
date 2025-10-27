@@ -20,23 +20,27 @@ pub fn monomorphise_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 }
 
 fn collect_type_instantiations(ctx: &mut CompileContext) -> Result<(), ()> {
-    //this clone feels bad - should fix once performance actually matters
-    let module_asts: Vec<Node> = ctx
+    let module_ids: Vec<String> = ctx
         .dependencies
         .modules
-        .values()
-        .map(|m| m.ast.clone())
+        .keys()
+        .cloned()
         .collect();
 
-    for module_ast in &module_asts {
-        let mut f = |node: &mut Node| {
-            if let Some(ty) = &node.ty {
-                collect_from_type(ty, ctx)?;
-            }
-            Ok(())
-        };
-        let mut ast = module_ast.clone();
-        visit_ast_mut(&mut ast, &mut f)?;
+    for module_id in module_ids {
+        let mut tys: Vec<Ty> = Vec::new();
+        if let Some(module) = ctx.dependencies.modules.get_mut(&module_id) {
+            visit_ast_mut(&mut module.ast, &mut |node: &mut Node| {
+                if let Some(ty) = &node.ty {
+                    tys.push(ty.clone());
+                }
+                Ok(())
+            })?;
+        }
+
+        for ty in tys {
+            collect_from_type(&ty, ctx)?;
+        }
     }
 
     Ok(())

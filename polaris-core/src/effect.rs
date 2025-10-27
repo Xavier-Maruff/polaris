@@ -128,45 +128,18 @@ impl<'a> EffectContext<'a> {
             .keys()
             .cloned()
             .collect();
+
+        let mut effects: HashMap<SymbolId, Effect> = HashMap::default();
+        let mut fn_meta: HashMap<SymbolId, FunctionMeta> = HashMap::default();
+
         for module_id in module_ids {
             if let Some(module) = self.compile_ctx.dependencies.modules.get(&module_id) {
-                let ast_clone = module.ast.clone();
-                self.collect_in_module(&ast_clone);
+                collect_in_module_ro(&module.ast, &mut effects, &mut fn_meta);
             }
         }
-    }
 
-    fn collect_in_module(&mut self, node: &Node) {
-        match &node.kind {
-            NodeKind::Module { children } => {
-                for child in children {
-                    self.collect_in_module(child);
-                }
-            }
-            NodeKind::FnDecl { host, pure, .. } => {
-                if let Some(id) = node.symbol_id {
-                    let base = if *host {
-                        if *pure {
-                            Effect::HarnessPure
-                        } else {
-                            Effect::HarnessEffect
-                        }
-                    } else {
-                        Effect::Pure
-                    };
-                    self.effects.entry(id).or_insert(base);
-                    self.fn_meta.insert(
-                        id,
-                        FunctionMeta {
-                            host: *host,
-                            pure: *pure,
-                            span: node.span.clone(),
-                        },
-                    );
-                }
-            }
-            _ => {}
-        }
+        self.effects = effects;
+        self.fn_meta = fn_meta;
     }
 
     fn solve(&mut self) {
@@ -611,5 +584,42 @@ impl<'a> EffectContext<'a> {
             }
             Discard => EffectResult::pure(),
         }
+    }
+}
+
+fn collect_in_module_ro(
+    node: &Node,
+    effects: &mut HashMap<SymbolId, Effect>,
+    fn_meta: &mut HashMap<SymbolId, FunctionMeta>,
+) {
+    match &node.kind {
+        NodeKind::Module { children } => {
+            for child in children {
+                collect_in_module_ro(child, effects, fn_meta);
+            }
+        }
+        NodeKind::FnDecl { host, pure, .. } => {
+            if let Some(id) = node.symbol_id {
+                let base = if *host {
+                    if *pure {
+                        Effect::HarnessPure
+                    } else {
+                        Effect::HarnessEffect
+                    }
+                } else {
+                    Effect::Pure
+                };
+                effects.entry(id).or_insert(base);
+                fn_meta.insert(
+                    id,
+                    FunctionMeta {
+                        host: *host,
+                        pure: *pure,
+                        span: node.span.clone(),
+                    },
+                );
+            }
+        }
+        _ => {}
     }
 }
