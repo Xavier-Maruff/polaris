@@ -1,5 +1,7 @@
 use crate::symbol::SymbolId;
+use bincode::{Decode, Encode, config};
 use rustc_hash::FxHashMap as HashMap;
+use serde::{Deserialize, Serialize};
 
 pub type ModuleId = usize;
 pub type BlockId = usize;
@@ -7,7 +9,7 @@ pub type RegisterId = usize;
 pub type DecisionId = usize;
 pub type ArenaId = usize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub id: usize,
     pub name: Option<String>,
@@ -16,13 +18,13 @@ pub struct Module {
     pub register_allocators: HashMap<RegisterId, Allocator>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct HarnessContract {
     pub const_manifest: Vec<ConstDecl>,
     pub fn_manifest: Vec<FnDecl>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ConstDecl {
     pub register: RegisterId,
     pub name: Option<String>,
@@ -30,7 +32,7 @@ pub struct ConstDecl {
     pub value: RValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FnDecl {
     pub id: SymbolId,
     pub name: Option<String>,
@@ -39,14 +41,14 @@ pub struct FnDecl {
     pub body: Vec<BasicBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ADTDef {
     pub id: SymbolId,
     pub name: Option<String>,
     pub variants: Vec<ADTVariant>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ADTVariant {
     pub id: SymbolId,
     pub name: Option<String>,
@@ -54,14 +56,14 @@ pub struct ADTVariant {
     pub fields: Vec<FieldDef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FieldDef {
     pub name: Option<String>,
     pub _type: Type,
     pub offset: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Param {
     pub register: RegisterId,
     pub name: Option<String>,
@@ -69,14 +71,14 @@ pub struct Param {
     pub by_ref: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Type {
     pub id: SymbolId,
     pub nocrypt: bool,
     pub kind: TypeKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind {
     I8,
     I16,
@@ -96,7 +98,7 @@ pub enum TypeKind {
     Tuple(Vec<Type>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone)]
 pub enum RValue {
     Int(i64),
     UInt(u64),
@@ -108,14 +110,14 @@ pub enum RValue {
     Tuple(Vec<RValue>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Allocator {
     Stack,
     Arena(RegisterId),
     RefCounted,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct BasicBlock {
     pub id: BlockId,
     pub params: Vec<(RegisterId, Type)>,
@@ -123,14 +125,14 @@ pub struct BasicBlock {
     pub terminator: Terminator,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Instruction {
     pub dest: RegisterId,
     pub op: Op,
     pub noise_budget: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Terminator {
     Break {
         target: BlockId,
@@ -145,7 +147,7 @@ pub enum Terminator {
 }
 
 /// very first-draft stab at ops
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     //allocation
     ArenaAlloc {
@@ -441,3 +443,25 @@ impl PartialEq for RValue {
 }
 
 impl Eq for RValue {}
+
+impl Module {
+    pub fn serialise_to_bytes(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+        let config = config::standard();
+        bincode::encode_to_vec(self, config)
+    }
+
+    pub fn deserialise_from_bytes(data: &[u8]) -> Result<Self, bincode::error::DecodeError> {
+        let config = config::standard();
+        let (module, _): (Module, _) = bincode::decode_from_slice(data, config)?;
+        Ok(module)
+    }
+
+    pub fn serialise_to_text(&self) -> Result<String, serde_lexpr::Error> {
+        //just for the moment using s-expr format - will probably change later
+        serde_lexpr::to_string(self)
+    }
+
+    pub fn deserialise_from_text(data: &str) -> Result<Self, serde_lexpr::Error> {
+        serde_lexpr::from_str(data)
+    }
+}
