@@ -95,6 +95,10 @@ pub struct TypeInfo {
     pub fn_arg_labels: HashMap<SymbolId, Vec<String>>,
     pub monomorphised_fns: HashMap<SymbolId, (SymbolId, Ty)>,
     pub fn_instantiation_ids: HashMap<(SymbolId, Ty), SymbolId>,
+    //monomorphic type ID -> (original polymorphic type ID, concrete type args)
+    pub monomorphised_types: HashMap<SymbolId, (SymbolId, Vec<Ty>)>,
+    //(original type ID, concrete type args) -> monomorphic type ID
+    pub type_instantiation_ids: HashMap<(SymbolId, Vec<Ty>), SymbolId>,
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +139,8 @@ impl<'a> TypecheckContext<'a> {
         self.type_info.fn_arg_labels.clear();
         self.type_info.monomorphised_fns.clear();
         self.type_info.fn_instantiation_ids.clear();
+        self.type_info.monomorphised_types.clear();
+        self.type_info.type_instantiation_ids.clear();
 
         self.initialise_type_env();
 

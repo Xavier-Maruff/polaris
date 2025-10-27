@@ -10,6 +10,7 @@ pub mod log;
 pub mod lowering_pmir;
 pub mod module;
 pub mod monomorphise;
+pub mod visitor;
 pub mod parse;
 pub mod pattern;
 pub mod pmir;

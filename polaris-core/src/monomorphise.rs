@@ -1,75 +1,268 @@
 use rustc_hash::FxHashMap as HashMap;
+use std::collections::HashSet;
 
 use crate::{
-    ast::{ExprKind, Node, NodeKind},
+    ast::{Node, NodeKind},
     compile::CompileContext,
     diagnostic::{Diagnostic, DiagnosticMsg, DiagnosticMsgType},
-    module::DepGraphContext,
     symbol::SymbolId,
-    types::{Scheme, Substitution, Ty, TypeVar},
+    types::{Scheme, Substitution, Ty, TyKind, TypeVar},
+    visitor::visit_ast_mut,
 };
 
 const WARN_MONOMORPH_MAX: usize = 50;
 
-#[derive(Clone, Debug, Default)]
-pub struct MonomorphiseInfo {
-    pub monomorphised_asts: HashMap<SymbolId, Node>,
+pub fn monomorphise_pass(ctx: &mut CompileContext) -> Result<(), ()> {
+    collect_type_instantiations(ctx)?;
+    monomorphise_types(ctx)?;
+    monomorphise_fns(ctx)?;
+    Ok(())
 }
 
-pub fn monomorphise_pass(ctx: &mut CompileContext) -> Result<(), ()> {
-    let monomorphisations = ctx.type_info.monomorphised_fns.clone();
+fn collect_type_instantiations(ctx: &mut CompileContext) -> Result<(), ()> {
+    //this clone feels bad - should fix once performance actually matters
+    let module_asts: Vec<Node> = ctx
+        .dependencies
+        .modules
+        .values()
+        .map(|m| m.ast.clone())
+        .collect();
 
-    if monomorphisations.is_empty() {
+    for module_ast in &module_asts {
+        let mut f = |node: &mut Node| {
+            if let Some(ty) = &node.ty {
+                collect_from_type(ty, ctx)?;
+            }
+            Ok(())
+        };
+        let mut ast = module_ast.clone();
+        visit_ast_mut(&mut ast, &mut f)?;
+    }
+
+    Ok(())
+}
+
+fn collect_from_type(ty: &Ty, ctx: &mut CompileContext) -> Result<(), ()> {
+    match ty.kind() {
+        TyKind::Ctor(type_id, args) => {
+            if let Some(scheme) = ctx.type_info.type_env.get(type_id) {
+                if !scheme.bound_vars.is_empty() && !args.is_empty() {
+                    let key = (*type_id, args.clone());
+                    if !ctx.type_info.type_instantiation_ids.contains_key(&key) {
+                        let new_type_id = ctx.symbols.symbol_idx;
+                        ctx.symbols.symbol_idx += 1;
+
+                        ctx.type_info
+                            .type_instantiation_ids
+                            .insert(key, new_type_id);
+                        ctx.type_info
+                            .monomorphised_types
+                            .insert(new_type_id, (*type_id, args.clone()));
+
+                        if let Some(orig_name) = ctx.symbols.symbol_names.get(type_id) {
+                            let args_str = args
+                                .iter()
+                                .map(|arg| format_type_for_name(arg, ctx))
+                                .collect::<Vec<_>>()
+                                .join("_");
+                            ctx.symbols
+                                .symbol_names
+                                .insert(new_type_id, format!("{}__{}", orig_name, args_str));
+                        }
+                    }
+                }
+            }
+
+            args.iter()
+                .try_for_each(|arg| collect_from_type(arg, ctx))?;
+        }
+        TyKind::Fn(arg, ret) => {
+            collect_from_type(arg, ctx)?;
+            collect_from_type(ret, ctx)?;
+        }
+        TyKind::Tuple(elements) => {
+            elements
+                .iter()
+                .try_for_each(|elem| collect_from_type(elem, ctx))?;
+        }
+        TyKind::Nocrypt(inner) => collect_from_type(inner, ctx)?,
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn format_type_for_name(ty: &Ty, ctx: &CompileContext) -> String {
+    match ty.kind() {
+        TyKind::Concrete(id) => ctx
+            .symbols
+            .symbol_names
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| format!("T{}", id)),
+        TyKind::IntLiteral(n) => n.to_string(),
+        TyKind::Ctor(id, args) => {
+            let base = ctx
+                .symbols
+                .symbol_names
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| format!("T{}", id));
+            if args.is_empty() {
+                base
+            } else {
+                let args_str = args
+                    .iter()
+                    .map(|arg| format_type_for_name(arg, ctx))
+                    .collect::<Vec<_>>()
+                    .join("_");
+                format!("{}_{}", base, args_str)
+            }
+        }
+        _ => "T".to_string(),
+    }
+}
+
+fn monomorphise_types(ctx: &mut CompileContext) -> Result<(), ()> {
+    let type_monomorphisations = ctx.type_info.monomorphised_types.clone();
+    if type_monomorphisations.is_empty() {
         return Ok(());
     }
 
-    let mut poly_fn_defs: HashMap<SymbolId, Node> = HashMap::default();
+    let polymorphic_type_ids: HashSet<SymbolId> = ctx
+        .type_info
+        .type_env
+        .iter()
+        .filter_map(|(id, scheme)| (!scheme.bound_vars.is_empty()).then_some(*id))
+        .collect();
 
-    for (_module_id, module) in ctx.dependencies.modules.iter() {
-        collect_poly_fn_defs(&module.ast, &ctx.type_info.type_env, &mut poly_fn_defs);
+    let mut poly_type_defs: HashMap<SymbolId, Node> = HashMap::default();
+    for module in ctx.dependencies.modules.values_mut() {
+        let mut f = |node: &mut Node| {
+            if matches!(node.kind, NodeKind::TypeDecl { .. }) {
+                if let Some(symbol_id) = node.symbol_id {
+                    if polymorphic_type_ids.contains(&symbol_id) {
+                        poly_type_defs.insert(symbol_id, node.clone());
+                    }
+                }
+            }
+            Ok(())
+        };
+        visit_ast_mut(&mut module.ast, &mut f)?;
     }
 
-    //track for warnings
-    let mut instance_counts: HashMap<SymbolId, usize> = HashMap::default();
-    for (_new_id, (orig_id, _concrete_type)) in &monomorphisations {
-        *instance_counts.entry(*orig_id).or_insert(0) += 1;
-    }
+    warn_excessive("Type", &type_monomorphisations, &poly_type_defs, ctx);
 
-    for (orig_id, count) in &instance_counts {
-        if *count > WARN_MONOMORPH_MAX {
-            if let Some(fn_node) = poly_fn_defs.get(orig_id) {
-                let fn_name = get_function_name(fn_node);
-                ctx.warnings.push(Diagnostic::new(
-                    DiagnosticMsg {
-                        message: format!(
-                            "Function '{}' has been monomorphised {} times (threshold: {}). Your binary may be mega large.",
-                            fn_name, count, WARN_MONOMORPH_MAX
-                        ),
-                        span: fn_node.span.clone(),
-                        file: get_function_file(fn_node, &ctx.dependencies),
-                        err_type: DiagnosticMsgType::ExcessiveMonomorphisation,
-                    },
-                ));
+    let mut new_type_nodes: Vec<(String, Node)> = Vec::new();
+
+    for (new_type_id, (orig_type_id, concrete_args)) in &type_monomorphisations {
+        if let Some(orig_type) = poly_type_defs.get(orig_type_id) {
+            if let Some(scheme) = ctx.type_info.type_env.get(orig_type_id) {
+                let mut new_type = orig_type.clone();
+                let subst = build_type_substitution(scheme, concrete_args)?;
+
+                visit_ast_mut(&mut new_type, &mut |node| {
+                    if let Some(ty) = &node.ty {
+                        node.ty = Some(subst.apply(ty));
+                    }
+                    Ok(())
+                })?;
+
+                new_type.symbol_id = Some(*new_type_id);
+
+                if let NodeKind::TypeDecl { variants, .. } = &mut new_type.kind {
+                    for variant in variants {
+                        if let Some(orig_ctor_id) = variant.symbol_id {
+                            let new_ctor_id = ctx.symbols.symbol_idx;
+                            ctx.symbols.symbol_idx += 1;
+                            variant.symbol_id = Some(new_ctor_id);
+                            ctx.symbols
+                                .type_constructors
+                                .insert(new_ctor_id, *new_type_id);
+                            if let Some(name) = ctx.symbols.symbol_names.get(&orig_ctor_id) {
+                                ctx.symbols.symbol_names.insert(new_ctor_id, name.clone());
+                            }
+                        }
+                    }
+                }
+
+                if let Some((module_id, _)) = ctx
+                    .dependencies
+                    .modules
+                    .iter()
+                    .find(|(_, m)| contains_def(&m.ast, *orig_type_id, true))
+                {
+                    new_type_nodes.push((module_id.clone(), new_type));
+                }
             }
         }
     }
 
+    for (module_id, new_type) in new_type_nodes {
+        if let Some(module) = ctx.dependencies.modules.get_mut(&module_id) {
+            if let NodeKind::Module { children } = &mut module.ast.kind {
+                children.push(new_type);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn monomorphise_fns(ctx: &mut CompileContext) -> Result<(), ()> {
+    let fn_monomorphisations = ctx.type_info.monomorphised_fns.clone();
+    if fn_monomorphisations.is_empty() {
+        return Ok(());
+    }
+
+    let polymorphic_fn_ids: HashSet<SymbolId> = ctx
+        .type_info
+        .type_env
+        .iter()
+        .filter_map(|(id, scheme)| (!scheme.bound_vars.is_empty()).then_some(*id))
+        .collect();
+
+    let mut poly_fn_defs: HashMap<SymbolId, Node> = HashMap::default();
+    for module in ctx.dependencies.modules.values_mut() {
+        let mut f = |node: &mut Node| {
+            if matches!(node.kind, NodeKind::FnDecl { .. }) {
+                if let Some(symbol_id) = node.symbol_id {
+                    if polymorphic_fn_ids.contains(&symbol_id) {
+                        poly_fn_defs.insert(symbol_id, node.clone());
+                    }
+                }
+            }
+            Ok(())
+        };
+        visit_ast_mut(&mut module.ast, &mut f)?;
+    }
+
+    warn_excessive("Function", &fn_monomorphisations, &poly_fn_defs, ctx);
+
     let mut new_fn_nodes: Vec<(String, Node)> = Vec::new();
 
-    for (new_id, (orig_id, concrete_type)) in &monomorphisations {
-        if let Some(orig_fn) = poly_fn_defs.get(orig_id) {
-            let mut new_fn = orig_fn.clone();
+    for (new_fn_id, (orig_fn_id, concrete_type)) in &fn_monomorphisations {
+        if let Some(orig_fn) = poly_fn_defs.get(orig_fn_id) {
+            if let Some(scheme) = ctx.type_info.type_env.get(orig_fn_id) {
+                let mut new_fn = orig_fn.clone();
+                let subst = build_fn_substitution(scheme, concrete_type)?;
 
-            if let Some(scheme) = ctx.type_info.type_env.get(orig_id) {
-                let subst = build_substitution(scheme, concrete_type)?;
-                apply_type_substitution(&mut new_fn, &subst);
-                new_fn.symbol_id = Some(*new_id);
-
-                for (module_id, module) in ctx.dependencies.modules.iter() {
-                    if contains_fn_def(&module.ast, *orig_id) {
-                        new_fn_nodes.push((module_id.clone(), new_fn));
-                        break;
+                visit_ast_mut(&mut new_fn, &mut |node| {
+                    if let Some(ty) = &node.ty {
+                        node.ty = Some(subst.apply(ty));
                     }
+                    Ok(())
+                })?;
+
+                new_fn.symbol_id = Some(*new_fn_id);
+
+                if let Some((module_id, _)) = ctx
+                    .dependencies
+                    .modules
+                    .iter()
+                    .find(|(_, m)| contains_def(&m.ast, *orig_fn_id, false))
+                {
+                    new_fn_nodes.push((module_id.clone(), new_fn));
                 }
             }
         }
@@ -77,75 +270,87 @@ pub fn monomorphise_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 
     for (module_id, new_fn) in new_fn_nodes {
         if let Some(module) = ctx.dependencies.modules.get_mut(&module_id) {
-            add_fn_to_module(&mut module.ast, new_fn);
+            if let NodeKind::Module { children } = &mut module.ast.kind {
+                children.push(new_fn);
+            }
         }
     }
 
     Ok(())
 }
 
-fn collect_poly_fn_defs(
-    node: &Node,
-    type_env: &HashMap<SymbolId, Scheme>,
-    poly_fns: &mut HashMap<SymbolId, Node>,
+fn warn_excessive<T>(
+    kind: &str,
+    monomorphisations: &HashMap<SymbolId, (SymbolId, T)>,
+    poly_defs: &HashMap<SymbolId, Node>,
+    ctx: &mut CompileContext,
 ) {
-    match &node.kind {
-        NodeKind::Module { children } => {
-            for child in children {
-                collect_poly_fn_defs(child, type_env, poly_fns);
-            }
-        }
-        NodeKind::FnDecl { .. } => {
-            if let Some(symbol_id) = node.symbol_id {
-                if let Some(scheme) = type_env.get(&symbol_id) {
-                    if !scheme.bound_vars.is_empty() {
-                        poly_fns.insert(symbol_id, node.clone());
+    let mut counts: HashMap<SymbolId, usize> = HashMap::default();
+    for (_, (orig_id, _)) in monomorphisations {
+        *counts.entry(*orig_id).or_insert(0) += 1;
+    }
+
+    for (orig_id, count) in &counts {
+        if *count > WARN_MONOMORPH_MAX {
+            if let Some(orig_node) = poly_defs.get(orig_id) {
+                let name = match &orig_node.kind {
+                    NodeKind::FnDecl { symbol, .. } | NodeKind::TypeDecl { symbol, .. } => {
+                        symbol.clone()
                     }
-                }
+                    _ => "<unknown>".to_string(),
+                };
+
+                let file = ctx
+                    .dependencies
+                    .modules
+                    .values()
+                    .find(|m| contains_def(&m.ast, *orig_id, kind == "Type"))
+                    .map(|m| m.file.clone())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+
+                ctx.warnings.push(Diagnostic::new(DiagnosticMsg {
+                    message: format!(
+                        "{} '{}' has been monomorphised {} times (threshold: {}). Your binary may be mega large.",
+                        kind, name, count, WARN_MONOMORPH_MAX
+                    ),
+                    span: orig_node.span.clone(),
+                    file,
+                    err_type: DiagnosticMsgType::ExcessiveMonomorphisation,
+                }));
             }
         }
-        _ => {}
     }
 }
 
-fn contains_fn_def(node: &Node, target_id: SymbolId) -> bool {
-    match &node.kind {
-        NodeKind::Module { children } => children
+fn contains_def(node: &Node, target_id: SymbolId, is_type: bool) -> bool {
+    if node.symbol_id == Some(target_id) {
+        return if is_type {
+            matches!(node.kind, NodeKind::TypeDecl { .. })
+        } else {
+            matches!(node.kind, NodeKind::FnDecl { .. })
+        };
+    }
+
+    if let NodeKind::Module { children } = &node.kind {
+        return children
             .iter()
-            .any(|child| contains_fn_def(child, target_id)),
-        NodeKind::FnDecl { .. } => node.symbol_id == Some(target_id),
-        _ => false,
+            .any(|child| contains_def(child, target_id, is_type));
     }
+
+    false
 }
 
-fn add_fn_to_module(module_node: &mut Node, fn_node: Node) {
-    if let NodeKind::Module { children } = &mut module_node.kind {
-        children.push(fn_node);
-    }
-}
-
-fn get_function_name(fn_node: &Node) -> String {
-    if let NodeKind::FnDecl { symbol, .. } = &fn_node.kind {
-        symbol.clone()
-    } else {
-        "<unknown>".to_string()
-    }
-}
-
-fn get_function_file(fn_node: &Node, deps: &DepGraphContext) -> String {
-    if let Some(symbol_id) = fn_node.symbol_id {
-        for (_module_id, module) in deps.modules.iter() {
-            if contains_fn_def(&module.ast, symbol_id) {
-                return module.file.clone();
-            }
-        }
-    }
-    "<unknown>".to_string()
-}
-
-fn build_substitution(scheme: &Scheme, concrete_type: &Ty) -> Result<Substitution, ()> {
+fn build_fn_substitution(scheme: &Scheme, concrete_type: &Ty) -> Result<Substitution, ()> {
     let mut subst_map = HashMap::default();
     collect_type_var_mappings(&scheme.body, concrete_type, &mut subst_map);
+    Ok(Substitution(subst_map))
+}
+
+fn build_type_substitution(scheme: &Scheme, concrete_args: &[Ty]) -> Result<Substitution, ()> {
+    let mut subst_map = HashMap::default();
+    for (&bound_var, arg) in scheme.bound_vars.iter().zip(concrete_args.iter()) {
+        subst_map.insert(bound_var, arg.clone());
+    }
     Ok(Substitution(subst_map))
 }
 
@@ -154,24 +359,13 @@ fn collect_type_var_mappings(
     concrete_ty: &Ty,
     mappings: &mut HashMap<TypeVar, Ty>,
 ) {
-    use crate::types::TyKind;
-
     match (scheme_ty.kind(), concrete_ty.kind()) {
-        (TyKind::Var(tv), _) => {
+        (TyKind::Var(tv), _) | (TyKind::SizeVar(tv), _) => {
             mappings.insert(*tv, concrete_ty.clone());
         }
-        (TyKind::SizeVar(sv), TyKind::IntLiteral(_)) => {
-            mappings.insert(*sv, concrete_ty.clone());
-        }
-        (TyKind::SizeVar(sv), TyKind::SizeVar(_)) => {
-            mappings.insert(*sv, concrete_ty.clone());
-        }
-        (TyKind::IntLiteral(_), TyKind::IntLiteral(_)) => {
-            //already matches
-        }
         (TyKind::Fn(s_arg, s_ret), TyKind::Fn(c_arg, c_ret)) => {
-            collect_type_var_mappings(s_arg.as_ref(), c_arg.as_ref(), mappings);
-            collect_type_var_mappings(s_ret.as_ref(), c_ret.as_ref(), mappings);
+            collect_type_var_mappings(s_arg, c_arg, mappings);
+            collect_type_var_mappings(s_ret, c_ret, mappings);
         }
         (TyKind::Tuple(s_elems), TyKind::Tuple(c_elems)) => {
             for (s_elem, c_elem) in s_elems.iter().zip(c_elems.iter()) {
@@ -184,206 +378,8 @@ fn collect_type_var_mappings(
             }
         }
         (TyKind::Nocrypt(s_inner), TyKind::Nocrypt(c_inner)) => {
-            collect_type_var_mappings(s_inner.as_ref(), c_inner.as_ref(), mappings);
+            collect_type_var_mappings(s_inner, c_inner, mappings);
         }
         _ => {}
-    }
-}
-
-//ast-centric type substitution
-//pretty similar to some code in the typechecker,
-//but different enough that I'm leaving for now
-
-fn apply_type_substitution(node: &mut Node, subst: &Substitution) {
-    if let Some(ty) = &node.ty {
-        node.ty = Some(subst.apply(ty));
-    }
-    match &mut node.kind {
-        NodeKind::Module { children } => {
-            for child in children {
-                apply_type_substitution(child, subst);
-            }
-        }
-        NodeKind::FnDecl {
-            args,
-            return_type,
-            expr,
-            ..
-        } => {
-            for (arg_pattern, arg_type, _) in args.iter_mut() {
-                apply_type_substitution(arg_pattern, subst);
-                if let Some(type_node) = arg_type {
-                    apply_type_substitution(type_node, subst);
-                }
-            }
-
-            if let Some(ret_type) = return_type {
-                apply_type_substitution(ret_type, subst);
-            }
-
-            if let Some(body) = expr {
-                apply_type_substitution(body, subst);
-            }
-        }
-        NodeKind::ConstDecl {
-            const_type, expr, ..
-        } => {
-            if let Some(type_node) = const_type {
-                apply_type_substitution(type_node, subst);
-            }
-            apply_type_substitution(expr, subst);
-        }
-        NodeKind::TypeDecl { variants, .. } => {
-            for variant in variants {
-                apply_type_substitution(variant, subst);
-            }
-        }
-        NodeKind::TypeConstructor { fields, .. } => {
-            for (_, field_type, _) in fields {
-                apply_type_substitution(field_type, subst);
-            }
-        }
-        NodeKind::TypeAlias { alias, actual, .. } => {
-            apply_type_substitution(alias, subst);
-            apply_type_substitution(actual, subst);
-        }
-        NodeKind::Expr { expr } => {
-            apply_type_substitution_expr(expr, subst);
-        }
-        NodeKind::Type { .. } => {
-            //
-        }
-        NodeKind::Import { .. } => {
-            //
-        }
-        NodeKind::FnType { args, return_type } => {
-            for arg in args {
-                apply_type_substitution(arg, subst);
-            }
-            if let Some(ret) = return_type {
-                apply_type_substitution(ret, subst);
-            }
-        }
-        NodeKind::TupleType { elements } => {
-            for elem in elements {
-                apply_type_substitution(elem, subst);
-            }
-        }
-    }
-}
-
-fn apply_type_substitution_expr(expr: &mut ExprKind, subst: &Substitution) {
-    match expr {
-        ExprKind::Block(nodes) => {
-            for child in nodes {
-                apply_type_substitution(child, subst);
-            }
-        }
-        ExprKind::LetBinding {
-            symbol_type,
-            expr,
-            symbols,
-        } => {
-            if let Some(type_node) = symbol_type {
-                apply_type_substitution(type_node, subst);
-            }
-            apply_type_substitution(expr, subst);
-            apply_type_substitution(symbols, subst);
-        }
-        ExprKind::Closure {
-            args, expr: body, ..
-        } => {
-            for (arg_pattern, arg_type, _) in args.iter_mut() {
-                apply_type_substitution(arg_pattern, subst);
-                if let Some(type_node) = arg_type {
-                    apply_type_substitution(type_node, subst);
-                }
-            }
-            apply_type_substitution(body, subst);
-        }
-        ExprKind::Match {
-            expr: match_expr,
-            arms,
-        } => {
-            apply_type_substitution(match_expr, subst);
-            for (patterns, arm_expr) in arms {
-                for pattern in patterns {
-                    apply_type_substitution(pattern, subst);
-                }
-                apply_type_substitution(arm_expr, subst);
-            }
-        }
-        ExprKind::BinaryOp { left, right, .. } => {
-            apply_type_substitution(left, subst);
-            apply_type_substitution(right, subst);
-        }
-        ExprKind::UnaryOp { expr, .. } => {
-            apply_type_substitution(expr, subst);
-        }
-        ExprKind::FnCall { callee, args } => {
-            apply_type_substitution(callee, subst);
-            for (_, arg) in args {
-                apply_type_substitution(arg, subst);
-            }
-        }
-        ExprKind::FieldAccess { expr, .. } => {
-            apply_type_substitution(expr, subst);
-        }
-        ExprKind::IndexAccess { expr, index } => {
-            apply_type_substitution(expr, subst);
-            apply_type_substitution(index, subst);
-        }
-        ExprKind::IfElse {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            apply_type_substitution(condition, subst);
-            apply_type_substitution(then_branch, subst);
-            if let Some(else_expr) = else_branch {
-                apply_type_substitution(else_expr, subst);
-            }
-        }
-        ExprKind::For {
-            binding,
-            start,
-            end,
-            body,
-        } => {
-            apply_type_substitution(binding, subst);
-            apply_type_substitution(start, subst);
-            apply_type_substitution(end, subst);
-            apply_type_substitution(body, subst);
-        }
-        ExprKind::TupleLit(elements) | ExprKind::ListLit(elements) => {
-            for elem in elements {
-                apply_type_substitution(elem, subst);
-            }
-        }
-        ExprKind::MapLit(entries) => {
-            for (key, value) in entries {
-                apply_type_substitution(key, subst);
-                apply_type_substitution(value, subst);
-            }
-        }
-        ExprKind::ListPattern(elements) => {
-            use crate::ast::ListPatternElement;
-            for elem in elements {
-                match elem {
-                    ListPatternElement::Element(node) => {
-                        apply_type_substitution(node, subst);
-                    }
-                    ListPatternElement::Rest(Some(node)) => {
-                        apply_type_substitution(node, subst);
-                    }
-                    ListPatternElement::Rest(None) => {}
-                }
-            }
-        }
-        ExprKind::IntLit(_)
-        | ExprKind::RealLit { .. }
-        | ExprKind::StringLit(_)
-        | ExprKind::Symbol { .. }
-        | ExprKind::Discard => {}
     }
 }
