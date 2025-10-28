@@ -294,6 +294,24 @@ impl Node {
     pub fn render(&self, symbols: &SymbolContext) -> String {
         self.kind.render(symbols, self.symbol_id)
     }
+
+    /// only implemented for module atm
+    pub fn remove_child(&mut self, symbol_id: SymbolId) -> Option<Node> {
+        use NodeKind::*;
+        match &mut self.kind {
+            Module { children } => {
+                if let Some(pos) = children
+                    .iter()
+                    .position(|child| child.symbol_id == Some(symbol_id))
+                {
+                    Some(children.remove(pos))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 impl NodeKind {

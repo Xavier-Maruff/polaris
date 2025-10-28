@@ -2,6 +2,7 @@ use crate::symbol::SymbolId;
 use bincode::{Decode, Encode, config};
 use rustc_hash::FxHashMap as HashMap;
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 pub type ModuleId = usize;
 pub type BlockId = usize;
@@ -16,6 +17,7 @@ pub struct Module {
     pub harness_contract: HarnessContract,
     pub adt_defs: HashMap<SymbolId, ADTDef>,
     pub register_allocators: HashMap<RegisterId, Allocator>,
+    pub fn_defs: HashMap<SymbolId, FnDef>,
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -33,12 +35,20 @@ pub struct ConstDecl {
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct FnDecl {
+pub struct FnDef {
     pub id: SymbolId,
     pub name: Option<String>,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<BasicBlock>,
+}
+
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FnDecl {
+    pub id: SymbolId,
+    pub name: Option<String>,
+    pub params: Vec<Param>,
+    pub return_type: Type,
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -110,7 +120,7 @@ pub enum RValue {
     Tuple(Vec<RValue>),
 }
 
-#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Allocator {
     Stack,
     Arena(RegisterId),
@@ -444,6 +454,558 @@ impl PartialEq for RValue {
 
 impl Eq for RValue {}
 
+impl Display for Module {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f, "module {}", self.name.as_deref().unwrap_or("unnamed"))?;
+        writeln!(f)?;
+        write!(f, "{}", self.harness_contract)?;
+
+        for (_, adt_def) in &self.adt_defs {
+            writeln!(f)?;
+            write!(f, "{}", adt_def)?;
+        }
+
+        for (_, fn_def) in &self.fn_defs {
+            writeln!(f)?;
+            write!(f, "{}", fn_def)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for HarnessContract {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f, "harness_contract {{")?;
+
+        if !self.const_manifest.is_empty() {
+            writeln!(f, "  ; constants that must be injected by the harness")?;
+            writeln!(f, "  const_manifest {{")?;
+            for const_decl in &self.const_manifest {
+                writeln!(f, "    {}", const_decl)?;
+            }
+            writeln!(f, "  }}")?;
+        }
+
+        if !self.fn_manifest.is_empty() {
+            writeln!(f)?;
+            writeln!(f, "  ; functions that must be implemented by the harness")?;
+            writeln!(f, "  fn_manifest {{")?;
+            for fn_decl in &self.fn_manifest {
+                writeln!(f, "    {}", fn_decl)?;
+            }
+            writeln!(f, "  }}")?;
+        }
+
+        writeln!(f, "}}")
+    }
+}
+
+impl Display for ConstDecl {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let default_name = format!("%{}", self.register);
+        let name = self.name.as_deref().unwrap_or(&default_name);
+        write!(f, "{}: {} = {}", name, self._type, self.value)
+    }
+}
+
+impl Display for FnDecl {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let default_name = format!("fn_{}", self.id);
+        let name = self.name.as_deref().unwrap_or(&default_name);
+        write!(f, "fn {}(", default_name)?;
+        for (i, param) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(
+                f,
+                "{}: {}",
+                param.name.as_deref().unwrap_or("_"),
+                param._type
+            )?;
+        }
+        write!(f, "): {} ; {}", self.return_type, name)
+    }
+}
+
+impl Display for FnDef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let default_name = format!("fn_{}", self.id);
+        let name = self.name.as_deref().unwrap_or(&default_name);
+        write!(f, "fn {}(", default_name)?;
+        for (i, param) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            let default_param_name = format!("%{}", param.register);
+            let param_name = param.name.as_deref().unwrap_or(&default_param_name);
+            write!(f, "{}: {}", param_name, param._type)?;
+        }
+        writeln!(f, "): {} {{; {}", self.return_type, name)?;
+
+        for block in &self.body {
+            write!(f, "{}", block)?;
+        }
+
+        writeln!(f, "}}")
+    }
+}
+
+impl Display for ADTDef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let default_name = format!("adt_{}", self.id);
+        let name = self.name.as_deref().unwrap_or(&default_name);
+        writeln!(f, "type {} {{", name)?;
+        for variant in &self.variants {
+            writeln!(f, "  {}", variant)?;
+        }
+        writeln!(f, "}}")
+    }
+}
+
+impl Display for ADTVariant {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let default_name = format!("variant_{}", self.id);
+        let name = self.name.as_deref().unwrap_or(&default_name);
+        write!(f, "{}", name)?;
+        if !self.fields.is_empty() {
+            write!(f, " {{")?;
+            for (i, field) in self.fields.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", field)?;
+            }
+            write!(f, "}}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for FieldDef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let name = self.name.as_deref().unwrap_or("_");
+        write!(f, "{}: {}", name, self._type)
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let prefix = if self.nocrypt { "nc." } else { "enc." };
+        write!(f, "{}{}", prefix, self.kind)
+    }
+}
+
+impl Display for TypeKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            TypeKind::I8 => write!(f, "i8"),
+            TypeKind::I16 => write!(f, "i16"),
+            TypeKind::I32 => write!(f, "i32"),
+            TypeKind::I64 => write!(f, "i64"),
+            TypeKind::U8 => write!(f, "u8"),
+            TypeKind::U16 => write!(f, "u16"),
+            TypeKind::U32 => write!(f, "u32"),
+            TypeKind::U64 => write!(f, "u64"),
+            TypeKind::Real => write!(f, "real"),
+            TypeKind::Array(elem_type, size) => write!(f, "array({}, {})", elem_type, size),
+            TypeKind::String(size) => write!(f, "str({})", size),
+            TypeKind::DynamicArray(elem_type) => write!(f, "array({})", elem_type),
+            TypeKind::DynamicString => write!(f, "str"),
+            TypeKind::Char => write!(f, "char"),
+            TypeKind::ADT(id) => write!(f, "adt_{}", id),
+            TypeKind::Tuple(types) => {
+                write!(f, "tuple(")?;
+                for (i, ty) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ty)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
+impl Display for RValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            RValue::Int(val) => write!(f, "{}", val),
+            RValue::UInt(val) => write!(f, "{}", val),
+            RValue::Real(val) => write!(f, "{}", val),
+            RValue::Str(val) => write!(f, "\"{}\"", val),
+            RValue::Char(val) => write!(f, "'{}'", val),
+            RValue::Array(vals) => {
+                write!(f, "[")?;
+                for (i, val) in vals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", val)?;
+                }
+                write!(f, "]")
+            }
+            RValue::RegisterContents(reg) => write!(f, "%{}", reg),
+            RValue::Tuple(vals) => {
+                write!(f, "(")?;
+                for (i, val) in vals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", val)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
+impl Display for BasicBlock {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "  ^bb{}(", self.id)?;
+        for (i, (reg, ty)) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "%{}: {}", reg, ty)?;
+        }
+        writeln!(f, "):")?;
+
+        for instruction in &self.instructions {
+            writeln!(f, "    {}", instruction)?;
+        }
+
+        writeln!(f, "    {}", self.terminator)?;
+
+        Ok(())
+    }
+}
+
+impl Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "%{} = {}", self.dest, self.op)
+    }
+}
+
+impl Display for Terminator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Terminator::Break { target, args } => {
+                write!(f, "br ^bb{}", target)?;
+                if !args.is_empty() {
+                    write!(f, "(")?;
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "%{}", arg)?;
+                    }
+                    write!(f, ")")?;
+                }
+                Ok(())
+            }
+            Terminator::Return(reg) => write!(f, "ret %{}", reg),
+            Terminator::NCBranch {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                write!(
+                    f,
+                    "nc.branch {} {{true: ^bb{}, false: ^bb{}}}",
+                    cond, then_block, else_block
+                )
+            }
+        }
+    }
+}
+
+impl Display for Op {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Op::ArenaAlloc { size } => write!(f, "arena.alloc {}", size),
+            Op::ArenaFree { arena } => write!(f, "arena.free %{}", arena),
+
+            Op::Call { fn_id, args } => {
+                write!(f, "call fn_{}(", fn_id)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "%{}", arg)?;
+                }
+                write!(f, ")")
+            }
+            Op::HarnessCall { fn_id, args } => {
+                write!(f, "harness.call fn_{}(", fn_id)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "%{}", arg)?;
+                }
+                write!(f, ")")
+            }
+
+            Op::DecideBranch {
+                decision_id,
+                arg,
+                blocks,
+            } => {
+                write!(f, "decide_branch ${} %{} {{", decision_id, arg)?;
+                for (i, (val, block)) in blocks.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: ^bb{}", val, block)?;
+                }
+                write!(f, "}}")
+            }
+            Op::HarnessDecideBranch {
+                decision_id,
+                arg,
+                blocks,
+            } => {
+                write!(f, "harness.decide_branch ${} %{} {{", decision_id, arg)?;
+                for (i, (val, block)) in blocks.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: ^bb{}", val, block)?;
+                }
+                write!(f, "}}")
+            }
+            Op::EncSelect { predicate, _1, _0 } => {
+                write!(f, "enc.select {} {} {}", predicate, _1, _0)
+            }
+
+            Op::EncADTExtractField { base, field_index } => {
+                write!(f, "enc.adt.extract_field %{} {}", base, field_index)
+            }
+            Op::EncADTReplaceField {
+                base,
+                field_index,
+                new_value,
+            } => write!(
+                f,
+                "enc.adt.replace_field %{} {} {}",
+                base, field_index, new_value
+            ),
+            Op::EncADTExtractTag { base } => write!(f, "enc.adt.extract_tag %{}", base),
+            Op::NCADTExtractField { base, field_index } => {
+                write!(f, "nc.adt.extract_field %{} {}", base, field_index)
+            }
+            Op::NCADTReplaceField {
+                base,
+                field_index,
+                new_value,
+            } => write!(
+                f,
+                "nc.adt.replace_field %{} {} {}",
+                base, field_index, new_value
+            ),
+            Op::NCADTExtractTag { base } => write!(f, "nc.adt.extract_tag %{}", base),
+            Op::EncADTConstruct {
+                adt_id,
+                variant_tag,
+                field_values,
+            } => {
+                write!(f, "enc.adt.construct adt_{} {} [", adt_id, variant_tag)?;
+                for (i, val) in field_values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", val)?;
+                }
+                write!(f, "]")
+            }
+            Op::NCADTConstruct {
+                adt_id,
+                variant_tag,
+                field_values,
+            } => {
+                write!(f, "nc.adt.construct adt_{} {} [", adt_id, variant_tag)?;
+                for (i, val) in field_values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", val)?;
+                }
+                write!(f, "]")
+            }
+
+            Op::TupleConstruct { elements } => {
+                write!(f, "tuple.construct [")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]")
+            }
+            Op::TupleExtract { base, index } => write!(f, "tuple.extract %{} {}", base, index),
+
+            //feel like this should be macroed but oh well
+            Op::EncAddI8(a, b) => write!(f, "enc.add_i8 {} {}", a, b),
+            Op::EncAddI16(a, b) => write!(f, "enc.add_i16 {} {}", a, b),
+            Op::EncAddI32(a, b) => write!(f, "enc.add_i32 {} {}", a, b),
+            Op::EncAddI64(a, b) => write!(f, "enc.add_i64 {} {}", a, b),
+            Op::EncAddU8(a, b) => write!(f, "enc.add_u8 {} {}", a, b),
+            Op::EncAddU16(a, b) => write!(f, "enc.add_u16 {} {}", a, b),
+            Op::EncAddU32(a, b) => write!(f, "enc.add_u32 {} {}", a, b),
+            Op::EncAddU64(a, b) => write!(f, "enc.add_u64 {} {}", a, b),
+            Op::EncAddReal(a, b) => write!(f, "enc.add_real {} {}", a, b),
+
+            Op::EncSubI8(a, b) => write!(f, "enc.sub_i8 {} {}", a, b),
+            Op::EncSubI16(a, b) => write!(f, "enc.sub_i16 {} {}", a, b),
+            Op::EncSubI32(a, b) => write!(f, "enc.sub_i32 {} {}", a, b),
+            Op::EncSubI64(a, b) => write!(f, "enc.sub_i64 {} {}", a, b),
+            Op::EncSubU8(a, b) => write!(f, "enc.sub_u8 {} {}", a, b),
+            Op::EncSubU16(a, b) => write!(f, "enc.sub_u16 {} {}", a, b),
+            Op::EncSubU32(a, b) => write!(f, "enc.sub_u32 {} {}", a, b),
+            Op::EncSubU64(a, b) => write!(f, "enc.sub_u64 {} {}", a, b),
+            Op::EncSubReal(a, b) => write!(f, "enc.sub_real {} {}", a, b),
+
+            Op::EncMulI8(a, b) => write!(f, "enc.mul_i8 {} {}", a, b),
+            Op::EncMulI16(a, b) => write!(f, "enc.mul_i16 {} {}", a, b),
+            Op::EncMulI32(a, b) => write!(f, "enc.mul_i32 {} {}", a, b),
+            Op::EncMulI64(a, b) => write!(f, "enc.mul_i64 {} {}", a, b),
+            Op::EncMulU8(a, b) => write!(f, "enc.mul_u8 {} {}", a, b),
+            Op::EncMulU16(a, b) => write!(f, "enc.mul_u16 {} {}", a, b),
+            Op::EncMulU32(a, b) => write!(f, "enc.mul_u32 {} {}", a, b),
+            Op::EncMulU64(a, b) => write!(f, "enc.mul_u64 {} {}", a, b),
+            Op::EncMulReal(a, b) => write!(f, "enc.mul_real {} {}", a, b),
+
+            Op::EncDivI8(a, b) => write!(f, "enc.div_i8 {} {}", a, b),
+            Op::EncDivI16(a, b) => write!(f, "enc.div_i16 {} {}", a, b),
+            Op::EncDivI32(a, b) => write!(f, "enc.div_i32 {} {}", a, b),
+            Op::EncDivI64(a, b) => write!(f, "enc.div_i64 {} {}", a, b),
+            Op::EncDivU8(a, b) => write!(f, "enc.div_u8 {} {}", a, b),
+            Op::EncDivU16(a, b) => write!(f, "enc.div_u16 {} {}", a, b),
+            Op::EncDivU32(a, b) => write!(f, "enc.div_u32 {} {}", a, b),
+            Op::EncDivU64(a, b) => write!(f, "enc.div_u64 {} {}", a, b),
+            Op::EncDivReal(a, b) => write!(f, "enc.div_real {} {}", a, b),
+
+            Op::EncNegI8(a) => write!(f, "enc.neg_i8 {}", a),
+            Op::EncNegI16(a) => write!(f, "enc.neg_i16 {}", a),
+            Op::EncNegI32(a) => write!(f, "enc.neg_i32 {}", a),
+            Op::EncNegI64(a) => write!(f, "enc.neg_i64 {}", a),
+            Op::EncNegReal(a) => write!(f, "enc.neg_real {}", a),
+
+            Op::EncModI8(a, b) => write!(f, "enc.mod_i8 {} {}", a, b),
+            Op::EncModI16(a, b) => write!(f, "enc.mod_i16 {} {}", a, b),
+            Op::EncModI32(a, b) => write!(f, "enc.mod_i32 {} {}", a, b),
+            Op::EncModI64(a, b) => write!(f, "enc.mod_i64 {} {}", a, b),
+            Op::EncModU8(a, b) => write!(f, "enc.mod_u8 {} {}", a, b),
+            Op::EncModU16(a, b) => write!(f, "enc.mod_u16 {} {}", a, b),
+            Op::EncModU32(a, b) => write!(f, "enc.mod_u32 {} {}", a, b),
+            Op::EncModU64(a, b) => write!(f, "enc.mod_u64 {} {}", a, b),
+
+            Op::NCAddInt(a, b) => write!(f, "nc.add_int {} {}", a, b),
+            Op::NCAddUInt(a, b) => write!(f, "nc.add_uint {} {}", a, b),
+            Op::NCAddReal(a, b) => write!(f, "nc.add_real {} {}", a, b),
+            Op::NCSubInt(a, b) => write!(f, "nc.sub_int {} {}", a, b),
+            Op::NCSubUInt(a, b) => write!(f, "nc.sub_uint {} {}", a, b),
+            Op::NCSubReal(a, b) => write!(f, "nc.sub_real {} {}", a, b),
+            Op::NCMulInt(a, b) => write!(f, "nc.mul_int {} {}", a, b),
+            Op::NCMulUInt(a, b) => write!(f, "nc.mul_uint {} {}", a, b),
+            Op::NCMulReal(a, b) => write!(f, "nc.mul_real {} {}", a, b),
+            Op::NCDivInt(a, b) => write!(f, "nc.div_int {} {}", a, b),
+            Op::NCDivUInt(a, b) => write!(f, "nc.div_uint {} {}", a, b),
+            Op::NCDivReal(a, b) => write!(f, "nc.div_real {} {}", a, b),
+            Op::NCModInt(a, b) => write!(f, "nc.mod_int {} {}", a, b),
+            Op::NCModUInt(a) => write!(f, "nc.mod_uint {}", a),
+            Op::NCNegInt(a) => write!(f, "nc.neg_int {}", a),
+            Op::NCNegReal(a) => write!(f, "nc.neg_real {}", a),
+
+            Op::EncEqI8(a, b) => write!(f, "enc.eq_i8 {} {}", a, b),
+            Op::EncEqI16(a, b) => write!(f, "enc.eq_i16 {} {}", a, b),
+            Op::EncEqI32(a, b) => write!(f, "enc.eq_i32 {} {}", a, b),
+            Op::EncEqI64(a, b) => write!(f, "enc.eq_i64 {} {}", a, b),
+            Op::EncEqU8(a, b) => write!(f, "enc.eq_u8 {} {}", a, b),
+            Op::EncEqU16(a, b) => write!(f, "enc.eq_u16 {} {}", a, b),
+            Op::EncEqU32(a, b) => write!(f, "enc.eq_u32 {} {}", a, b),
+            Op::EncEqU64(a, b) => write!(f, "enc.eq_u64 {} {}", a, b),
+            Op::EncEqReal(a, b) => write!(f, "enc.eq_real {} {}", a, b),
+            Op::EncLtI8(a, b) => write!(f, "enc.lt_i8 {} {}", a, b),
+            Op::EncLtI16(a, b) => write!(f, "enc.lt_i16 {} {}", a, b),
+            Op::EncLtI32(a, b) => write!(f, "enc.lt_i32 {} {}", a, b),
+            Op::EncLtI64(a, b) => write!(f, "enc.lt_i64 {} {}", a, b),
+            Op::EncLtU8(a, b) => write!(f, "enc.lt_u8 {} {}", a, b),
+            Op::EncLtU16(a, b) => write!(f, "enc.lt_u16 {} {}", a, b),
+            Op::EncLtU32(a, b) => write!(f, "enc.lt_u32 {} {}", a, b),
+            Op::EncLtU64(a, b) => write!(f, "enc.lt_u64 {} {}", a, b),
+            Op::EncLtReal(a, b) => write!(f, "enc.lt_real {} {}", a, b),
+
+            Op::NCEqInt(a, b) => write!(f, "nc.eq_int {} {}", a, b),
+            Op::NCEqUInt(a, b) => write!(f, "nc.eq_uint {} {}", a, b),
+            Op::NCEqReal(a, b) => write!(f, "nc.eq_real {} {}", a, b),
+            Op::NCLtInt(a, b) => write!(f, "nc.lt_int {} {}", a, b),
+            Op::NCLtUInt(a, b) => write!(f, "nc.lt_uint {} {}", a, b),
+            Op::NCLtReal(a, b) => write!(f, "nc.lt_real {} {}", a, b),
+
+            Op::EncArrayConstructZeroed { element_type, len } => {
+                write!(f, "enc.array.construct_zeroed {} {}", element_type, len)
+            }
+            Op::EncArrayLen(reg) => write!(f, "enc.array.len %{}", reg),
+            Op::EncArrayGet { base, index } => write!(f, "enc.array.get %{} {}", base, index),
+            Op::EncArrayObliviousGet { base, index } => {
+                write!(f, "enc.array.oblivious_get %{} {}", base, index)
+            }
+            Op::EncArrayUpdateElement { base, index, value } => {
+                write!(f, "enc.array.update %{} {} {}", base, index, value)
+            }
+            Op::EncArrayConstruct {
+                element_type,
+                elements,
+                len,
+            } => {
+                write!(f, "enc.array.construct {} {} [", element_type, len)?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]")
+            }
+            Op::EncArrayCmpEq { a, b } => write!(f, "enc.array.cmp_eq %{} %{}", a, b),
+            Op::EncArrayReduce {
+                base,
+                initial,
+                func,
+            } => write!(f, "enc.array.reduce %{} {} fn_{}", base, initial, func),
+            Op::EncArrayMap { base, func } => write!(f, "enc.array.map %{} fn_{}", base, func),
+            Op::EncArrayFilter { base, func } => {
+                write!(f, "enc.array.filter %{} fn_{}", base, func)
+            }
+
+            Op::NCDynArrayConstruct { element_type } => {
+                write!(f, "nc.dynarray.construct {}", element_type)
+            }
+            Op::NCDynArrayLen(reg) => write!(f, "nc.dynarray.len %{}", reg),
+            Op::NCDynArrayGet { base, index } => write!(f, "nc.dynarray.get %{} {}", base, index),
+            Op::NCDynArrayUpdateElement { base, index, value } => {
+                write!(f, "nc.dynarray.update %{} {} {}", base, index, value)
+            }
+            Op::NCDynArrayPush { base, value } => write!(f, "nc.dynarray.push %{} {}", base, value),
+            Op::NCDynArrayPop(reg) => write!(f, "nc.dynarray.pop %{}", reg),
+            Op::NCDynArrayCmpEq { a, b } => write!(f, "nc.dynarray.cmp_eq %{} %{}", a, b),
+            Op::NCDynArrayConcat { a, b } => write!(f, "nc.dynarray.concat %{} %{}", a, b),
+
+            Op::NCDynStringConstruct { capacity } => {
+                write!(f, "nc.dynstring.construct {}", capacity)
+            }
+            Op::NCDynStringLen(reg) => write!(f, "nc.dynstring.len %{}", reg),
+            Op::NCDynStringConcat { a, b } => write!(f, "nc.dynstring.concat %{} %{}", a, b),
+            Op::NCDynStringEq { a, b } => write!(f, "nc.dynstring.eq %{} %{}", a, b),
+        }
+    }
+}
+
 impl Module {
     pub fn serialise_to_bytes(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         let config = config::standard();
@@ -456,12 +1018,7 @@ impl Module {
         Ok(module)
     }
 
-    pub fn serialise_to_text(&self) -> Result<String, serde_lexpr::Error> {
-        //just for the moment using s-expr format - will probably change later
-        serde_lexpr::to_string(self)
-    }
-
-    pub fn deserialise_from_text(data: &str) -> Result<Self, serde_lexpr::Error> {
-        serde_lexpr::from_str(data)
+    pub fn serialise_to_text(&self) -> String {
+        format!("{}", self)
     }
 }

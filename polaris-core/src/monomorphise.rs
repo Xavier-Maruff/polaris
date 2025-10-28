@@ -20,12 +20,7 @@ pub fn monomorphise_pass(ctx: &mut CompileContext) -> Result<(), ()> {
 }
 
 fn collect_type_instantiations(ctx: &mut CompileContext) -> Result<(), ()> {
-    let module_ids: Vec<String> = ctx
-        .dependencies
-        .modules
-        .keys()
-        .cloned()
-        .collect();
+    let module_ids: Vec<String> = ctx.dependencies.modules.keys().cloned().collect();
 
     for module_id in module_ids {
         let mut tys: Vec<Ty> = Vec::new();
@@ -206,6 +201,15 @@ fn monomorphise_types(ctx: &mut CompileContext) -> Result<(), ()> {
         if let Some(module) = ctx.dependencies.modules.get_mut(&module_id) {
             if let NodeKind::Module { children } = &mut module.ast.kind {
                 children.push(new_type);
+                //remove the original polymorphic type
+                for poly_type_id in polymorphic_type_ids.iter() {
+                    if let Some(pos) = children
+                        .iter()
+                        .position(|n| n.symbol_id == Some(poly_type_id.clone()))
+                    {
+                        children.remove(pos);
+                    }
+                }
             }
         }
     }
@@ -227,18 +231,26 @@ fn monomorphise_fns(ctx: &mut CompileContext) -> Result<(), ()> {
         .collect();
 
     let mut poly_fn_defs: HashMap<SymbolId, Node> = HashMap::default();
+    let mut nodes_to_remove: Vec<SymbolId> = Vec::new();
+
     for module in ctx.dependencies.modules.values_mut() {
         let mut f = |node: &mut Node| {
             if matches!(node.kind, NodeKind::FnDecl { .. }) {
                 if let Some(symbol_id) = node.symbol_id {
                     if polymorphic_fn_ids.contains(&symbol_id) {
                         poly_fn_defs.insert(symbol_id, node.clone());
+                        nodes_to_remove.push(symbol_id);
                     }
                 }
             }
             Ok(())
         };
         visit_ast_mut(&mut module.ast, &mut f)?;
+
+        //remove the original polymorphic func
+        nodes_to_remove.iter().for_each(|a| {
+            module.ast.remove_child(a.clone());
+        });
     }
 
     warn_excessive("Function", &fn_monomorphisations, &poly_fn_defs, ctx);
