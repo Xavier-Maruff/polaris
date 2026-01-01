@@ -10,7 +10,7 @@
 <br/><br/>
 
 > [!CAUTION]
-> Polaris is a work in progress, and is not yet even capable of codegen. Watch this space for updates!
+> Polaris is a work in progress, and is not yet capable of codegen. Watch this space for updates!
 
 Polaris is a high-security, bytecode interpreted, statically typed, primarily functional language for sensitive computation (what an insane amount of adjectives). All sensitive operations are performed under homomorphic encryption schemes, meaning that a Polaris program can operate on sensitive data in untrusted environments without ever exposing plaintexts, even to the program itself - in fact, no Polaris program can ever interact with plaintext sensitive data (though there is nuance to this point, as will be explained later)
 
